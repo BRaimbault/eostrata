@@ -75,7 +75,7 @@ def download_worldpop(
 
     # Write to Zarr
     ds = source.to_zarr(tif_path, _zarr_root, _bbox, iso3=iso3, year=year)
-    zarr_group = f"worldpop/{iso3.lower()}_{year}_1km"
+    zarr_group = source.zarr_group(iso3=iso3)
     console.print(f"[green]Zarr written[/green] {_zarr_root}/{zarr_group}")
 
     # Register STAC item
@@ -92,12 +92,12 @@ def download_worldpop(
     cat.register_item(
         catalogue,
         collection_id=source.collection_id,
-        item_id=source.stac_item_id(iso3=iso3, year=year),
+        item_id=source.stac_item_id(iso3=iso3),
         bbox=item_bbox,
         datetime_=datetime(year, 1, 1, tzinfo=timezone.utc),
         zarr_root=_zarr_root,
         zarr_group=zarr_group,
-        variable=zarr_group.split("/")[-1],
+        variable=source.VARIABLE,
         extra_properties=source.stac_properties(iso3=iso3, year=year),
     )
     cat.save(catalogue, _catalog_path)
@@ -146,6 +146,29 @@ def list_datasets(
         console.print(f"[yellow]No catalog found at {_catalog_path}[/yellow]")
 
 
+# ── serve ─────────────────────────────────────────────────────────────────────
+
+@app.command("serve")
+def serve(
+    host: str = typer.Option("127.0.0.1", help="Bind host"),
+    port: int = typer.Option(8000, help="Bind port"),
+    reload: bool = typer.Option(False, "--reload", help="Hot-reload (dev only)"),
+) -> None:
+    """Start the tile server, STAC catalogue and OGC Processes API."""
+    import uvicorn
+    console.print(f"[cyan]Starting eostrata server on http://{host}:{port}[/cyan]")
+    console.print(f"  [dim]Docs:      http://{host}:{port}/docs[/dim]")
+    console.print(f"  [dim]STAC:      http://{host}:{port}/stac[/dim]")
+    console.print(f"  [dim]Tiles:     http://{host}:{port}/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}[/dim]")
+    console.print(f"  [dim]Processes: http://{host}:{port}/processes[/dim]")
+    uvicorn.run(
+        "eostrata.server:app",
+        host=host,
+        port=port,
+        reload=reload,
+    )
+
+
 # ── cleanup ───────────────────────────────────────────────────────────────────
 
 @app.command("cleanup")
@@ -163,10 +186,7 @@ def cleanup(
     _raw_dir = Path(raw_dir or settings.raw_dir)
     _catalog_path = Path(catalog_path or settings.catalog_path)
 
-    targets = [
-        t for t in [_zarr_root, _raw_dir, _catalog_path.parent]
-        if t.exists()
-    ]
+    targets = [t for t in [_zarr_root, _raw_dir, _catalog_path.parent] if t.exists()]
 
     if not targets:
         console.print("[yellow]Nothing to clean up.[/yellow]")

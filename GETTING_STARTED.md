@@ -4,6 +4,18 @@
 
 This guide walks through downloading your first WorldPop dataset, storing it as Zarr, and serving it as map tiles, a STAC catalogue, and zonal statistics.
 
+## Table of Contents
+
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Downloading WorldPop data](#downloading-worldpop-data)
+- [Starting the server](#starting-the-server)
+- [Exploring the map viewer](#exploring-the-map-viewer)
+- [STAC catalogue walkthrough](#stac-catalogue-walkthrough)
+- [Zonal statistics example](#zonal-statistics-example)
+- [CLI reference](#cli-reference)
+
 ---
 
 ## Prerequisites

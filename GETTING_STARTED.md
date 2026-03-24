@@ -130,14 +130,6 @@ http://127.0.0.1:8000/tiles/WebMercatorQuad/map.html?url=data/zarr&variable=nga_
 | `rescale` | Value range mapped to 0–255 | `0,1000` |
 | `colormap_name` | Matplotlib colormap name | `viridis`, `plasma`, `reds`, `ylorbr` |
 
-Not sure what `rescale` values to use? Query the dataset info first:
-
-```bash
-curl "http://127.0.0.1:8000/md/info?url=data/zarr&variable=nga_2021_1km&group=worldpop/nga_2021_1km"
-```
-
-The response includes `valid_min` and `valid_max` for the dataset. Browse all available colormaps at `http://127.0.0.1:8000/md/colorMaps`.
-
 ---
 
 ## STAC catalogue walkthrough

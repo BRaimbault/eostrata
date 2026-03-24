@@ -64,21 +64,21 @@ EOSTRATA_BBOX_NORTH=14.0
 Download a population raster for a country and year. The dataset is clipped to your configured bounding box, converted to a CF-compliant Zarr collection, and registered in the STAC catalogue automatically.
 
 ```bash
-uv run eostrata download worldpop NGA --year 2021
+uv run eostrata download worldpop NGA --year 2020
 ```
 
 The command will:
-1. Resolve the WorldPop R2025A download URL for Nigeria 2021
+1. Resolve the WorldPop R2025A download URL for Nigeria 2020
 2. Download the GeoTIFF to `data/raw/worldpop/`
 3. Clip it to your bbox
-4. Write a Zarr group to `data/zarr/worldpop/nga_2021_1km`
-5. Register a STAC item in `data/catalog.json`
+4. Write a Zarr group to `data/zarr/worldpop/nga` with variable `population`
+5. Register a STAC item `worldpop_nga` in `data/catalog.json`
 
-You can download multiple years — they are appended along the `time` dimension of the same Zarr group:
+Multiple years are appended along the `time` dimension of the same Zarr group - one group per country, all years as timesteps:
 
 ```bash
+uv run eostrata download worldpop NGA --year 2021
 uv run eostrata download worldpop NGA --year 2022
-uv run eostrata download worldpop NGA --year 2023
 ```
 
 Check what is in the store at any time:
@@ -95,13 +95,13 @@ uv run eostrata list
 uv run eostrata serve
 ```
 
-The server starts on `http://127.0.0.1:8000` and exposes four interfaces:
+The server starts on `http://127.0.0.1:8000` and exposes:
 
 | Interface | URL |
 |---|---|
 | Interactive API docs | `http://127.0.0.1:8000/docs` |
+| OGC collections | `http://127.0.0.1:8000/collections` |
 | STAC catalogue | `http://127.0.0.1:8000/stac` |
-| Tile endpoints | `http://127.0.0.1:8000/tiles/...` |
 | OGC Processes | `http://127.0.0.1:8000/processes` |
 
 Add `--reload` for hot-reloading during development:
@@ -114,19 +114,19 @@ uv run eostrata serve --reload
 
 ## Exploring the map viewer
 
-TiTiler ships a built-in Leaflet map viewer. Open this URL in your browser, replacing the variable name with your actual dataset:
+The map viewer is available per collection via the OGC Tiles endpoint:
 
 ```
-http://127.0.0.1:8000/tiles/WebMercatorQuad/map.html?url=data/zarr&variable=nga_2021_1km&group=worldpop/nga_2021_1km&rescale=0,1000&colormap_name=viridis
+http://127.0.0.1:8000/collections/worldpop/tiles/WebMercatorQuad/map.html?item=worldpop_nga&datetime=2020-01-01&rescale=0,1000&colormap_name=viridis
 ```
 
 **Key query parameters:**
 
 | Parameter | Description | Example |
 |---|---|---|
-| `url` | Path to the Zarr store root | `data/zarr` |
-| `group` | Zarr group path | `worldpop/nga_2021_1km` |
-| `variable` | Variable name inside the group | `nga_2021_1km` |
+| `item` | STAC item id within the collection | `worldpop_nga` |
+| `datetime` | ISO 8601 datetime or interval for time selection | `2021-01-01` or `2021-01-01/2022-12-31` |
+| `agg` | Temporal aggregation method | `mean`, `sum`, `min`, `max`, `anomaly` |
 | `rescale` | Value range mapped to 0–255 | `0,1000` |
 | `colormap_name` | Matplotlib colormap name | `viridis`, `plasma`, `reds`, `ylorbr` |
 
@@ -146,57 +146,66 @@ curl http://127.0.0.1:8000/stac/collections | python -m json.tool
 curl http://127.0.0.1:8000/stac/collections/worldpop/items | python -m json.tool
 ```
 
-Each item contains a `zarr` asset pointing at the Zarr group, with `xarray:open_kwargs` so any xarray-aware tool can open it directly:
+Each item represents one country. The `datetime` interval spans all ingested years and expands automatically as you download more. The `zarr` asset contains the open kwargs needed to load the data directly with xarray:
 
 ```json
 {
+  "id": "worldpop_nga",
+  "properties": {
+    "start_datetime": "2020-01-01T00:00:00+00:00",
+    "end_datetime": "2022-01-01T00:00:00+00:00",
+    "eostrata:variable": "population",
+    "eostrata:zarr_group": "worldpop/nga"
+  },
   "assets": {
     "zarr": {
-      "href": "data/zarr/worldpop_nga_2021_1km",
+      "href": "data/zarr/worldpop/nga",
       "type": "application/vnd+zarr",
       "xarray:open_kwargs": {
         "engine": "zarr",
-        "group": "worldpop/nga_2021_1km",
+        "group": "worldpop/nga",
         "consolidated": true
-      }
+      },
+      "xarray:variable": "population"
     }
   }
 }
-```
-
-**Search across all collections:**
-```bash
-curl http://127.0.0.1:8000/stac/search | python -m json.tool
 ```
 
 ---
 
 ## Zonal statistics example
 
-The `zonalstats` process computes per-feature summary statistics over any Zarr dataset. Send a GeoJSON `FeatureCollection` as the input zones.
+The `zonalstats` process computes per-feature summary statistics over any collection. Send a GeoJSON `FeatureCollection` as the input zones.
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/processes/zonalstats/execution \
   -H "Content-Type: application/json" \
-  -d '{
+  -d '
+  {
     "inputs": {
-      "group": "worldpop/nga_2021_1km",
-      "variable": "nga_2021_1km",
-      "features": {
+      "group": "worldpop/nga",
+      "variable": "population",
+      "features":{
         "type": "FeatureCollection",
         "features": [
           {
-            "type": "Feature",
-            "properties": { "name": "Lagos area" },
+            "type":"Feature",
+            "properties": {
+              "name":"Lagos area"
+            },
             "geometry": {
-              "type": "Polygon",
-              "coordinates": [[[3.0,6.0],[4.5,6.0],[4.5,7.0],[3.0,7.0],[3.0,6.0]]]
+              "type":"Polygon",
+              "coordinates": [
+                [[3.0,6.0],[4.5,6.0],[4.5,7.0],[3.0,7.0],[3.0,6.0]]
+              ]
             }
           }
         ]
       }
     }
-  }' | python -m json.tool
+  }' \
+  | python -m json.tool
 ```
 
 The response is a GeoJSON `FeatureCollection` with original properties preserved and a `statistics` object added to each feature:
@@ -207,21 +216,29 @@ The response is a GeoJSON `FeatureCollection` with original properties preserved
   "features": [
     {
       "type": "Feature",
-      "properties": { "name": "Lagos area" },
+      "properties": {
+        "name": "Lagos area"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [[3.0, 6.0], [4.5, 6.0], [4.5, 7.0], [3.0, 7.0], [3.0, 6.0]]
+        ]
+      },
       "statistics": {
-        "count": 12480,
-        "nodata_count": 0,
-        "min": 0.0,
-        "max": 4821.3,
-        "mean": 312.7,
-        "std": 489.1,
-        "sum": 3902616.0,
+        "count": 10186,
+        "nodata_count": 11414,
+        "min": 9.722341848598562e-22,
+        "max": 21217.90234375,
+        "mean": 1884.0143487505113,
+        "std": 3865.856879172618,
+        "sum": 19190570.156372707,
         "percentiles": {
-          "p5": 1.2,
-          "p25": 24.5,
-          "p50": 118.3,
-          "p75": 421.6,
-          "p95": 1204.8
+          "p5": 0.9055151790380478,
+          "p25": 15.221198558807373,
+          "p50": 131.11722564697266,
+          "p75": 1391.2993774414062,
+          "p95": 12006.97900390625
         }
       }
     }
@@ -229,7 +246,7 @@ The response is a GeoJSON `FeatureCollection` with original properties preserved
 }
 ```
 
-You can pass any number of features in the `FeatureCollection` — statistics are computed per feature.
+You can pass any number of features in the `FeatureCollection`, statistics are computed per feature.
 
 ---
 

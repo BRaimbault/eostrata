@@ -95,7 +95,6 @@ def geotiff_to_zarr(
     da = xr.DataArray(arr, dims=dims, coords=coords, name=var_name)
     da.attrs.update(
         grid_mapping="crs",
-        _FillValue=float("nan"),
         long_name=dataset_name,
     )
 
@@ -115,7 +114,10 @@ def geotiff_to_zarr(
     cy = chunk_sizes.get("y", 512)
     cx = chunk_sizes.get("x", 512)
     encoding: dict = {
-        var_name: {"chunks": (1, cy, cx) if time_coord is not None else (cy, cx)},
+        var_name: {
+            "chunks": (1, cy, cx) if time_coord is not None else (cy, cx),
+            "_FillValue": float("nan"),
+        },
     }
 
     store_path = str(zarr_root)

@@ -90,7 +90,11 @@ def register_item(
     extra_properties: dict | None = None,
 ) -> pystac.Item:
     """
-    Create and register a STAC item in the given collection.
+    Create or update a STAC item in the given collection.
+
+    When an item with *item_id* already exists, its ``datetime`` interval is
+    extended to include *datetime_* and the item is replaced in place.
+    This allows multiple years of the same country to accumulate under one item.
 
     Parameters
     ----------
@@ -99,15 +103,15 @@ def register_item(
     collection_id:
         One of ``worldpop``, ``cds``, ``chirps``.
     item_id:
-        Unique item identifier, e.g. ``worldpop_nga_2020_1km``.
+        Unique item identifier, e.g. ``worldpop_nga``.
     bbox:
         Spatial extent (west, south, east, north).
     datetime_:
-        Reference datetime for the item.
+        Reference datetime for the new data being added.
     zarr_root:
         Path to the Zarr store root.
     zarr_group:
-        Group path within the store, e.g. ``worldpop/nga_2020_1km``.
+        Group path within the store, e.g. ``worldpop/nga``.
     variable:
         Name of the primary data variable inside the Zarr group.
     extra_properties:
@@ -117,6 +121,27 @@ def register_item(
     -------
     pystac.Item
     """
+    collection = catalog.get_child(collection_id)
+    if collection is None:
+        raise ValueError(
+            f"Collection '{collection_id}' not found in catalog. "
+            f"Available: {[c.id for c in catalog.get_children()]}"
+        )
+
+    # Extend datetime interval if item already exists
+    existing = collection.get_item(item_id)
+    if existing is not None:
+        existing_dt = existing.datetime
+        start = min(existing_dt, datetime_) if existing_dt else datetime_
+        end = max(existing_dt, datetime_) if existing_dt else datetime_
+        interval_start = start
+        interval_end = end
+        collection.remove_item(item_id)
+        logger.info("Extending datetime interval for STAC item '%s'", item_id)
+    else:
+        interval_start = datetime_
+        interval_end = datetime_
+
     west, south, east, north = bbox
     geometry = {
         "type": "Polygon",
@@ -131,6 +156,10 @@ def register_item(
         "eostrata:source": collection_id,
         "eostrata:variable": variable,
         "eostrata:zarr_group": zarr_group,
+        "eostrata:zarr_root": str(zarr_root),
+        "datetime": None,
+        "start_datetime": interval_start.isoformat(),
+        "end_datetime": interval_end.isoformat(),
         **(extra_properties or {}),
     }
 
@@ -138,14 +167,16 @@ def register_item(
         id=item_id,
         geometry=geometry,
         bbox=list(bbox),
-        datetime=datetime_,
+        datetime=None,
         properties=properties,
     )
+    item.common_metadata.start_datetime = interval_start
+    item.common_metadata.end_datetime = interval_end
 
     item.add_asset(
         "zarr",
         pystac.Asset(
-            href=str(Path(zarr_root) / zarr_group.replace("/", "_")),
+            href=str(Path(zarr_root) / zarr_group.replace("/", "/")),
             media_type="application/vnd+zarr",
             roles=["data"],
             extra_fields={
@@ -159,22 +190,43 @@ def register_item(
         ),
     )
 
-    collection = catalog.get_child(collection_id)
-    if collection is None:
-        raise ValueError(
-            f"Collection '{collection_id}' not found in catalog. "
-            f"Available: {[c.id for c in catalog.get_children()]}"
-        )
-
-    # Replace existing item with the same id rather than duplicating
-    existing = collection.get_item(item_id)
-    if existing is not None:
-        collection.remove_item(item_id)
-        logger.info("Replaced existing STAC item '%s'", item_id)
-
     collection.add_item(item)
     logger.info("Registered STAC item '%s' in collection '%s'", item_id, collection_id)
     return item
+
+
+def resolve_item(
+    catalog_path: Path,
+    collection_id: str,
+    item_id: str,
+) -> dict:
+    """
+    Look up a STAC item and return the zarr_root, zarr_group and variable
+    needed to open the dataset.
+
+    Returns
+    -------
+    dict with keys: zarr_root, zarr_group, variable
+    """
+    catalog = load_or_create(catalog_path)
+    collection = catalog.get_child(collection_id)
+    if collection is None:
+        raise ValueError(f"Collection '{collection_id}' not found.")
+    item = collection.get_item(item_id)
+    if item is None:
+        raise ValueError(f"Item '{item_id}' not found in collection '{collection_id}'.")
+
+    zarr_asset = item.assets.get("zarr")
+    if zarr_asset is None:
+        raise ValueError(f"Item '{item_id}' has no zarr asset.")
+
+    return {
+        "zarr_root": item.properties.get("eostrata:zarr_root", "data/zarr"),
+        "zarr_group": item.properties["eostrata:zarr_group"],
+        "variable": item.properties["eostrata:variable"],
+        "start_datetime": item.properties.get("start_datetime"),
+        "end_datetime": item.properties.get("end_datetime"),
+    }
 
 
 # ── stac-fastapi client ───────────────────────────────────────────────────────

@@ -75,7 +75,7 @@ def download_worldpop(
 
     # Write to Zarr
     ds = source.to_zarr(tif_path, _zarr_root, _bbox, iso3=iso3, year=year)
-    zarr_group = f"worldpop/{iso3.lower()}_{year}_1km"
+    zarr_group = source.zarr_group(iso3=iso3)
     console.print(f"[green]Zarr written[/green] {_zarr_root}/{zarr_group}")
 
     # Register STAC item
@@ -92,12 +92,12 @@ def download_worldpop(
     cat.register_item(
         catalogue,
         collection_id=source.collection_id,
-        item_id=source.stac_item_id(iso3=iso3, year=year),
+        item_id=source.stac_item_id(iso3=iso3),
         bbox=item_bbox,
         datetime_=datetime(year, 1, 1, tzinfo=timezone.utc),
         zarr_root=_zarr_root,
         zarr_group=zarr_group,
-        variable=zarr_group.split("/")[-1],
+        variable=source.VARIABLE,
         extra_properties=source.stac_properties(iso3=iso3, year=year),
     )
     cat.save(catalogue, _catalog_path)

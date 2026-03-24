@@ -131,11 +131,16 @@ def register_item(
     # Extend datetime interval if item already exists
     existing = collection.get_item(item_id)
     if existing is not None:
-        existing_dt = existing.datetime
-        start = min(existing_dt, datetime_) if existing_dt else datetime_
-        end = max(existing_dt, datetime_) if existing_dt else datetime_
-        interval_start = start
-        interval_end = end
+        # Read interval from properties since we use start/end not datetime
+        from datetime import timezone as tz
+        existing_start = existing.common_metadata.start_datetime or existing.datetime
+        existing_end = existing.common_metadata.end_datetime or existing.datetime
+        if existing_start and existing_end:
+            interval_start = min(existing_start.replace(tzinfo=tz.utc) if existing_start.tzinfo is None else existing_start, datetime_)
+            interval_end = max(existing_end.replace(tzinfo=tz.utc) if existing_end.tzinfo is None else existing_end, datetime_)
+        else:
+            interval_start = datetime_
+            interval_end = datetime_
         collection.remove_item(item_id)
         logger.info("Extending datetime interval for STAC item '%s'", item_id)
     else:

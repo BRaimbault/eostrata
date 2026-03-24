@@ -159,7 +159,7 @@ def serve(
     console.print(f"[cyan]Starting eostrata server on http://{host}:{port}[/cyan]")
     console.print(f"  [dim]Docs:      http://{host}:{port}/docs[/dim]")
     console.print(f"  [dim]STAC:      http://{host}:{port}/stac[/dim]")
-    console.print(f"  [dim]Tiles:     http://{host}:{port}/md/tiles/{{z}}/{{x}}/{{y}}[/dim]")
+    console.print(f"  [dim]Tiles:     http://{host}:{port}/tiles/tiles/{{z}}/{{x}}/{{y}}[/dim]")
     console.print(f"  [dim]Processes: http://{host}:{port}/processes[/dim]")
     uvicorn.run(
         "eostrata.server:app",

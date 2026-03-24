@@ -108,17 +108,19 @@ async def collection_map(
         "url": resolved["zarr_root"],
         "group": resolved["zarr_group"],
         "variable": resolved["variable"],
+        "sel": f"time={datetime}",
     }
-    if datetime:
-        params["sel"] = f"time={datetime}"
     if colormap_name:
         params["colormap_name"] = colormap_name
     if rescale:
         params["rescale"] = rescale
 
-    query = "&".join(f"{k}={v}" for k, v in params.items())
     base = str(request.base_url).rstrip("/")
-    url = f"{base}/tiles/{tileMatrixSetId}/map.html?{query}"
+    from urllib.parse import quote
+    parts = []
+    for k, v in params.items():
+        parts.append(f"{k}={quote(str(v), safe='/,:')}") 
+    url = f"{base}/tiles/{tileMatrixSetId}/map.html?{'&'.join(parts)}"
     return HTMLResponse(
         content=f'<meta http-equiv="refresh" content="0;url={url}">',
     )

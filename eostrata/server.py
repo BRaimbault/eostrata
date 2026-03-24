@@ -113,7 +113,7 @@ def collections() -> dict:
                 "description": coll.description,
                 "links": [
                     {"rel": "items",     "href": f"/stac/collections/{coll.id}/items"},
-                    {"rel": "tiles",     "href": f"/tiles/tiles/{{z}}/{{x}}/{{y}}"},
+                    {"rel": "tiles",     "href": f"/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}"},
                     {"rel": "processes", "href": "/processes/zonalstats"},
                 ],
             })

@@ -5,7 +5,7 @@ from titiler.xarray.extensions import VariablesExtension
 from titiler.xarray.factory import TilerFactory
 
 tiler = TilerFactory(
-    router_prefix="/md",
+    router_prefix="/tiles",
     extensions=[VariablesExtension()],
 )
 

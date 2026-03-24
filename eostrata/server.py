@@ -9,7 +9,7 @@ GET  /stac                      STAC catalogue root
 GET  /stac/collections          STAC collections
 GET  /stac/collections/{id}/items
 GET  /stac/search
-GET  /md/...                    titiler.xarray tile endpoints
+GET  /tiles/...                    titiler.xarray tile endpoints
 GET  /processes                 OGC Processes list
 GET  /processes/zonalstats      Process description
 POST /processes/zonalstats/execution
@@ -57,9 +57,9 @@ _stac_api = StacApi(
 # stac_api.app is the internal FastAPI instance — mount it at /stac
 app.mount("/stac", _stac_api.app)
 
-# ── TiTiler xarray — mounted at /md via ogc/tiles.py ─────────────────────────
+# ── TiTiler xarray — mounted at /tiles via ogc/tiles.py ──────────────────────
 
-app.include_router(tiles_router, prefix="/md", tags=["Tiles"])
+app.include_router(tiles_router, prefix="/tiles", tags=["Tiles"])
 
 # ── OGC Processes ─────────────────────────────────────────────────────────────
 
@@ -113,7 +113,7 @@ def collections() -> dict:
                 "description": coll.description,
                 "links": [
                     {"rel": "items",     "href": f"/stac/collections/{coll.id}/items"},
-                    {"rel": "tiles",     "href": f"/md/tiles/{{z}}/{{x}}/{{y}}"},
+                    {"rel": "tiles",     "href": f"/tiles/tiles/{{z}}/{{x}}/{{y}}"},
                     {"rel": "processes", "href": "/processes/zonalstats"},
                 ],
             })

@@ -23,6 +23,7 @@ def geotiff_to_zarr(
     bbox: tuple[float, float, float, float] | None = None,
     time_coord: np.datetime64 | None = None,
     chunks: dict[str, int] | None = None,
+    variable_name: str | None = None,
 ) -> xr.Dataset:
     """
     Clip a GeoTIFF to bbox, convert to a CF-compliant xarray Dataset
@@ -35,15 +36,17 @@ def geotiff_to_zarr(
     zarr_root:
         Root directory of the Zarr store.
     dataset_name:
-        Group name inside the store, e.g. ``worldpop/nga_2020_1km``.
+        Group name inside the store, e.g. ``worldpop/nga``.
     bbox:
         Optional (west, south, east, north) clip extent in EPSG:4326.
-        If None the full raster is written.
     time_coord:
         Optional datetime64 value. When provided, a leading ``time``
         dimension is added so multiple files can be appended.
     chunks:
-        Zarr chunk sizes. Defaults to 512×512.
+        Zarr chunk sizes. Defaults to 512x512.
+    variable_name:
+        Name of the data variable in the dataset. Defaults to the last
+        segment of dataset_name if not provided.
 
     Returns
     -------
@@ -88,7 +91,7 @@ def geotiff_to_zarr(
         dims = ("time", "y", "x")
         arr = data[np.newaxis, ...]
 
-    var_name = dataset_name.split("/")[-1]
+    var_name = variable_name or dataset_name.split("/")[-1]
     da = xr.DataArray(arr, dims=dims, coords=coords, name=var_name)
     da.attrs.update(
         grid_mapping="crs",

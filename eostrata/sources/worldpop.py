@@ -65,6 +65,7 @@ class WorldPopSource(BaseSource):
     collection_id = "worldpop"
     temporal_resolution = "annual"
     default_lag_days = 365
+    VARIABLE = "population"
 
     def download(
         self,
@@ -91,24 +92,29 @@ class WorldPopSource(BaseSource):
         year: int,
         **_: Any,
     ) -> Any:  # xr.Dataset
-        """Clip *path* to *bbox* and write to the Zarr store."""
-        dataset_name = f"worldpop/{iso3.lower()}_{year}_1km"
+        """Clip *path* to *bbox* and append to the country's Zarr group."""
         time_coord = np.datetime64(f"{year}-01-01", "ns")
         return geotiff_to_zarr(
             path,
             zarr_root,
-            dataset_name,
+            self.zarr_group(iso3=iso3),
             bbox=bbox,
             time_coord=time_coord,
+            variable_name=self.VARIABLE,
         )
 
-    def stac_item_id(self, *, iso3: str, year: int, **_: Any) -> str:
-        return f"worldpop_{iso3.lower()}_{year}_1km"
+    def zarr_group(self, *, iso3: str, **_: Any) -> str:
+        """One Zarr group per country — years stored as time steps."""
+        return f"worldpop/{iso3.lower()}"
+
+    def stac_item_id(self, *, iso3: str, **_: Any) -> str:
+        """One STAC item per country — datetime interval updated on each download."""
+        return f"worldpop_{iso3.lower()}"
 
     def stac_properties(self, *, iso3: str, year: int, **_: Any) -> dict:
         return {
             "eostrata:iso3": iso3.upper(),
-            "eostrata:year": year,
+            "eostrata:variable": self.VARIABLE,
             "eostrata:resolution": "1km",
             "eostrata:release": _RELEASE,
         }

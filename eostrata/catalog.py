@@ -1,14 +1,15 @@
-"""STAC catalogue management — create, load, register items."""
+"""STAC catalogue management — create, load, register items, serve via stac-fastapi."""
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
-import numpy as np
+import attr
 import pystac
-import xarray as xr
+from stac_fastapi.types.core import BaseCoreClient
+from stac_fastapi.types.stac import Collection, Collections, Item, ItemCollection
 
 logger = logging.getLogger(__name__)
 
@@ -174,3 +175,75 @@ def register_item(
     collection.add_item(item)
     logger.info("Registered STAC item '%s' in collection '%s'", item_id, collection_id)
     return item
+
+
+# ── stac-fastapi client ───────────────────────────────────────────────────────
+
+def _item_to_dict(item: pystac.Item) -> dict:
+    return item.to_dict()
+
+
+def _collection_to_dict(coll: pystac.Collection) -> dict:
+    d = coll.to_dict()
+    d.setdefault("links", [])
+    return d
+
+
+@attr.s
+class PystacClient(BaseCoreClient):
+    """
+    Read-only stac-fastapi client backed by the eostrata pystac catalog.json.
+    Reloads from disk on every request — suitable for development scale.
+    """
+
+    catalog_path: str = attr.ib(default=None)
+
+    def _catalog(self) -> pystac.Catalog:
+        from eostrata.config import settings
+        path = self.catalog_path or str(settings.catalog_path)
+        return load_or_create(path)
+
+    def all_collections(self, **kwargs: Any) -> Collections:
+        cat = self._catalog()
+        colls = [_collection_to_dict(c) for c in cat.get_children()
+                 if isinstance(c, pystac.Collection)]
+        return Collections(collections=colls, links=[])
+
+    def get_collection(self, collection_id: str, **kwargs: Any) -> Collection:
+        cat = self._catalog()
+        coll = cat.get_child(collection_id)
+        if coll is None or not isinstance(coll, pystac.Collection):
+            raise Exception(f"Collection '{collection_id}' not found.")
+        return _collection_to_dict(coll)
+
+    def item_collection(
+        self, collection_id: str, bbox=None, datetime=None,
+        limit=10, token=None, **kwargs: Any
+    ) -> ItemCollection:
+        cat = self._catalog()
+        coll = cat.get_child(collection_id)
+        if coll is None:
+            raise Exception(f"Collection '{collection_id}' not found.")
+        items = [_item_to_dict(i) for i in coll.get_items()]
+        return ItemCollection(type="FeatureCollection", features=items, links=[])
+
+    def get_item(self, item_id: str, collection_id: str, **kwargs: Any) -> Item:
+        cat = self._catalog()
+        coll = cat.get_child(collection_id)
+        if coll is None:
+            raise Exception(f"Collection '{collection_id}' not found.")
+        item = coll.get_item(item_id)
+        if item is None:
+            raise Exception(f"Item '{item_id}' not found in '{collection_id}'.")
+        return _item_to_dict(item)
+
+    def get_search(self, **kwargs: Any) -> ItemCollection:
+        cat = self._catalog()
+        items = []
+        for coll in cat.get_children():
+            if isinstance(coll, pystac.Collection):
+                items.extend(_item_to_dict(i) for i in coll.get_items())
+        return ItemCollection(type="FeatureCollection", features=items, links=[])
+
+    def post_search(self, search_request: Any, **kwargs: Any) -> ItemCollection:
+        return self.get_search(**kwargs)

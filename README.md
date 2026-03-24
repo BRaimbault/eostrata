@@ -54,7 +54,7 @@ flowchart TD
     ZS -->|auto-register| CAT
     CAT --> OGC
     ZS --> TILE & ZON & OGC
-    TILE & ZON -->|cache miss| DL
+    TILE & ZON -->|cache miss / TTL expired| DL
 
     classDef src    fill:#E1F5EE,stroke:#0F6E56,color:#085041
     classDef config fill:#F1EFE8,stroke:#5F5E5A,color:#2C2C2A

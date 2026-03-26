@@ -203,6 +203,11 @@ uv run eostrata download cds --variable t2m
 uv run eostrata download cds --variable t2m --year 2023
 ```
 
+**Download a specific month:**
+```bash
+uv run eostrata download cds --variable t2m --year 2023 --month 6
+```
+
 **Download specific months only:**
 ```bash
 uv run eostrata download cds --variable t2m --year 2023 --months 1,2,3
@@ -252,6 +257,7 @@ The server starts on `http://127.0.0.1:8000` and exposes:
 | Interface | URL |
 |---|---|
 | Interactive API docs | `http://127.0.0.1:8000/docs` |
+| Map viewer | `http://127.0.0.1:8000/map` |
 | OGC collections | `http://127.0.0.1:8000/collections` |
 | STAC catalogue | `http://127.0.0.1:8000/stac` |
 | OGC Processes | `http://127.0.0.1:8000/processes` |
@@ -266,19 +272,27 @@ uv run eostrata serve --reload
 
 ## Exploring the map viewer
 
-The map viewer is available per collection via the OGC Tiles endpoint:
+The map viewer is a catalog-aware Leaflet interface available at:
 
 ```
-http://127.0.0.1:8000/collections/worldpop/tiles/WebMercatorQuad/map.html?item=worldpop_nga&datetime=2020-01-01&rescale=0,1000&colormap_name=viridis
+http://127.0.0.1:8000/map
 ```
 
-**Key query parameters:**
+Use the dropdowns to select a collection, item, datetime, colormap and rescale range. The viewer loads all available data from the STAC catalogue automatically.
+
+You can also deep-link directly to a specific view with query parameters:
+
+```
+http://127.0.0.1:8000/map?collection=worldpop&item=worldpop_nga&datetime=2020-01-01&rescale=0,1000&colormap_name=viridis
+```
+
+**Supported query parameters:**
 
 | Parameter | Description | Example |
 |---|---|---|
+| `collection` | Collection id to pre-select | `worldpop`, `chirps`, `cds` |
 | `item` | STAC item id within the collection | `worldpop_nga` |
 | `datetime` | ISO 8601 datetime or interval for time selection | `2021-01-01` or `2021-01-01/2022-12-31` |
-| `agg` | Temporal aggregation method | `mean`, `sum`, `min`, `max`, `anomaly` |
 | `rescale` | Value range mapped to 0–255 | `0,1000` |
 | `colormap_name` | Matplotlib colormap name | `viridis`, `plasma`, `reds`, `ylorbr` |
 
@@ -413,6 +427,8 @@ Commands:
   download worldpop   Download a WorldPop population raster
   list                List datasets in the Zarr store and STAC catalogue
   serve               Start the tile server, STAC catalogue and OGC Processes API
+  test                Run the test suite with coverage
+  lint                Run ruff linter and formatter
   cleanup             Delete the store, raw downloads and catalogue (dev only)
 ```
 
@@ -455,7 +471,8 @@ Options:
   --variable TEXT         ERA5 variable short name: t2m, tp, u10, v10, sp (default: t2m)
   --year INTEGER          Single year (default: latest available)
   --years TEXT            Multiple years, comma-separated: 2022,2023
-  --months TEXT           Months to fetch, comma-separated: 1,2,3 (default: all 12)
+  --month INTEGER         Single month 1-12 (default: latest available)
+  --months TEXT           Months to fetch, comma-separated: 1,2,3 (default: latest available)
   --zarr-root PATH        Override Zarr store root
   --raw-dir PATH          Override raw download directory
   --catalog-path PATH     Override catalog.json path
@@ -479,6 +496,22 @@ Options:
   --host TEXT     Bind host (default: 127.0.0.1)
   --port INTEGER  Bind port (default: 8000)
   --reload        Enable hot-reload for development
+```
+
+**test**
+```
+uv run eostrata test [OPTIONS]
+
+Options:
+  -v, --verbose           Verbose pytest output (show individual test names)
+```
+
+**lint**
+```
+uv run eostrata lint [OPTIONS]
+
+Options:
+  --fix / --no-fix        Auto-fix ruff lint violations (default: --fix)
 ```
 
 **cleanup**

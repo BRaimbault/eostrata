@@ -417,7 +417,12 @@ def _dynamic_openapi() -> dict:
                 name = param.get("name")
                 if name == "tileMatrixSetId":
                     param["examples"] = tms_example
-                elif name in ("colormap_name", "rescale") or has_data and name in param_examples and param_examples[name]:
+                elif (
+                    name in ("colormap_name", "rescale")
+                    or has_data
+                    and name in param_examples
+                    and param_examples[name]
+                ):
                     param["examples"] = param_examples[name]
 
     return schema

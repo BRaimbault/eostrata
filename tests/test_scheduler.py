@@ -18,9 +18,8 @@ class TestLoadSchedules:
 
         f = tmp_path / "schedules.yml"
         f.write_text("jobs: []\n")
-        with patch.dict(sys.modules, {"yaml": None}):
-            with pytest.raises(ImportError, match="PyYAML"):
-                _load_schedules(f)
+        with patch.dict(sys.modules, {"yaml": None}), pytest.raises(ImportError, match="PyYAML"):
+            _load_schedules(f)
 
     def test_missing_file_returns_empty(self, tmp_path):
         result = _load_schedules(tmp_path / "nonexistent.yml")

@@ -104,11 +104,13 @@ class TestDownloadEra5:
 
         fake_client.retrieve.side_effect = _fake_retrieve
 
-        with patch.dict(sys.modules, {"cdsapi": fake_cdsapi}):
-            with patch("eostrata.sources.cds._get_cdsapi", return_value=fake_cdsapi):
-                result = _download_era5(
-                    dest, variable="2m_temperature", year=2023, months=[1, 2], bbox=(2, 4, 15, 14)
-                )
+        with (
+            patch.dict(sys.modules, {"cdsapi": fake_cdsapi}),
+            patch("eostrata.sources.cds._get_cdsapi", return_value=fake_cdsapi),
+        ):
+            result = _download_era5(
+                dest, variable="2m_temperature", year=2023, months=[1, 2], bbox=(2, 4, 15, 14)
+            )
 
         assert result == dest
         fake_client.retrieve.assert_called_once()

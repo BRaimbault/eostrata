@@ -1,7 +1,7 @@
 """Temporal aggregation reader — subclass of titiler.xarray.io.Reader.
 
-Intercepts get_variable() to apply a time slice and optional reduction
-before TiTiler renders the tile. No pre-computed intermediates.
+Intercepts tile rendering to apply a time slice and optional reduction
+before TiTiler encodes the tile.  No pre-computed intermediates.
 """
 
 from __future__ import annotations
@@ -111,32 +111,82 @@ class AggregatingReader(Reader):
     titiler.xarray Reader subclass that applies temporal aggregation
     before handing the DataArray to TiTiler's tile renderer.
 
-    TiTiler's Reader sets ``self.input`` via the module-level ``get_variable``
-    inside ``__attrs_post_init__``, so overriding ``get_variable`` as an instance
-    method has no effect.  We therefore override ``__attrs_post_init__`` and
-    reduce the time dimension there, after the parent has finished initialising.
+    TiTiler's Reader.__attrs_post_init__ calls the module-level get_variable()
+    directly (not self.get_variable), so we must override __attrs_post_init__
+    to intercept before that call.  We replicate Reader's init logic so we can:
 
-    Time selection via ``sel`` (e.g. ``sel=["time=2020-01-01"]``) is handled
-    by TiTiler before we get here and already produces a 2D array, so we only
-    need to act when the array is still 3D after the parent init.
+      1. Rename ERA5's ``valid_time`` coordinate to ``time`` before get_variable
+         tries to process a ``sel=time=...`` parameter.
+      2. Collapse any remaining time dimension after get_variable returns, so
+         TiTiler always receives a 2D (y, x) array for tile encoding.
+
+    The get_variable() instance method is retained for direct callers (tests,
+    zonal-stats) and respects ``_agg_datetime``, ``_agg_method``, ``_agg_baseline``
+    instance attributes.
     """
 
     def __attrs_post_init__(self) -> None:
-        """Initialise parent, then collapse any remaining time dimension."""
-        super().__attrs_post_init__()
+        """Open dataset, normalise coords, run get_variable, then collapse time."""
+        from rio_tiler.io.xarray import XarrayReader as _XarrayReader
+
+        # Open the dataset (mirrors Reader.__attrs_post_init__)
+        self.ds = self.opener(
+            self.src_path,
+            group=self.group,
+            decode_times=self.decode_times,
+        )
+
+        # Normalise ERA5 time coordinate: valid_time → time
+        if "valid_time" in self.ds.coords and "time" not in self.ds.coords:
+            self.ds = self.ds.rename({"valid_time": "time"})
+
+        # Select variable — sel handles any explicit datetime parameter
+        self.input = _base_get_variable(
+            self.ds,
+            self.variable,
+            sel=self.sel,
+            method=self.method,
+        )
+
+        # Let XarrayReader set bounds, CRS, _dims from self.input
+        _XarrayReader.__attrs_post_init__(self)
+
+        # Collapse any remaining time dimension (sel already handled specific datetimes)
         if "time" in self.input.dims:
             self.input = apply_temporal_aggregation(
                 self.input,
-                datetime_str=None,  # sel already handled datetime selection
+                datetime_str=None,
                 agg=None,  # default: last timestep
             )
-            # Re-sync _dims now that time is gone
             self._dims = [
-                d
-                for d in self.input.dims
-                if d
-                not in (
-                    self.input.rio.x_dim,
-                    self.input.rio.y_dim,
-                )
+                d for d in self.input.dims if d not in (self.input.rio.x_dim, self.input.rio.y_dim)
             ]
+
+    def get_variable(
+        self,
+        ds: xr.Dataset,
+        variable: str,
+        sel: list[str] | None = None,
+        method: str | None = None,
+    ) -> xr.DataArray:
+        """
+        Select *variable* from *ds* and apply temporal aggregation.
+
+        Respects ``_agg_datetime``, ``_agg_method``, and ``_agg_baseline``
+        instance attributes set by callers (e.g. tests, zonal-stats endpoint).
+        """
+        da = _base_get_variable(ds, variable, sel=sel, method=method)
+
+        datetime_str: str | None = getattr(self, "_agg_datetime", None)
+        agg: str | None = getattr(self, "_agg_method", None)
+        baseline: str | None = getattr(self, "_agg_baseline", None)
+
+        if "time" in da.dims:
+            da = apply_temporal_aggregation(
+                da,
+                datetime_str=datetime_str,
+                agg=agg,
+                baseline=baseline,
+            )
+
+        return da

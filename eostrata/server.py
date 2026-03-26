@@ -560,7 +560,7 @@ _COLORMAP_EXAMPLES = {
     "plasma": {"value": "plasma", "summary": "plasma — sequential, high contrast"},
     "inferno": {"value": "inferno", "summary": "inferno — sequential, dark-to-bright"},
     "magma": {"value": "magma", "summary": "magma — sequential, dark-to-light"},
-    "coolwarm": {"value": "coolwarm", "summary": "coolwarm — diverging, blue–red"}
+    "coolwarm": {"value": "coolwarm", "summary": "coolwarm — diverging, blue–red"},
 }
 
 _RESCALE_EXAMPLES = {

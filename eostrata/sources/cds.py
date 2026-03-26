@@ -147,7 +147,7 @@ def _netcdf_to_zarr(
     ds = ds.sel(x=slice(west, east), y=slice(north, south))
 
     # Drop ERA5 metadata variables that break Zarr append
-    for var in ['expver', 'time_bnds']:
+    for var in ["expver", "time_bnds"]:
         if var in ds:
             ds = ds.drop_vars(var)
 

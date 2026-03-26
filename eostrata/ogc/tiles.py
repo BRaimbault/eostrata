@@ -13,10 +13,10 @@ Query parameters:
     baseline    - ISO 8601 interval for anomaly baseline
     colormap_name, rescale, ... passed through to TiTiler
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 from fastapi.responses import HTMLResponse, Response
@@ -41,6 +41,7 @@ _tiler = TilerFactory(
 def _resolve(collection_id: str, item_id: str | None) -> dict:
     """Resolve collection + optional item to zarr_root, zarr_group, variable."""
     from eostrata.catalog import load_or_create
+
     catalog = load_or_create(settings.catalog_path)
     collection = catalog.get_child(collection_id)
     if collection is None:
@@ -54,9 +55,7 @@ def _resolve(collection_id: str, item_id: str | None) -> dict:
     else:
         item = collection.get_item(item_id)
         if item is None:
-            raise HTTPException(
-                404, detail=f"Item '{item_id}' not found in '{collection_id}'."
-            )
+            raise HTTPException(404, detail=f"Item '{item_id}' not found in '{collection_id}'.")
 
     if "zarr" not in item.assets:
         raise HTTPException(422, detail=f"Item '{item.id}' has no zarr asset.")
@@ -76,9 +75,7 @@ async def _delegate(path: str, params: dict) -> Response:
     _app = _FastAPI()
     _app.include_router(_tiler.router, prefix="/internal")
 
-    async with AsyncClient(
-        transport=ASGITransport(app=_app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=_app), base_url="http://test") as client:
         resp = await client.get(f"/internal/{path}", params=params)
 
     return Response(
@@ -95,21 +92,28 @@ async def _delegate(path: str, params: dict) -> Response:
 )
 async def collection_map(
     request: Request,
-    collection_id: str = Path(...),
-    tileMatrixSetId: str = Path(...),
-    item: Optional[str] = Query(None),
-    datetime: Optional[str] = Query(None),
-    agg: Optional[str] = Query(None),
-    colormap_name: Optional[str] = Query(None),
-    rescale: Optional[str] = Query(None),
+    collection_id: str = Path(..., description="Collection ID"),
+    tileMatrixSetId: str = Path(..., description="Tile matrix set"),
+    item: str | None = Query(None, description="Item ID within the collection"),
+    datetime: str | None = Query(None, description="ISO 8601 datetime for time selection"),
+    agg: str | None = Query(
+        None, description="Temporal aggregation method: mean|sum|min|max|anomaly"
+    ),
+    colormap_name: str | None = Query(
+        None, description="Colormap name (e.g. viridis, plasma, inferno, RdYlGn)"
+    ),
+    rescale: str | None = Query(None, description="Colormap range as min,max"),
 ) -> HTMLResponse:
     resolved = _resolve(collection_id, item)
     params: dict = {
         "url": resolved["zarr_root"],
         "group": resolved["zarr_group"],
         "variable": resolved["variable"],
-        "sel": f"time={datetime}",
     }
+    if datetime:
+        params["sel"] = f"time={datetime}"
+    if agg:
+        params["agg"] = agg
     if colormap_name:
         params["colormap_name"] = colormap_name
     if rescale:
@@ -117,9 +121,10 @@ async def collection_map(
 
     base = str(request.base_url).rstrip("/")
     from urllib.parse import quote
+
     parts = []
     for k, v in params.items():
-        parts.append(f"{k}={quote(str(v), safe='/,:')}") 
+        parts.append(f"{k}={quote(str(v), safe='/,:')}")
     url = f"{base}/tiles/{tileMatrixSetId}/map.html?{'&'.join(parts)}"
     return HTMLResponse(
         content=f'<meta http-equiv="refresh" content="0;url={url}">',
@@ -132,13 +137,17 @@ async def collection_map(
 )
 async def collection_tilejson(
     request: Request,
-    collection_id: str = Path(...),
-    tileMatrixSetId: str = Path(...),
-    item: Optional[str] = Query(None),
-    datetime: Optional[str] = Query(None),
-    agg: Optional[str] = Query(None),
-    colormap_name: Optional[str] = Query(None),
-    rescale: Optional[str] = Query(None),
+    collection_id: str = Path(..., description="Collection ID"),
+    tileMatrixSetId: str = Path(..., description="Tile matrix set"),
+    item: str | None = Query(None, description="Item ID within the collection"),
+    datetime: str | None = Query(None, description="ISO 8601 datetime for time selection"),
+    agg: str | None = Query(
+        None, description="Temporal aggregation method: mean|sum|min|max|anomaly"
+    ),
+    colormap_name: str | None = Query(
+        None, description="Colormap name (e.g. viridis, plasma, RdYlGn)"
+    ),
+    rescale: str | None = Query(None, description="Colormap range as min,max"),
 ) -> dict:
     _resolve(collection_id, item)  # validate early
     base = str(request.base_url).rstrip("/")
@@ -170,17 +179,23 @@ async def collection_tilejson(
     summary="Map tile for a collection item",
 )
 async def collection_tile(
-    collection_id: str = Path(...),
-    tileMatrixSetId: str = Path(...),
-    z: int = Path(...),
-    x: int = Path(...),
-    y: int = Path(...),
-    item: Optional[str] = Query(None),
-    datetime: Optional[str] = Query(None),
-    agg: Optional[str] = Query(None),
-    baseline: Optional[str] = Query(None),
-    colormap_name: Optional[str] = Query(None),
-    rescale: Optional[str] = Query(None),
+    collection_id: str = Path(..., description="Collection ID"),
+    tileMatrixSetId: str = Path(..., description="Tile matrix set"),
+    z: int = Path(..., description="Zoom level"),
+    x: int = Path(..., description="Tile column"),
+    y: int = Path(..., description="Tile row"),
+    item: str | None = Query(None, description="Item ID within the collection"),
+    datetime: str | None = Query(None, description="ISO 8601 datetime for time selection"),
+    agg: str | None = Query(
+        None, description="Temporal aggregation method: mean|sum|min|max|anomaly"
+    ),
+    baseline: str | None = Query(
+        None, description="ISO 8601 interval used as baseline for anomaly aggregation"
+    ),
+    colormap_name: str | None = Query(
+        None, description="Colormap name (e.g. viridis, plasma, RdYlGn)"
+    ),
+    rescale: str | None = Query(None, description="Colormap range as min,max"),
 ) -> Response:
     resolved = _resolve(collection_id, item)
     params: dict = {
@@ -195,9 +210,7 @@ async def collection_tile(
     if rescale:
         params["rescale"] = rescale
 
-    return await _delegate(
-        f"tiles/{tileMatrixSetId}/{z}/{x}/{y}", params
-    )
+    return await _delegate(f"tiles/{tileMatrixSetId}/{z}/{x}/{y}", params)
 
 
 @router.get(
@@ -205,8 +218,8 @@ async def collection_tile(
     summary="Dataset info for a collection item",
 )
 async def collection_info(
-    collection_id: str = Path(...),
-    item: Optional[str] = Query(None),
+    collection_id: str = Path(..., description="Collection ID"),
+    item: str | None = Query(None, description="Item ID within the collection"),
 ) -> Response:
     resolved = _resolve(collection_id, item)
     params = {

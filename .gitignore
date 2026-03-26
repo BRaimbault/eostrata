@@ -4,16 +4,29 @@ __pycache__/
 *.egg-info/
 dist/
 build/
- 
+
 # uv — commit uv.lock, ignore the virtual environment
 .venv/
- 
+
 # Environment — never commit secrets
 .env
- 
+
 # Data — never commit raw downloads or the store
 data/
- 
-# OS
+*.tif
+*.tif.gz
+*.nc
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Linting
+.ruff_cache/
+
+# OS / IDE
 .DS_Store
- 
+.idea/
+.vscode/

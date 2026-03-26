@@ -1,8 +1,8 @@
 """OGC API - Processes: zonalstats process."""
+
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
 
 import numpy as np
 import rioxarray  # noqa: F401 — registers .rio accessor on xarray
@@ -10,7 +10,6 @@ import xarray as xr
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from shapely.geometry import shape
 
 from eostrata.config import settings
 
@@ -68,19 +67,69 @@ _PROCESS_DESCRIPTION = {
 
 # ── Request / response models ─────────────────────────────────────────────────
 
+
 class ZonalStatsInputs(BaseModel):
-    url: str = Field(default=None, description="Zarr store root path")
-    variable: str = Field(..., description="Variable name in the Zarr group")
-    group: str = Field(..., description="Zarr group path, e.g. worldpop/nga_2021_1km")
-    features: dict = Field(..., description="GeoJSON FeatureCollection")
-    datetime: Optional[str] = Field(None, description="ISO 8601 datetime or interval")
+    url: str = Field(
+        default=None, description="Zarr store root path (leave blank to use the server default)"
+    )
+    variable: str = Field(
+        ...,
+        description="Variable name in the Zarr group (see /examples for valid values)",
+        json_schema_extra={"example": "population"},
+    )
+    group: str = Field(
+        ...,
+        description="Zarr group path inside the store (see /examples for valid values)",
+        json_schema_extra={"example": "worldpop/nga"},
+    )
+    features: dict = Field(
+        ..., description="GeoJSON FeatureCollection, Feature, or Polygon geometry"
+    )
+    datetime: str | None = Field(
+        None,
+        description="ISO 8601 datetime for time selection (see /examples for valid values)",
+        json_schema_extra={"example": "2020-01-01T00:00:00+00:00"},
+    )
+
+
+_EXECUTION_EXAMPLE = {
+    "inputs": {
+        "group": "worldpop/nga",
+        "variable": "population",
+        "datetime": "2020-01-01T00:00:00+00:00",
+        "features": {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [
+                                [2.0, 4.0],
+                                [15.0, 4.0],
+                                [15.0, 14.0],
+                                [2.0, 14.0],
+                                [2.0, 4.0],
+                            ]
+                        ],
+                    },
+                    "properties": {"name": "example zone"},
+                }
+            ],
+        },
+    }
+}
 
 
 class ExecutionRequest(BaseModel):
+    model_config = {"json_schema_extra": {"examples": [_EXECUTION_EXAMPLE]}}
+
     inputs: ZonalStatsInputs
 
 
 # ── Computation helpers ───────────────────────────────────────────────────────
+
 
 def _load_array(url: str, group: str, variable: str) -> xr.DataArray:
     """Open the Zarr group and return the requested variable as a 2D DataArray."""
@@ -128,7 +177,7 @@ def _feature_stats(da: xr.DataArray, geometry: dict) -> dict:
         "std": float(valid.std()),
         "sum": float(valid.sum()),
         "percentiles": {
-            "p5":  float(np.percentile(valid, 5)),
+            "p5": float(np.percentile(valid, 5)),
             "p25": float(np.percentile(valid, 25)),
             "p50": float(np.percentile(valid, 50)),
             "p75": float(np.percentile(valid, 75)),
@@ -138,6 +187,7 @@ def _feature_stats(da: xr.DataArray, geometry: dict) -> dict:
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+
 
 @router.get("", summary="List available processes")
 def list_processes() -> dict:
@@ -180,10 +230,15 @@ def execute_zonalstats(body: ExecutionRequest) -> dict:
         if fc.get("type") == "Feature":
             fc = {"type": "FeatureCollection", "features": [fc]}
         elif fc.get("type") in {"Polygon", "MultiPolygon"}:
-            fc = {"type": "FeatureCollection",
-                  "features": [{"type": "Feature", "geometry": fc, "properties": {}}]}
+            fc = {
+                "type": "FeatureCollection",
+                "features": [{"type": "Feature", "geometry": fc, "properties": {}}],
+            }
         else:
-            raise HTTPException(status_code=422, detail="'features' must be a GeoJSON FeatureCollection, Feature or Polygon.")
+            raise HTTPException(
+                status_code=422,
+                detail="'features' must be a GeoJSON FeatureCollection, Feature or Polygon.",
+            )
 
     features = fc.get("features", [])
     if not features:

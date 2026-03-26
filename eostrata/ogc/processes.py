@@ -245,8 +245,10 @@ def _feature_stats(da: xr.DataArray, geometry: dict) -> dict:
 
 @router.get("", summary="List available processes")
 def list_processes() -> dict:
+    from eostrata.ogc.ingest import INGEST_PROCESS_IDS
+
     return {
-        "processes": [{"id": "zonalstats", "version": "0.1.0"}],
+        "processes": [{"id": "zonalstats", "version": "0.1.0"}, *INGEST_PROCESS_IDS],
         "links": [],
     }
 

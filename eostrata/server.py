@@ -13,6 +13,9 @@ GET  /stac/collections/{id}/items                          STAC items
 GET  /tiles/...                                             raw TiTiler (direct access)
 GET  /processes                                             OGC Processes list
 POST /processes/zonalstats/execution                        zonal statistics
+POST /processes/ingest/execution                            async ingest (worldpop/chirps/cds)
+GET  /processes/jobs                                        list ingest jobs
+GET  /processes/jobs/{job_id}                               poll ingest job
 GET  /docs                                                  OpenAPI docs
 """
 
@@ -35,6 +38,7 @@ from titiler.xarray.factory import TilerFactory
 from eostrata.aggregate import AggregatingReader
 from eostrata.catalog import PystacClient, load_or_create
 from eostrata.config import settings
+from eostrata.ogc.ingest import router as ingest_router
 from eostrata.ogc.processes import router as processes_router
 from eostrata.ogc.tiles import router as collection_tiles_router
 
@@ -90,6 +94,14 @@ _OPENAPI_TAGS = [
         "description": (
             "Execute analytical processes. **zonalstats** computes per-polygon raster statistics. "
             "Use **/examples** to obtain the `group` and `variable` values for your ingested data."
+        ),
+    },
+    {
+        "name": "OGC Ingest",
+        "description": (
+            "Trigger async data ingestion jobs for WorldPop, CHIRPS, and CDS/ERA5. "
+            "POST to an execution endpoint to start a job — the response includes a `job_id`. "
+            "Poll `GET /processes/jobs/{job_id}` to check status (`running` → `succeeded` or `failed`)."
         ),
     },
     {
@@ -152,6 +164,7 @@ app.include_router(
 # ── OGC Processes ─────────────────────────────────────────────────────────────
 
 app.include_router(processes_router)
+app.include_router(ingest_router)
 
 add_exception_handlers(app, DEFAULT_STATUS_CODES)
 

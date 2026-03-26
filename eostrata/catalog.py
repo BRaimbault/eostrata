@@ -1,8 +1,9 @@
 """STAC catalogue management — create, load, register items, serve via stac-fastapi."""
+
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -128,33 +129,49 @@ def register_item(
             f"Available: {[c.id for c in catalog.get_children()]}"
         )
 
-    # Extend datetime interval if item already exists
+    # Extend datetime interval and accumulate ingested timestamps if item already exists
     existing = collection.get_item(item_id)
     if existing is not None:
         # Read interval from properties since we use start/end not datetime
-        from datetime import timezone as tz
         existing_start = existing.common_metadata.start_datetime or existing.datetime
         existing_end = existing.common_metadata.end_datetime or existing.datetime
         if existing_start and existing_end:
-            interval_start = min(existing_start.replace(tzinfo=tz.utc) if existing_start.tzinfo is None else existing_start, datetime_)
-            interval_end = max(existing_end.replace(tzinfo=tz.utc) if existing_end.tzinfo is None else existing_end, datetime_)
+            interval_start = min(
+                existing_start.replace(tzinfo=UTC)
+                if existing_start.tzinfo is None
+                else existing_start,
+                datetime_,
+            )
+            interval_end = max(
+                existing_end.replace(tzinfo=UTC) if existing_end.tzinfo is None else existing_end,
+                datetime_,
+            )
         else:
             interval_start = datetime_
             interval_end = datetime_
+        # Accumulate the exact list of ingested timestamps (preserves gap information)
+        existing_timestamps: list[str] = existing.properties.get("eostrata:datetimes", [])
+        new_ts = datetime_.isoformat()
+        ingested_datetimes = sorted(set(existing_timestamps) | {new_ts})
         collection.remove_item(item_id)
         logger.info("Extending datetime interval for STAC item '%s'", item_id)
     else:
         interval_start = datetime_
         interval_end = datetime_
+        ingested_datetimes = [datetime_.isoformat()]
 
     west, south, east, north = bbox
     geometry = {
         "type": "Polygon",
-        "coordinates": [[
-            [west, south], [east, south],
-            [east, north], [west, north],
-            [west, south],
-        ]],
+        "coordinates": [
+            [
+                [west, south],
+                [east, south],
+                [east, north],
+                [west, north],
+                [west, south],
+            ]
+        ],
     }
 
     properties = {
@@ -162,6 +179,7 @@ def register_item(
         "eostrata:variable": variable,
         "eostrata:zarr_group": zarr_group,
         "eostrata:zarr_root": str(zarr_root),
+        "eostrata:datetimes": ingested_datetimes,
         "datetime": None,
         "start_datetime": interval_start.isoformat(),
         "end_datetime": interval_end.isoformat(),
@@ -236,6 +254,7 @@ def resolve_item(
 
 # ── stac-fastapi client ───────────────────────────────────────────────────────
 
+
 def _item_to_dict(item: pystac.Item) -> dict:
     return item.to_dict()
 
@@ -257,13 +276,15 @@ class PystacClient(BaseCoreClient):
 
     def _catalog(self) -> pystac.Catalog:
         from eostrata.config import settings
+
         path = self.catalog_path or str(settings.catalog_path)
         return load_or_create(path)
 
     def all_collections(self, **kwargs: Any) -> Collections:
         cat = self._catalog()
-        colls = [_collection_to_dict(c) for c in cat.get_children()
-                 if isinstance(c, pystac.Collection)]
+        colls = [
+            _collection_to_dict(c) for c in cat.get_children() if isinstance(c, pystac.Collection)
+        ]
         return Collections(collections=colls, links=[])
 
     def get_collection(self, collection_id: str, **kwargs: Any) -> Collection:
@@ -274,8 +295,7 @@ class PystacClient(BaseCoreClient):
         return _collection_to_dict(coll)
 
     def item_collection(
-        self, collection_id: str, bbox=None, datetime=None,
-        limit=10, token=None, **kwargs: Any
+        self, collection_id: str, bbox=None, datetime=None, limit=10, token=None, **kwargs: Any
     ) -> ItemCollection:
         cat = self._catalog()
         coll = cat.get_child(collection_id)

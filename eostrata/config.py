@@ -1,10 +1,10 @@
 """Central configuration — all settings via environment variables or .env file."""
+
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
 
-from pydantic import field_validator, model_validator
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     bbox_north: float = 90.0
 
     @model_validator(mode="after")
-    def validate_bbox(self) -> "Settings":
+    def validate_bbox(self) -> Settings:
         if self.bbox_west >= self.bbox_east:
             raise ValueError("bbox_west must be less than bbox_east")
         if self.bbox_south >= self.bbox_north:
@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     def bbox(self) -> tuple[float, float, float, float]:
         """Return bbox as (west, south, east, north)."""
         return (self.bbox_west, self.bbox_south, self.bbox_east, self.bbox_north)
+
+    # ── Cache / eviction ──────────────────────────────────────────────────────
+    # Maximum size of the Zarr store in megabytes.  0 means unlimited.
+    store_quota_mb: float = 0.0
 
     # ── WorldPop ──────────────────────────────────────────────────────────────
     worldpop_base_url: str = "https://data.worldpop.org/GIS/Population/Global_2000_2020"

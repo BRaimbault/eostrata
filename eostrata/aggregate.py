@@ -3,14 +3,15 @@
 Intercepts get_variable() to apply a time slice and optional reduction
 before TiTiler renders the tile. No pre-computed intermediates.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import List, Literal, Optional
+from typing import Literal
 
-import numpy as np
 import xarray as xr
 from titiler.xarray.io import Reader
+from titiler.xarray.io import get_variable as _base_get_variable
 
 logger = logging.getLogger(__name__)
 
@@ -120,11 +121,11 @@ class AggregatingReader(Reader):
         self,
         ds: xr.Dataset,
         variable: str,
-        sel: Optional[List[str]] = None,
-        method: Optional[str] = None,
+        sel: list[str] | None = None,
+        method: str | None = None,
     ) -> xr.DataArray:
         """Override to apply temporal aggregation after variable selection."""
-        da = super().get_variable(ds, variable, sel=sel, method=method)
+        da = _base_get_variable(ds, variable, sel=sel, method=method)
 
         # Pull aggregation params injected via reader_options
         datetime_str: str | None = getattr(self, "_agg_datetime", None)

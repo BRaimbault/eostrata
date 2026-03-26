@@ -1,4 +1,5 @@
 """Zarr store helpers — clip, convert and write raster data."""
+
 from __future__ import annotations
 
 import logging
@@ -61,9 +62,7 @@ def geotiff_to_zarr(
         if bbox is not None:
             west, south, east, north = bbox
             clip_geom = [box(west, south, east, north).__geo_interface__]
-            data, transform = rasterio.mask.mask(
-                src, clip_geom, crop=True, nodata=src.nodata
-            )
+            data, transform = rasterio.mask.mask(src, clip_geom, crop=True, nodata=src.nodata)
             data = data[0].astype("float32")
             crs: CRS = src.crs or CRS.from_epsg(4326)
             nodata = src.nodata
@@ -126,12 +125,10 @@ def geotiff_to_zarr(
     if group_exists and time_coord is not None:
         # Append new timestep along the time dimension
         logger.info("Appending to existing Zarr dataset '%s'", dataset_name)
-        ds.to_zarr(store_path, group=dataset_name, mode="a",
-                   append_dim="time", consolidated=True)
+        ds.to_zarr(store_path, group=dataset_name, mode="a", append_dim="time", consolidated=True)
     else:
         logger.info("Writing new Zarr dataset '%s'", dataset_name)
-        ds.to_zarr(store_path, group=dataset_name, mode="w",
-                   encoding=encoding, consolidated=True)
+        ds.to_zarr(store_path, group=dataset_name, mode="w", encoding=encoding, consolidated=True)
 
     logger.info("Done: %s", dataset_name)
     return ds

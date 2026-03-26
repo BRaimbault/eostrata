@@ -1,15 +1,16 @@
 # Getting started with eostrata
 
-> **⚠️ Early development — only WorldPop ingestion and basic serving are implemented.**
-
-This guide walks through downloading your first WorldPop dataset, storing it as Zarr, and serving it as map tiles, a STAC catalogue, and zonal statistics.
+This guide walks through downloading earth observation data, storing it as Zarr, and serving it as map tiles, a STAC catalogue, and zonal statistics.
 
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Configuration](#configuration)
-- [Downloading WorldPop data](#downloading-worldpop-data)
+- [Downloading data](#downloading-data)
+  - [WorldPop — population](#worldpop--population)
+  - [CHIRPS — precipitation](#chirps--precipitation)
+  - [CDS / ERA5 — climate reanalysis](#cds--era5--climate-reanalysis)
 - [Starting the server](#starting-the-server)
 - [Exploring the map viewer](#exploring-the-map-viewer)
 - [STAC catalogue walkthrough](#stac-catalogue-walkthrough)
@@ -51,13 +52,17 @@ uv run eostrata --help
 
 All settings are read from environment variables prefixed `EOSTRATA_`. The most important ones to set before downloading anything are the **bounding box** (your area of interest) and the **storage paths**.
 
-Create a `.env` file at the project root:
+Copy `.env.example` to `.env` and edit it, or set environment variables directly. The full set of options:
 
 ```bash
-# Storage
+# Storage paths
 EOSTRATA_ZARR_ROOT=data/zarr
 EOSTRATA_RAW_DIR=data/raw
 EOSTRATA_CATALOG_PATH=data/catalog.json
+
+# Store quota — maximum size of the Zarr store in MB. 0 = unlimited (default).
+# When a download would exceed this limit, the oldest groups are evicted first.
+# EOSTRATA_STORE_QUOTA_MB=0
 
 # Bounding box (west, south, east, north) in EPSG:4326
 # Example below covers Nigeria
@@ -71,33 +76,168 @@ EOSTRATA_BBOX_NORTH=14.0
 
 ---
 
-## Downloading WorldPop data
+## Downloading data
 
-Download a population raster for a country and year. The dataset is clipped to your configured bounding box, converted to a CF-compliant Zarr collection, and registered in the STAC catalogue automatically.
+Every `download` command follows the same pattern:
 
-```bash
-uv run eostrata download worldpop NGA --year 2020
-```
+1. Fetch the raw file (GeoTIFF, NetCDF, or gzip) from the upstream source
+2. Clip to your configured bounding box
+3. Write a CF-compliant Zarr group — multiple downloads append along the `time` dimension
+4. Register a STAC item in `data/catalog.json`
 
-The command will:
-1. Resolve the WorldPop R2025A download URL for Nigeria 2020
-2. Download the GeoTIFF to `data/raw/worldpop/`
-3. Clip it to your bbox
-4. Write a Zarr group to `data/zarr/worldpop/nga` with variable `population`
-5. Register a STAC item `worldpop_nga` in `data/catalog.json`
-
-Multiple years are appended along the `time` dimension of the same Zarr group - one group per country, all years as timesteps:
-
-```bash
-uv run eostrata download worldpop NGA --year 2021
-uv run eostrata download worldpop NGA --year 2022
-```
-
-Check what is in the store at any time:
+Raw files are cached in `data/raw/` and reused on subsequent runs. Check what is in the store at any time:
 
 ```bash
 uv run eostrata list
 ```
+
+This shows each Zarr group with its size, total store usage, and quota if one is configured:
+
+```
+Zarr store: data/zarr  [142.3 MB / 10000 MB (1%)]
+┌───────────────┬──────────┐
+│ Group         │ Size     │
+├───────────────┼──────────┤
+│ chirps/global │  89.4 MB │
+│ worldpop/nga  │  52.9 MB │
+└───────────────┴──────────┘
+```
+
+---
+
+### WorldPop — population
+
+Annual population count rasters from [WorldPop R2025A](https://www.worldpop.org). One Zarr group per country, all years as timesteps.
+
+**Download the latest available year:**
+```bash
+uv run eostrata download worldpop NGA
+```
+
+**Download a specific year:**
+```bash
+uv run eostrata download worldpop NGA --year 2020
+```
+
+**Build a multi-year time series** in a single call:
+```bash
+uv run eostrata download worldpop NGA --years 2020,2021,2022
+```
+
+**Download for multiple countries:**
+```bash
+uv run eostrata download worldpop NGA
+uv run eostrata download worldpop KEN
+uv run eostrata download worldpop ETH
+```
+
+Each country gets its own Zarr group (`worldpop/nga`, `worldpop/ken`, …) and STAC item.
+
+**What gets written:**
+
+| | Value |
+|---|---|
+| Zarr group | `data/zarr/worldpop/<iso3_lower>/` |
+| Variable | `population` |
+| STAC item id | `worldpop_<iso3_lower>` |
+| Time resolution | annual (one timestep per year) |
+
+---
+
+### CHIRPS — precipitation
+
+Monthly precipitation totals from [CHIRPS v2.0](https://www.chc.ucsb.edu/data/chirps) (Climate Hazards Group InfraRed Precipitation with Station data). A single global Zarr group covers all months as timesteps.
+
+**Download the latest available month** (typically ~45 days behind real time):
+```bash
+uv run eostrata download chirps
+```
+
+**Download a specific month:**
+```bash
+uv run eostrata download chirps --year 2023 --month 6
+```
+
+**Download multiple months at once:**
+```bash
+uv run eostrata download chirps --year 2023 --months 1,2,3
+```
+
+**Download multiple years and months in a single call:**
+```bash
+uv run eostrata download chirps --years 2022,2023 --months 1,2,3,4,5,6,7,8,9,10,11,12
+```
+
+**What gets written:**
+
+| | Value |
+|---|---|
+| Zarr group | `data/zarr/chirps/global/` |
+| Variable | `precipitation` |
+| STAC item id | `chirps_global` |
+| Time resolution | monthly (one timestep per month) |
+
+---
+
+### CDS / ERA5 — climate reanalysis
+
+Monthly-averaged ERA5 reanalysis from the [Copernicus Climate Data Store](https://cds.climate.copernicus.eu). One Zarr group per variable, all years and months as timesteps.
+
+**Setup required** — ERA5 needs a CDS account and API credentials before you can download:
+
+1. Register at [cds.climate.copernicus.eu](https://cds.climate.copernicus.eu)
+2. Install the optional dependency: `uv sync --extra cds`
+3. Create `~/.cdsapirc`:
+```
+url: https://cds.climate.copernicus.eu/api
+key: <your-api-key>
+```
+
+**Download 2m air temperature for the latest available year** (~3 months behind real time):
+```bash
+uv run eostrata download cds --variable t2m
+```
+
+**Download a specific year:**
+```bash
+uv run eostrata download cds --variable t2m --year 2023
+```
+
+**Download specific months only:**
+```bash
+uv run eostrata download cds --variable t2m --year 2023 --months 1,2,3
+```
+
+**Supported variables:**
+
+| Flag | ERA5 variable | Unit |
+|---|---|---|
+| `t2m` | 2m air temperature | K |
+| `tp` | Total precipitation | m |
+| `u10` | 10m U-component of wind | m/s |
+| `v10` | 10m V-component of wind | m/s |
+| `sp` | Surface pressure | Pa |
+
+**Download multiple years at once:**
+```bash
+uv run eostrata download cds --variable t2m --years 2021,2022,2023
+```
+
+**Download multiple variables** (run once per variable):
+```bash
+uv run eostrata download cds --variable t2m --year 2023
+uv run eostrata download cds --variable tp --year 2023
+uv run eostrata download cds --variable u10 --year 2023
+```
+
+**What gets written** (example for `t2m`):
+
+| | Value |
+|---|---|
+| Zarr group | `data/zarr/era5/t2m/` |
+| Variable | `t2m` |
+| STAC item id | `era5_t2m` |
+| Time resolution | monthly (one timestep per month) |
 
 ---
 
@@ -268,7 +408,9 @@ You can pass any number of features in the `FeatureCollection`, statistics are c
 eostrata --help
 
 Commands:
-  download worldpop   Download a WorldPop raster, clip to bbox, write to Zarr
+  download chirps     Download a CHIRPS monthly precipitation raster
+  download cds        Download ERA5 monthly reanalysis from Copernicus CDS
+  download worldpop   Download a WorldPop population raster
   list                List datasets in the Zarr store and STAC catalogue
   serve               Start the tile server, STAC catalogue and OGC Processes API
   cleanup             Delete the store, raw downloads and catalogue (dev only)
@@ -282,11 +424,51 @@ Arguments:
   ISO3                    ISO 3166-1 alpha-3 country code, e.g. NGA
 
 Options:
-  --year INTEGER          Reference year (default: latest available)
+  --year INTEGER          Single year (default: latest available)
+  --years TEXT            Multiple years, comma-separated: 2020,2021,2022
   --zarr-root PATH        Override Zarr store root
   --raw-dir PATH          Override raw download directory
   --catalog-path PATH     Override catalog.json path
   -v, --verbose           Enable debug logging
+```
+
+**download chirps**
+```
+uv run eostrata download chirps [OPTIONS]
+
+Options:
+  --year INTEGER          Single year (default: latest available)
+  --years TEXT            Multiple years, comma-separated: 2022,2023
+  --month INTEGER         Single month 1-12 (default: latest available)
+  --months TEXT           Multiple months, comma-separated: 1,2,3
+  --zarr-root PATH        Override Zarr store root
+  --raw-dir PATH          Override raw download directory
+  --catalog-path PATH     Override catalog.json path
+  -v, --verbose           Enable debug logging
+```
+
+**download cds**
+```
+uv run eostrata download cds [OPTIONS]
+
+Options:
+  --variable TEXT         ERA5 variable short name: t2m, tp, u10, v10, sp (default: t2m)
+  --year INTEGER          Single year (default: latest available)
+  --years TEXT            Multiple years, comma-separated: 2022,2023
+  --months TEXT           Months to fetch, comma-separated: 1,2,3 (default: all 12)
+  --zarr-root PATH        Override Zarr store root
+  --raw-dir PATH          Override raw download directory
+  --catalog-path PATH     Override catalog.json path
+  -v, --verbose           Enable debug logging
+```
+
+**list**
+```
+uv run eostrata list [OPTIONS]
+
+Options:
+  --zarr-root PATH        Zarr store root
+  --catalog-path PATH     Path to catalog.json
 ```
 
 **serve**
@@ -304,5 +486,8 @@ Options:
 uv run eostrata cleanup [OPTIONS]
 
 Options:
-  --yes, -y   Skip confirmation prompt
+  --zarr-root PATH    Zarr store root
+  --raw-dir PATH      Raw downloads directory
+  --catalog-path PATH Path to catalog.json
+  --yes, -y           Skip confirmation prompt
 ```

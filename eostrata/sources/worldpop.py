@@ -1,8 +1,9 @@
 """WorldPop population raster source."""
+
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -121,5 +122,5 @@ class WorldPopSource(BaseSource):
 
     def latest_available(self) -> datetime:
         """WorldPop R2025A covers 2015-2030 — default to previous year."""
-        year = datetime.now(tz=timezone.utc).year - 1
-        return datetime(year, 1, 1, tzinfo=timezone.utc)
+        year = datetime.now(tz=UTC).year - 1
+        return datetime(year, 1, 1, tzinfo=UTC)

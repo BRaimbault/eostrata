@@ -1,4 +1,5 @@
 """BaseSource abstract class and source registry."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -6,36 +7,34 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import pystac
 import xarray as xr
 
 # ── Registry ──────────────────────────────────────────────────────────────────
 
-_REGISTRY: dict[str, type["BaseSource"]] = {}
+_REGISTRY: dict[str, type[BaseSource]] = {}
 
 
-def register_source(cls: type["BaseSource"]) -> type["BaseSource"]:
+def register_source(cls: type[BaseSource]) -> type[BaseSource]:
     """Class decorator — adds the source to the global registry."""
     _REGISTRY[cls.id] = cls
     return cls
 
 
-def get_source(source_id: str) -> type["BaseSource"]:
+def get_source(source_id: str) -> type[BaseSource]:
     """Return a registered source class by id."""
     if source_id not in _REGISTRY:
         available = list(_REGISTRY)
-        raise ValueError(
-            f"Unknown source '{source_id}'. Available: {available}"
-        )
+        raise ValueError(f"Unknown source '{source_id}'. Available: {available}")
     return _REGISTRY[source_id]
 
 
-def all_sources() -> list[type["BaseSource"]]:
+def all_sources() -> list[type[BaseSource]]:
     """Return all registered source classes."""
     return list(_REGISTRY.values())
 
 
 # ── Abstract base ─────────────────────────────────────────────────────────────
+
 
 class BaseSource(ABC):
     """

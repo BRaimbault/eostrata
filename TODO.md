@@ -1,0 +1,6 @@
+- [x] CDS source is not registering datetime in catalogue
+- [x] When downloading make sure to register sucessfull downloads in catalogue even if some fail
+- [x] CDS downloads the whole year if no month is specified while CHIRPS dont (it should)
+- [x] Update zarr registration logic to update catalogue without having to restart server
+- [x] Update http://127.0.0.1:8000/tiles/WebMercatorQuad/map.html to stop using the old group structure
+- [x] Update http://127.0.0.1:8000/tiles/WebMercatorQuad/map.html with dropdowns to select available data

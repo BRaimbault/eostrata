@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from eostrata.aggregate import _parse_datetime_interval, apply_temporal_aggregation
+from eostrata.aggregate import _parse_datetime_interval, _strip_tz, apply_temporal_aggregation
 
 
 def _make_da(years: list[int]) -> xr.DataArray:
@@ -18,6 +18,23 @@ def _make_da(years: list[int]) -> xr.DataArray:
         dims=("time", "y", "x"),
         coords={"time": times, "y": np.arange(4), "x": np.arange(4)},
     )
+
+
+class TestStripTz:
+    def test_utc_offset_stripped(self):
+        assert _strip_tz("2021-01-01T00:00:00+00:00") == "2021-01-01T00:00:00"
+
+    def test_z_suffix_stripped(self):
+        assert _strip_tz("2021-01-01T00:00:00Z") == "2021-01-01T00:00:00"
+
+    def test_positive_offset_stripped(self):
+        assert _strip_tz("2021-06-15T12:00:00+05:30") == "2021-06-15T12:00:00"
+
+    def test_date_only_unchanged(self):
+        assert _strip_tz("2021-01-01") == "2021-01-01"
+
+    def test_datetime_no_tz_unchanged(self):
+        assert _strip_tz("2021-01-01T00:00:00") == "2021-01-01T00:00:00"
 
 
 class TestParseDatetimeInterval:
@@ -115,12 +132,34 @@ class TestApplyTemporalAggregation:
                 baseline="1990-01-01/1995-01-01",
             )
 
-    def test_empty_time_slice_raises(self):
+    def test_single_date_out_of_range_returns_nearest(self):
+        # Single dates use nearest-neighbour — no error, returns closest timestep.
+        da = _make_da([2020, 2021])
+        result = apply_temporal_aggregation(da, datetime_str="1990-01-01")
+        assert float(result.mean()) == pytest.approx(2020.0)
+
+    def test_interval_with_no_data_raises(self):
+        # A *range* that yields zero timesteps still raises.
         da = _make_da([2020, 2021])
         with pytest.raises(ValueError, match="No data found"):
-            apply_temporal_aggregation(da, datetime_str="1990-01-01")
+            apply_temporal_aggregation(da, datetime_str="1990-01-01/1995-12-31", agg="mean")
 
     def test_unknown_agg_raises(self):
         da = _make_da([2020])
         with pytest.raises(ValueError, match="Unknown agg method"):
             apply_temporal_aggregation(da, agg="median")  # type: ignore[arg-type]
+
+    def test_tz_aware_datetime_string_accepted(self):
+        """UTC-offset datetime strings (from the STAC catalog) must not raise."""
+        da = _make_da([2020, 2021])
+        result = apply_temporal_aggregation(da, datetime_str="2020-01-01T00:00:00+00:00")
+        assert float(result.mean()) == pytest.approx(2020.0)
+
+    def test_tz_aware_interval_accepted(self):
+        da = _make_da([2020, 2021, 2022])
+        result = apply_temporal_aggregation(
+            da,
+            datetime_str="2020-01-01T00:00:00+00:00/2021-01-01T00:00:00+00:00",
+            agg="mean",
+        )
+        assert float(result.mean()) == pytest.approx(2020.5)

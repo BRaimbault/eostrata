@@ -257,6 +257,7 @@ The server starts on `http://127.0.0.1:8000` and exposes:
 | Interface | URL |
 |---|---|
 | Interactive API docs | `http://127.0.0.1:8000/docs` |
+| Ready-to-use parameter values | `http://127.0.0.1:8000/examples` |
 | Map viewer | `http://127.0.0.1:8000/map` |
 | OGC collections | `http://127.0.0.1:8000/collections` |
 | STAC catalogue | `http://127.0.0.1:8000/stac` |
@@ -267,6 +268,8 @@ Add `--reload` for hot-reloading during development:
 ```bash
 uv run eostrata serve --reload
 ```
+
+Once running, open `/examples` first — it lists every ingested item with copy-pasteable `collection_id`, `item`, `datetime`, `group`, and `variable` values ready to paste into the Swagger UI at `/docs`.
 
 ---
 
@@ -279,6 +282,8 @@ http://127.0.0.1:8000/map
 ```
 
 Use the dropdowns to select a collection, item, datetime, colormap and rescale range. The viewer loads all available data from the STAC catalogue automatically.
+
+Tick **Auto-scale from stats** to set the rescale range automatically from the data's p5/p95 percentiles (falls back to p25/p75, then min/max if percentile data is unavailable). Editing the rescale field manually unticks the checkbox.
 
 You can also deep-link directly to a specific view with query parameters:
 
@@ -293,6 +298,8 @@ http://127.0.0.1:8000/map?collection=worldpop&item=worldpop_nga&datetime=2020-01
 | `collection` | Collection id to pre-select | `worldpop`, `chirps`, `cds` |
 | `item` | STAC item id within the collection | `worldpop_nga` |
 | `datetime` | ISO 8601 datetime or interval for time selection | `2021-01-01` or `2021-01-01/2022-12-31` |
+| `agg` | Temporal aggregation method applied over `datetime` interval | `mean`, `sum`, `min`, `max`, `anomaly` |
+| `baseline` | ISO 8601 interval for anomaly baseline (required when `agg=anomaly`) | `2015-01-01/2020-12-31` |
 | `rescale` | Value range mapped to 0–255 | `0,1000` |
 | `colormap_name` | Matplotlib colormap name | `viridis`, `plasma`, `reds`, `ylorbr` |
 
@@ -342,7 +349,7 @@ Each item represents one country. The `datetime` interval spans all ingested yea
 
 ## Zonal statistics example
 
-The `zonalstats` process computes per-feature summary statistics over any collection. Send a GeoJSON `FeatureCollection` as the input zones.
+The `zonalstats` process computes per-feature summary statistics over any collection. Send a GeoJSON `FeatureCollection` as the input zones. The `datetime`, `agg`, and `baseline` parameters apply temporal aggregation before extraction — so you can compute statistics over a mean, anomaly, or any other aggregated period.
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/processes/zonalstats/execution \

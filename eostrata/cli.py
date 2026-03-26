@@ -33,18 +33,11 @@ def _maybe_evict(zarr_root: Path, required_mb: float = 0.0) -> None:
         check_and_evict(zarr_root, quota_mb=settings.store_quota_mb, required_mb=required_mb)
 
 
-def _parse_years(year: int | None, years: str | None, default: int) -> list[int]:
-    """Resolve --year / --years into a sorted list of ints."""
-    if years is not None:
-        return sorted({int(y.strip()) for y in years.split(",")})
-    return [year if year is not None else default]
-
-
-def _parse_months(month: int | None, months: str | None, default: int) -> list[int]:
-    """Resolve --month / --months into a sorted list of ints."""
-    if months is not None:
-        return sorted({int(m.strip()) for m in months.split(",")})
-    return [month if month is not None else default]
+def _parse_int_list(single: int | None, multi: str | None, default: int) -> list[int]:
+    """Resolve a single-value / comma-separated option into a sorted list of ints."""
+    if multi is not None:
+        return sorted({int(v.strip()) for v in multi.split(",")})
+    return [single if single is not None else default]
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -88,7 +81,7 @@ def download_worldpop(
     _bbox = settings.bbox
 
     latest_year = source.latest_available().year
-    _years = _parse_years(year, years, latest_year)
+    _years = _parse_int_list(year, years, latest_year)
 
     console.print(
         f"[bold]Downloading WorldPop[/bold] iso3=[cyan]{iso3.upper()}[/cyan] "
@@ -343,8 +336,8 @@ def download_chirps(
     _bbox = settings.bbox
 
     latest = source.latest_available()
-    _years = _parse_years(year, years, latest.year)
-    _months = _parse_months(month, months, latest.month)
+    _years = _parse_int_list(year, years, latest.year)
+    _months = _parse_int_list(month, months, latest.month)
 
     console.print(
         f"[bold]Downloading CHIRPS[/bold] years=[cyan]{_years}[/cyan] "
@@ -434,8 +427,8 @@ def download_cds(
     _bbox = settings.bbox
 
     latest = source.latest_available()
-    _years = _parse_years(year, years, latest.year)
-    _months = _parse_months(month, months, latest.month)
+    _years = _parse_int_list(year, years, latest.year)
+    _months = _parse_int_list(month, months, latest.month)
 
     console.print(
         f"[bold]Downloading ERA5[/bold] variable=[cyan]{variable}[/cyan] "

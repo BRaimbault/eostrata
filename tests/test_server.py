@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import sys
 from datetime import UTC, datetime
+from unittest.mock import MagicMock, patch
 
+import pystac
 import pytest
 from fastapi.testclient import TestClient
 
@@ -58,6 +61,117 @@ class TestConformance:
         assert any("ogcapi-tiles" in c for c in conforms)
 
 
+class TestExamples:
+    def test_empty_catalog_returns_warning(self, client):
+        resp = client.get("/examples")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "warning" in data
+        assert data["items"] == []
+
+    def test_with_items_returns_item_list(self, tmp_path, monkeypatch):
+        from unittest.mock import MagicMock, patch
+
+        from eostrata import catalog as cat
+
+        catalog_path = tmp_path / "catalog.json"
+        catalogue = cat.load_or_create(catalog_path)
+        cat.register_item(
+            catalogue,
+            collection_id="worldpop",
+            item_id="worldpop_nga",
+            bbox=(2.0, 4.0, 15.0, 14.0),
+            datetime_=datetime(2020, 1, 1, tzinfo=UTC),
+            zarr_root=tmp_path / "zarr",
+            zarr_group="worldpop/nga",
+            variable="population",
+        )
+        cat.save(catalogue, catalog_path)
+
+        mock_settings = MagicMock()
+        mock_settings.catalog_path = catalog_path
+
+        from eostrata.server import app
+
+        with patch("eostrata.server.settings", mock_settings), TestClient(app) as c:
+            resp = c.get("/examples")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "items" in data
+        assert len(data["items"]) == 1
+        item = data["items"][0]
+        assert item["collection_id"] == "worldpop"
+        assert item["item_id"] == "worldpop_nga"
+        assert "endpoints" in item
+        assert "zonalstats_body" in item
+
+
+class TestMapViewer:
+    def test_returns_html(self, client):
+        resp = client.get("/map")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        assert "<html" in resp.text.lower()
+
+    def test_preselect_params_accepted(self, client):
+        resp = client.get(
+            "/map",
+            params={
+                "collection": "worldpop",
+                "item": "worldpop_nga",
+                "datetime": "2020-01-01",
+                "agg": "mean",
+                "baseline": "2015-01-01/2019-12-31",
+                "colormap_name": "viridis",
+                "rescale": "0,1000",
+            },
+        )
+        assert resp.status_code == 200
+        assert "worldpop" in resp.text
+        assert "viridis" in resp.text
+
+
+class TestDynamicOpenAPI:
+    def test_openapi_schema_accessible(self, client):
+        resp = client.get("/openapi.json")
+        assert resp.status_code == 200
+        schema = resp.json()
+        assert schema["info"]["title"] == "eostrata"
+        assert "paths" in schema
+
+    def test_openapi_with_catalog_items(self, tmp_path):
+        from unittest.mock import MagicMock, patch
+
+        from eostrata import catalog as cat
+
+        catalog_path = tmp_path / "catalog.json"
+        catalogue = cat.load_or_create(catalog_path)
+        cat.register_item(
+            catalogue,
+            collection_id="chirps",
+            item_id="chirps_global",
+            bbox=(-180.0, -50.0, 180.0, 50.0),
+            datetime_=datetime(2023, 6, 1, tzinfo=UTC),
+            zarr_root=tmp_path / "zarr",
+            zarr_group="chirps/global",
+            variable="precipitation",
+        )
+        cat.save(catalogue, catalog_path)
+
+        mock_settings = MagicMock()
+        mock_settings.catalog_path = catalog_path
+
+        from eostrata.server import app
+
+        with patch("eostrata.server.settings", mock_settings), TestClient(app) as c:
+            resp = c.get("/openapi.json")
+
+        assert resp.status_code == 200
+        schema = resp.json()
+        assert any("{collection_id}" in p for p in schema["paths"])
+
+
 class TestCollections:
     def test_empty_store_returns_predefined_collections(self, client):
         data = client.get("/collections").json()
@@ -101,3 +215,169 @@ class TestCollections:
             data = c.get("/collections").json()
         coll_ids = [c["id"] for c in data["collections"]]
         assert "worldpop" in coll_ids
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _make_catalog_with_item_no_datetimes() -> pystac.Catalog:
+    """Return a catalog with a sub-catalog child and a collection whose item
+    lacks ``eostrata:datetimes`` but has ``start_datetime``."""
+    catalog = pystac.Catalog(id="root", description="root")
+    # non-Collection child — exercises the isinstance guard
+    catalog.add_child(pystac.Catalog(id="sub", description="sub"))
+    collection = pystac.Collection(
+        id="worldpop",
+        description="test",
+        extent=pystac.Extent(
+            spatial=pystac.SpatialExtent([[-180, -90, 180, 90]]),
+            temporal=pystac.TemporalExtent([[None, None]]),
+        ),
+    )
+    item = pystac.Item(
+        id="test_item",
+        geometry=None,
+        bbox=[0.0, 0.0, 10.0, 10.0],
+        datetime=None,
+        properties={
+            "start_datetime": "2021-01-01T00:00:00+00:00",
+            "end_datetime": "2021-12-31T00:00:00+00:00",
+            "datetime": None,
+            "eostrata:variable": "population",
+            "eostrata:zarr_group": "worldpop/test",
+            # deliberately NO eostrata:datetimes
+        },
+    )
+    collection.add_item(item)
+    catalog.add_child(collection)
+    return catalog
+
+
+# ── Lifespan ──────────────────────────────────────────────────────────────────
+
+
+class TestLifespan:
+    def test_scheduler_import_error_is_handled(self):
+        from eostrata.server import app
+
+        with patch.dict(sys.modules, {"eostrata.scheduler": None}), TestClient(app) as c:
+            assert c.get("/").status_code == 200
+
+    def test_scheduler_runtime_error_is_handled(self):
+        from eostrata.server import app
+
+        mock_mod = MagicMock()
+        mock_mod.Scheduler.return_value.start.side_effect = RuntimeError("boom")
+
+        with patch.dict(sys.modules, {"eostrata.scheduler": mock_mod}), TestClient(app) as c:
+            assert c.get("/").status_code == 200
+
+
+# ── examples() edge cases ─────────────────────────────────────────────────────
+
+
+class TestExamplesEdgeCases:
+    def test_non_collection_child_skipped(self):
+        """Catalog children that are not pystac.Collection instances are skipped."""
+        catalog = _make_catalog_with_item_no_datetimes()
+        mock_settings = MagicMock()
+
+        from eostrata.server import app
+
+        with (
+            patch("eostrata.server.settings", mock_settings),
+            patch("eostrata.catalog.load_or_create", return_value=catalog),
+            TestClient(app) as c,
+        ):
+            resp = c.get("/examples")
+
+        assert resp.status_code == 200
+        # Only the collection item should appear (sub-catalog child is skipped)
+        assert len(resp.json()["items"]) == 1
+
+    def test_fallback_datetime_from_start_datetime(self):
+        """Items missing eostrata:datetimes fall back to start_datetime."""
+        catalog = _make_catalog_with_item_no_datetimes()
+        mock_settings = MagicMock()
+
+        from eostrata.server import app
+
+        with (
+            patch("eostrata.server.settings", mock_settings),
+            patch("eostrata.catalog.load_or_create", return_value=catalog),
+            TestClient(app) as c,
+        ):
+            resp = c.get("/examples")
+
+        data = resp.json()
+        assert len(data["items"]) == 1
+        assert "2021-01-01" in data["items"][0]["available_datetimes"][0]
+
+
+# ── _catalog_openapi_examples() and _dynamic_openapi() edge cases ─────────────
+
+
+class TestOpenAPIEdgeCases:
+    def test_openapi_fallback_datetime_from_properties(self):
+        """_catalog_openapi_examples falls back to start_datetime when
+        eostrata:datetimes is absent; non-Collection children are also skipped."""
+        catalog = _make_catalog_with_item_no_datetimes()
+        mock_settings = MagicMock()
+
+        from eostrata.server import app
+
+        # _catalog_openapi_examples uses the module-level load_or_create binding
+        with (
+            patch("eostrata.server.settings", mock_settings),
+            patch("eostrata.server.load_or_create", return_value=catalog),
+            TestClient(app) as c,
+        ):
+            resp = c.get("/openapi.json")
+
+        assert resp.status_code == 200
+        assert "paths" in resp.json()
+
+    def test_openapi_catalog_exception_is_silenced(self):
+        """_catalog_openapi_examples swallows any catalog read error."""
+        mock_settings = MagicMock()
+
+        from eostrata.server import app
+
+        with (
+            patch("eostrata.server.settings", mock_settings),
+            patch("eostrata.server.load_or_create", side_effect=OSError("no catalog")),
+            TestClient(app) as c,
+        ):
+            resp = c.get("/openapi.json")
+
+        assert resp.status_code == 200
+
+    def test_openapi_non_dict_operation_skipped(self):
+        """Non-dict values inside a path item (e.g. a 'summary' string) are
+        skipped without error."""
+        from eostrata.server import _dynamic_openapi
+
+        mock_schema = {
+            "info": {"title": "eostrata", "version": "0.1.0"},
+            "paths": {
+                "/collections/{collection_id}/tiles/{tileMatrixSetId}/{z}/{x}/{y}": {
+                    "summary": "top-level string, not an operation dict",
+                    "get": {
+                        "parameters": [
+                            {"name": "collection_id", "in": "path"},
+                            {"name": "tileMatrixSetId", "in": "path"},
+                        ]
+                    },
+                }
+            },
+        }
+
+        with patch("eostrata.server.get_openapi", return_value=mock_schema):
+            schema = _dynamic_openapi()
+
+        assert schema["paths"] is not None
+        # The string "summary" value was skipped; the get operation was processed
+        get_op = schema["paths"][
+            "/collections/{collection_id}/tiles/{tileMatrixSetId}/{z}/{x}/{y}"
+        ]["get"]
+        assert "parameters" in get_op

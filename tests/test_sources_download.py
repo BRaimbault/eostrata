@@ -13,8 +13,8 @@ import pytest
 import rasterio
 from rasterio.transform import from_bounds
 
-from eostrata.sources.chirps import CHIRPSSource, _decompress_gz, _download_gz
-from eostrata.sources.worldpop import _download_file
+from eostrata.sources.base import _stream_download
+from eostrata.sources.chirps import CHIRPSSource, _decompress_gz
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 
@@ -57,14 +57,14 @@ def _make_httpx_stream_mock(content: bytes):
     return mock_resp
 
 
-# ── WorldPop _download_file ────────────────────────────────────────────────────
+# ── _stream_download ──────────────────────────────────────────────────────────
 
 
-class TestDownloadFile:
+class TestStreamDownload:
     def test_skips_if_already_exists(self, tmp_path):
         dest = tmp_path / "test.tif"
         dest.write_bytes(b"existing")
-        result = _download_file("http://example.com/test.tif", dest)
+        result = _stream_download("http://example.com/test.tif", dest)
         assert result == dest
 
     def test_downloads_and_saves(self, tmp_path):
@@ -72,8 +72,8 @@ class TestDownloadFile:
         tif_bytes = _make_tif_bytes()
 
         mock_stream = _make_httpx_stream_mock(tif_bytes)
-        with patch("eostrata.sources.worldpop.httpx.stream", return_value=mock_stream):
-            result = _download_file("http://example.com/test.tif", dest)
+        with patch("eostrata.sources.base.httpx.stream", return_value=mock_stream):
+            result = _stream_download("http://example.com/test.tif", dest)
 
         assert result == dest
         assert dest.exists()
@@ -88,22 +88,22 @@ class TestDownloadFile:
         mock_stream.raise_for_status = MagicMock(side_effect=Exception("404 Not Found"))
 
         with (
-            patch("eostrata.sources.worldpop.httpx.stream", return_value=mock_stream),
+            patch("eostrata.sources.base.httpx.stream", return_value=mock_stream),
             pytest.raises(Exception, match="404"),
         ):
-            _download_file("http://example.com/missing.tif", dest)
+            _stream_download("http://example.com/missing.tif", dest)
 
 
 class TestWorldPopDownloadIntegration:
     def test_download_calls_http(self, tmp_path):
-        """WorldPopSource.download should trigger _download_file for real URLs."""
+        """WorldPopSource.download should call _stream_download."""
         from eostrata.sources.worldpop import WorldPopSource
 
         source = WorldPopSource()
         tif_bytes = _make_tif_bytes()
         mock_stream = _make_httpx_stream_mock(tif_bytes)
 
-        with patch("eostrata.sources.worldpop.httpx.stream", return_value=mock_stream):
+        with patch("eostrata.sources.base.httpx.stream", return_value=mock_stream):
             paths = source.download(tmp_path, (0, 0, 10, 10), iso3="NGA", year=2020)
 
         assert len(paths) == 1
@@ -117,7 +117,7 @@ class TestCHIRPSDownloadHelpers:
     def test_download_gz_skips_if_exists(self, tmp_path):
         dest = tmp_path / "chirps.tif.gz"
         dest.write_bytes(b"existing gz")
-        result = _download_gz("http://example.com/data.tif.gz", dest)
+        result = _stream_download("http://example.com/data.tif.gz", dest)
         assert result == dest
 
     def test_download_gz_saves_file(self, tmp_path):
@@ -126,8 +126,8 @@ class TestCHIRPSDownloadHelpers:
         gz_bytes = gzip.compress(tif_bytes)
         mock_stream = _make_httpx_stream_mock(gz_bytes)
 
-        with patch("eostrata.sources.chirps.httpx.stream", return_value=mock_stream):
-            result = _download_gz("http://example.com/data.tif.gz", dest)
+        with patch("eostrata.sources.base.httpx.stream", return_value=mock_stream):
+            result = _stream_download("http://example.com/data.tif.gz", dest)
 
         assert result == dest
         assert dest.exists()
@@ -157,7 +157,7 @@ class TestCHIRPSSourceDownloadIntegration:
         gz_bytes = gzip.compress(tif_bytes)
         mock_stream = _make_httpx_stream_mock(gz_bytes)
 
-        with patch("eostrata.sources.chirps.httpx.stream", return_value=mock_stream):
+        with patch("eostrata.sources.base.httpx.stream", return_value=mock_stream):
             paths = source.download(tmp_path, (0, 0, 10, 10), year=2023, month=6)
 
         assert len(paths) == 1
@@ -173,7 +173,7 @@ class TestCHIRPSSourceDownloadIntegration:
         tif.parent.mkdir(parents=True)
         tif.write_bytes(b"fake tif")
 
-        with patch("eostrata.sources.chirps.httpx.stream") as mock_http:
+        with patch("eostrata.sources.base.httpx.stream") as mock_http:
             paths = source.download(tmp_path, (0, 0, 10, 10), year=2023, month=6)
 
         mock_http.assert_not_called()

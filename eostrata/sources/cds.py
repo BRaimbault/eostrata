@@ -42,9 +42,6 @@ _VARIABLE_MAP: dict[str, str] = {
     "sp": "surface_pressure",
 }
 
-# Reverse map: CDS long name → short name
-_CDS_TO_SHORT: dict[str, str] = {v: k for k, v in _VARIABLE_MAP.items()}
-
 _CDS_DATASET = "reanalysis-era5-single-levels-monthly-means"
 _PRODUCT_TYPE = "monthly_averaged_reanalysis"
 
@@ -169,12 +166,15 @@ def _netcdf_to_zarr(
         },
     }
 
-    if group_exists:
-        logger.info("Appending ERA5 '%s' to existing Zarr group", zarr_group)
-        ds.to_zarr(store_path, group=zarr_group, mode="a", append_dim="time", consolidated=True)
-    else:
-        logger.info("Writing new ERA5 Zarr group '%s'", zarr_group)
-        ds.to_zarr(store_path, group=zarr_group, mode="w", encoding=encoding, consolidated=True)
+    try:
+        if group_exists:
+            logger.info("Appending ERA5 '%s' to existing Zarr group", zarr_group)
+            ds.to_zarr(store_path, group=zarr_group, mode="a", append_dim="time", consolidated=True)
+        else:
+            logger.info("Writing new ERA5 Zarr group '%s'", zarr_group)
+            ds.to_zarr(store_path, group=zarr_group, mode="w", encoding=encoding, consolidated=True)
+    finally:
+        ds.close()
 
     return ds
 

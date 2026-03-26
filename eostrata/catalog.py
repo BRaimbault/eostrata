@@ -10,6 +10,7 @@ from typing import Any
 import attr
 import pystac
 from stac_fastapi.types.core import BaseCoreClient
+from stac_fastapi.types.errors import NotFoundError
 from stac_fastapi.types.stac import Collection, Collections, Item, ItemCollection
 
 logger = logging.getLogger(__name__)
@@ -199,7 +200,7 @@ def register_item(
     item.add_asset(
         "zarr",
         pystac.Asset(
-            href=str(Path(zarr_root) / zarr_group.replace("/", "/")),
+            href=str(Path(zarr_root) / zarr_group),
             media_type="application/vnd+zarr",
             roles=["data"],
             extra_fields={
@@ -255,10 +256,6 @@ def resolve_item(
 # ── stac-fastapi client ───────────────────────────────────────────────────────
 
 
-def _item_to_dict(item: pystac.Item) -> dict:
-    return item.to_dict()
-
-
 def _collection_to_dict(coll: pystac.Collection) -> dict:
     d = coll.to_dict()
     d.setdefault("links", [])
@@ -291,7 +288,7 @@ class PystacClient(BaseCoreClient):
         cat = self._catalog()
         coll = cat.get_child(collection_id)
         if coll is None or not isinstance(coll, pystac.Collection):
-            raise Exception(f"Collection '{collection_id}' not found.")
+            raise NotFoundError(f"Collection '{collection_id}' not found.")
         return _collection_to_dict(coll)
 
     def item_collection(
@@ -300,26 +297,26 @@ class PystacClient(BaseCoreClient):
         cat = self._catalog()
         coll = cat.get_child(collection_id)
         if coll is None:
-            raise Exception(f"Collection '{collection_id}' not found.")
-        items = [_item_to_dict(i) for i in coll.get_items()]
+            raise NotFoundError(f"Collection '{collection_id}' not found.")
+        items = [i.to_dict() for i in coll.get_items()]
         return ItemCollection(type="FeatureCollection", features=items, links=[])
 
     def get_item(self, item_id: str, collection_id: str, **kwargs: Any) -> Item:
         cat = self._catalog()
         coll = cat.get_child(collection_id)
         if coll is None:
-            raise Exception(f"Collection '{collection_id}' not found.")
+            raise NotFoundError(f"Collection '{collection_id}' not found.")
         item = coll.get_item(item_id)
         if item is None:
-            raise Exception(f"Item '{item_id}' not found in '{collection_id}'.")
-        return _item_to_dict(item)
+            raise NotFoundError(f"Item '{item_id}' not found in '{collection_id}'.")
+        return item.to_dict()
 
     def get_search(self, **kwargs: Any) -> ItemCollection:
         cat = self._catalog()
         items = []
         for coll in cat.get_children():
             if isinstance(coll, pystac.Collection):
-                items.extend(_item_to_dict(i) for i in coll.get_items())
+                items.extend(i.to_dict() for i in coll.get_items())
         return ItemCollection(type="FeatureCollection", features=items, links=[])
 
     def post_search(self, search_request: Any, **kwargs: Any) -> ItemCollection:

@@ -17,25 +17,34 @@ Query parameters:
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, HTTPException, Path, Query, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Path, Query, Request
 from fastapi.responses import HTMLResponse, Response
+from httpx import ASGITransport, AsyncClient
 from titiler.xarray.extensions import VariablesExtension
 from titiler.xarray.factory import TilerFactory
 
-from eostrata.aggregate import AggregatingReader
+from eostrata.aggregate import (
+    _CTX_AGG_BASELINE,
+    _CTX_AGG_DATETIME,
+    _CTX_AGG_METHOD,
+    AggregatingReader,
+)
 from eostrata.config import settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["OGC Tiles"])
 
-# Internal TiTiler factory — delegated to for actual tile rendering
+# Internal TiTiler factory and app — built once at import time, reused per request
 _tiler = TilerFactory(
     reader=AggregatingReader,
     router_prefix="/internal",
     extensions=[VariablesExtension()],
 )
+_internal_app = FastAPI()
+_internal_app.include_router(_tiler.router, prefix="/internal")
 
 
 def _resolve(collection_id: str, item_id: str | None) -> dict:
@@ -69,13 +78,9 @@ def _resolve(collection_id: str, item_id: str | None) -> dict:
 
 async def _delegate(path: str, params: dict) -> Response:
     """Delegate a request to the internal TiTiler app and return its response."""
-    from fastapi import FastAPI as _FastAPI
-    from httpx import ASGITransport, AsyncClient
-
-    _app = _FastAPI()
-    _app.include_router(_tiler.router, prefix="/internal")
-
-    async with AsyncClient(transport=ASGITransport(app=_app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=_internal_app), base_url="http://test"
+    ) as client:
         resp = await client.get(f"/internal/{path}", params=params)
 
     return Response(
@@ -99,19 +104,22 @@ async def collection_map(
     agg: str | None = Query(
         None, description="Temporal aggregation method: mean|sum|min|max|anomaly"
     ),
+    baseline: str | None = Query(None, description="ISO 8601 interval for anomaly baseline"),
     colormap_name: str | None = Query(
         None, description="Colormap name (e.g. viridis, plasma, inferno)"
     ),
     rescale: str | None = Query(None, description="Colormap range as min,max"),
 ) -> HTMLResponse:
     _resolve(collection_id, item)  # validate collection/item exist (raises 404 if not)
-    from urllib.parse import urlencode
-
     qs_params: dict = {"collection": collection_id}
     if item:
         qs_params["item"] = item
     if datetime:
         qs_params["datetime"] = datetime
+    if agg:
+        qs_params["agg"] = agg
+    if baseline:
+        qs_params["baseline"] = baseline
     if colormap_name:
         qs_params["colormap_name"] = colormap_name
     if rescale:
@@ -136,24 +144,27 @@ async def collection_tilejson(
     agg: str | None = Query(
         None, description="Temporal aggregation method: mean|sum|min|max|anomaly"
     ),
+    baseline: str | None = Query(None, description="ISO 8601 interval for anomaly baseline"),
     colormap_name: str | None = Query(None, description="Colormap name (e.g. viridis, plasma)"),
     rescale: str | None = Query(None, description="Colormap range as min,max"),
 ) -> dict:
     _resolve(collection_id, item)  # validate early
     base = str(request.base_url).rstrip("/")
-    tile_url = (
-        f"{base}/collections/{collection_id}"
-        f"/tiles/{tileMatrixSetId}/{{z}}/{{x}}/{{y}}"
-        f"?item={item or ''}"
-    )
+    tile_base = f"{base}/collections/{collection_id}/tiles/{tileMatrixSetId}/{{z}}/{{x}}/{{y}}"
+    qs: dict = {}
+    if item:
+        qs["item"] = item
     if datetime:
-        tile_url += f"&datetime={datetime}"
+        qs["datetime"] = datetime
     if agg:
-        tile_url += f"&agg={agg}"
+        qs["agg"] = agg
+    if baseline:
+        qs["baseline"] = baseline
     if colormap_name:
-        tile_url += f"&colormap_name={colormap_name}"
+        qs["colormap_name"] = colormap_name
     if rescale:
-        tile_url += f"&rescale={rescale}"
+        qs["rescale"] = rescale
+    tile_url = f"{tile_base}?{urlencode(qs)}" if qs else tile_base
     return {
         "tilejson": "2.2.0",
         "name": f"{collection_id}/{item or ''}",
@@ -186,19 +197,30 @@ async def collection_tile(
     rescale: str | None = Query(None, description="Colormap range as min,max"),
 ) -> Response:
     resolved = _resolve(collection_id, item)
+
+    # Propagate aggregation parameters to AggregatingReader via context vars.
+    # ASGITransport runs the inner ASGI app in the same coroutine (no new Task),
+    # so ContextVar values set here are visible inside __attrs_post_init__.
+    tok_dt = _CTX_AGG_DATETIME.set(datetime)
+    tok_method = _CTX_AGG_METHOD.set(agg)
+    tok_baseline = _CTX_AGG_BASELINE.set(baseline)
+
     params: dict = {
         "url": resolved["zarr_root"],
         "group": resolved["zarr_group"],
         "variable": resolved["variable"],
     }
-    if datetime:
-        params["sel"] = f"time={datetime}"
     if colormap_name:
         params["colormap_name"] = colormap_name
     if rescale:
         params["rescale"] = rescale
 
-    return await _delegate(f"tiles/{tileMatrixSetId}/{z}/{x}/{y}", params)
+    try:
+        return await _delegate(f"tiles/{tileMatrixSetId}/{z}/{x}/{y}", params)
+    finally:
+        _CTX_AGG_DATETIME.reset(tok_dt)
+        _CTX_AGG_METHOD.reset(tok_method)
+        _CTX_AGG_BASELINE.reset(tok_baseline)
 
 
 @router.get(

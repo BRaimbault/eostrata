@@ -146,6 +146,11 @@ def _netcdf_to_zarr(
     west, south, east, north = bbox
     ds = ds.sel(x=slice(west, east), y=slice(north, south))
 
+    # Drop ERA5 metadata variables that break Zarr append
+    for var in ['expver', 'time_bnds']:
+        if var in ds:
+            ds = ds.drop_vars(var)
+
     # Ensure variable name matches the short name stored in zarr_group
     short = zarr_group.split("/")[-1]  # e.g. "t2m" from "era5/t2m"
     if short not in ds and variable in ds:

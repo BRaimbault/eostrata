@@ -373,11 +373,7 @@ _MAP_HTML = """<!DOCTYPE html>
       <option value="plasma">plasma</option>
       <option value="inferno">inferno</option>
       <option value="magma">magma</option>
-      <option value="YlOrRd">YlOrRd</option>
-      <option value="YlGnBu">YlGnBu</option>
-      <option value="RdYlGn">RdYlGn</option>
-      <option value="Blues">Blues</option>
-      <option value="Greens">Greens</option>
+      <option value="coolwarm">coolwarm</option>
     </select>
     <label>Rescale (min,max)</label>
     <input id="inp-rescale" type="text" placeholder="e.g. 0,1000"/>
@@ -564,13 +560,7 @@ _COLORMAP_EXAMPLES = {
     "plasma": {"value": "plasma", "summary": "plasma — sequential, high contrast"},
     "inferno": {"value": "inferno", "summary": "inferno — sequential, dark-to-bright"},
     "magma": {"value": "magma", "summary": "magma — sequential, dark-to-light"},
-    "YlOrRd": {"value": "YlOrRd", "summary": "YlOrRd — yellow → orange → red"},
-    "YlGnBu": {"value": "YlGnBu", "summary": "YlGnBu — yellow → green → blue"},
-    "RdYlGn": {"value": "RdYlGn", "summary": "RdYlGn — diverging, red–yellow–green"},
-    "RdBu": {"value": "RdBu", "summary": "RdBu — diverging, red–blue (anomalies)"},
-    "coolwarm": {"value": "coolwarm", "summary": "coolwarm — diverging, blue–red"},
-    "Blues": {"value": "Blues", "summary": "Blues — sequential blue (precipitation)"},
-    "Greens": {"value": "Greens", "summary": "Greens — sequential green (vegetation)"},
+    "coolwarm": {"value": "coolwarm", "summary": "coolwarm — diverging, blue–red"}
 }
 
 _RESCALE_EXAMPLES = {

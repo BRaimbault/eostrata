@@ -111,33 +111,32 @@ class AggregatingReader(Reader):
     titiler.xarray Reader subclass that applies temporal aggregation
     before handing the DataArray to TiTiler's tile renderer.
 
-    Extra kwargs accepted (passed via titiler's reader_options / dependency):
-        datetime   - ISO 8601 datetime or interval string
-        agg        - aggregation method (mean|sum|min|max|anomaly)
-        baseline   - ISO 8601 interval for anomaly baseline
+    TiTiler's Reader sets ``self.input`` via the module-level ``get_variable``
+    inside ``__attrs_post_init__``, so overriding ``get_variable`` as an instance
+    method has no effect.  We therefore override ``__attrs_post_init__`` and
+    reduce the time dimension there, after the parent has finished initialising.
+
+    Time selection via ``sel`` (e.g. ``sel=["time=2020-01-01"]``) is handled
+    by TiTiler before we get here and already produces a 2D array, so we only
+    need to act when the array is still 3D after the parent init.
     """
 
-    def get_variable(
-        self,
-        ds: xr.Dataset,
-        variable: str,
-        sel: list[str] | None = None,
-        method: str | None = None,
-    ) -> xr.DataArray:
-        """Override to apply temporal aggregation after variable selection."""
-        da = _base_get_variable(ds, variable, sel=sel, method=method)
-
-        # Pull aggregation params injected via reader_options
-        datetime_str: str | None = getattr(self, "_agg_datetime", None)
-        agg: str | None = getattr(self, "_agg_method", None)
-        baseline: str | None = getattr(self, "_agg_baseline", None)
-
-        if "time" in da.dims:
-            da = apply_temporal_aggregation(
-                da,
-                datetime_str=datetime_str,
-                agg=agg,
-                baseline=baseline,
+    def __attrs_post_init__(self) -> None:
+        """Initialise parent, then collapse any remaining time dimension."""
+        super().__attrs_post_init__()
+        if "time" in self.input.dims:
+            self.input = apply_temporal_aggregation(
+                self.input,
+                datetime_str=None,  # sel already handled datetime selection
+                agg=None,  # default: last timestep
             )
-
-        return da
+            # Re-sync _dims now that time is gone
+            self._dims = [
+                d
+                for d in self.input.dims
+                if d
+                not in (
+                    self.input.rio.x_dim,
+                    self.input.rio.y_dim,
+                )
+            ]

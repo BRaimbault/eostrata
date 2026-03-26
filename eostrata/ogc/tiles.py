@@ -100,7 +100,7 @@ async def collection_map(
         None, description="Temporal aggregation method: mean|sum|min|max|anomaly"
     ),
     colormap_name: str | None = Query(
-        None, description="Colormap name (e.g. viridis, plasma, inferno, RdYlGn)"
+        None, description="Colormap name (e.g. viridis, plasma, inferno)"
     ),
     rescale: str | None = Query(None, description="Colormap range as min,max"),
 ) -> HTMLResponse:
@@ -137,7 +137,7 @@ async def collection_tilejson(
         None, description="Temporal aggregation method: mean|sum|min|max|anomaly"
     ),
     colormap_name: str | None = Query(
-        None, description="Colormap name (e.g. viridis, plasma, RdYlGn)"
+        None, description="Colormap name (e.g. viridis, plasma)"
     ),
     rescale: str | None = Query(None, description="Colormap range as min,max"),
 ) -> dict:
@@ -185,7 +185,7 @@ async def collection_tile(
         None, description="ISO 8601 interval used as baseline for anomaly aggregation"
     ),
     colormap_name: str | None = Query(
-        None, description="Colormap name (e.g. viridis, plasma, RdYlGn)"
+        None, description="Colormap name (e.g. viridis, plasma)"
     ),
     rescale: str | None = Query(None, description="Colormap range as min,max"),
 ) -> Response:

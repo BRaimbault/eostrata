@@ -11,6 +11,8 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Table
 
+logger = logging.getLogger(__name__)
+
 app = typer.Typer(
     name="eostrata",
     help="One tool to fetch, store, aggregate, and serve earth observation layers.",
@@ -191,6 +193,47 @@ def list_datasets(
         console.print(stac_table)
     else:
         console.print(f"[yellow]No catalog found at {_catalog_path}[/yellow]")
+
+
+# ── test ──────────────────────────────────────────────────────────────────────
+
+
+@app.command("test")
+def run_tests(
+    verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose pytest output"),
+    no_cov: bool = typer.Option(False, "--no-cov", help="Skip coverage reporting"),
+) -> None:
+    """Run the test suite with coverage (uv run pytest tests/ --cov=eostrata)."""
+    import subprocess
+
+    cmd = ["uv", "run", "pytest", "tests/"]
+    if not no_cov:
+        cmd += ["--cov=eostrata", "--cov-report=term-missing"]
+    if verbose:
+        cmd.append("-v")
+    result = subprocess.run(cmd)
+    raise typer.Exit(result.returncode)
+
+
+# ── lint ──────────────────────────────────────────────────────────────────────
+
+
+@app.command("lint")
+def run_lint(
+    fix: bool = typer.Option(True, "--fix/--no-fix", help="Auto-fix ruff issues"),
+) -> None:
+    """Lint and format the codebase with ruff."""
+    import subprocess
+
+    check_cmd = ["uv", "run", "ruff", "check", "eostrata/", "tests/"]
+    if fix:
+        check_cmd.append("--fix")
+    r1 = subprocess.run(check_cmd)
+
+    fmt_cmd = ["uv", "run", "ruff", "format", "eostrata/", "tests/"]
+    r2 = subprocess.run(fmt_cmd)
+
+    raise typer.Exit(max(r1.returncode, r2.returncode))
 
 
 # ── serve ─────────────────────────────────────────────────────────────────────

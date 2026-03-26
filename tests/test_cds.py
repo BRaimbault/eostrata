@@ -53,7 +53,7 @@ class TestCDSSource:
     def test_cdsapi_import_error_message(self):
         """Helpful error message shown when cdsapi is not installed."""
         import sys
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         with patch.dict(sys.modules, {"cdsapi": None}):
             from eostrata.sources.cds import _get_cdsapi
@@ -81,7 +81,9 @@ class TestDownloadEra5:
 
         dest = tmp_path / "era5_t2m_2023.nc"
         dest.write_bytes(b"existing")
-        result = _download_era5(dest, variable="2m_temperature", year=2023, months=[1], bbox=(0, 0, 10, 10))
+        result = _download_era5(
+            dest, variable="2m_temperature", year=2023, months=[1], bbox=(0, 0, 10, 10)
+        )
         assert result == dest
 
     def test_calls_cdsapi_client(self, tmp_path):

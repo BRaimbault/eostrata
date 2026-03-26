@@ -68,7 +68,9 @@ class TestNetcdfToZarr:
         ds.to_netcdf(str(nc))
 
         zarr_root = tmp_path / "zarr"
-        _netcdf_to_zarr(nc, zarr_root, "era5/t2m", variable="2m_temperature", bbox=(2.0, 4.0, 15.0, 14.0))
+        _netcdf_to_zarr(
+            nc, zarr_root, "era5/t2m", variable="2m_temperature", bbox=(2.0, 4.0, 15.0, 14.0)
+        )
         assert (zarr_root / "era5" / "t2m").exists()
 
     def test_variable_renamed_to_short_name(self, tmp_path):
@@ -88,7 +90,9 @@ class TestNetcdfToZarr:
         ds.to_netcdf(str(nc))
 
         zarr_root = tmp_path / "zarr"
-        _netcdf_to_zarr(nc, zarr_root, "era5/t2m", variable="2m_temperature", bbox=(2.0, 4.0, 15.0, 14.0))
+        _netcdf_to_zarr(
+            nc, zarr_root, "era5/t2m", variable="2m_temperature", bbox=(2.0, 4.0, 15.0, 14.0)
+        )
         assert (zarr_root / "era5" / "t2m").exists()
 
     def test_append_second_call(self, tmp_path):

@@ -182,7 +182,11 @@ def list_datasets(
                 else:
                     start = item.common_metadata.start_datetime
                     end = item.common_metadata.end_datetime
-                    dt = f"{start.strftime('%Y-%m-%d')} / {end.strftime('%Y-%m-%d')}" if start else "-"
+                    dt = (
+                        f"{start.strftime('%Y-%m-%d')} / {end.strftime('%Y-%m-%d')}"
+                        if start
+                        else "-"
+                    )
                 stac_table.add_row(collection.id, item.id, dt)
         console.print(stac_table)
     else:
@@ -350,7 +354,9 @@ def download_cds(
     variable: str = typer.Option("t2m", help="ERA5 variable short name: t2m, tp, u10, v10, sp"),
     year: int = typer.Option(None, help="Single year (default: latest available)"),
     years: str = typer.Option(None, help="Multiple years, comma-separated: 2022,2023"),
-    months: str = typer.Option(None, help="Months to fetch, comma-separated: 1,2,3 (default: all 12)"),
+    months: str = typer.Option(
+        None, help="Months to fetch, comma-separated: 1,2,3 (default: all 12)"
+    ),
     zarr_root: Path | None = typer.Option(None, help="Override Zarr store root"),
     raw_dir: Path | None = typer.Option(None, help="Override raw download directory"),
     catalog_path: Path | None = typer.Option(None, help="Override catalog.json path"),

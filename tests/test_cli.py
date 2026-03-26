@@ -416,7 +416,13 @@ class TestList:
         with patch("eostrata.config.settings", mock_settings):
             result = runner.invoke(
                 app,
-                ["list", "--zarr-root", str(zarr_root), "--catalog-path", str(tmp_path / "catalog.json")],
+                [
+                    "list",
+                    "--zarr-root",
+                    str(zarr_root),
+                    "--catalog-path",
+                    str(tmp_path / "catalog.json"),
+                ],
             )
 
         assert result.exit_code == 0

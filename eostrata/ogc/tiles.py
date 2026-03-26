@@ -96,8 +96,12 @@ async def collection_map(
     tileMatrixSetId: str = Path(..., description="Tile matrix set"),
     item: str | None = Query(None, description="Item ID within the collection"),
     datetime: str | None = Query(None, description="ISO 8601 datetime for time selection"),
-    agg: str | None = Query(None, description="Temporal aggregation method: mean|sum|min|max|anomaly"),
-    colormap_name: str | None = Query(None, description="Colormap name (e.g. viridis, plasma, inferno, RdYlGn)"),
+    agg: str | None = Query(
+        None, description="Temporal aggregation method: mean|sum|min|max|anomaly"
+    ),
+    colormap_name: str | None = Query(
+        None, description="Colormap name (e.g. viridis, plasma, inferno, RdYlGn)"
+    ),
     rescale: str | None = Query(None, description="Colormap range as min,max"),
 ) -> HTMLResponse:
     resolved = _resolve(collection_id, item)
@@ -137,8 +141,12 @@ async def collection_tilejson(
     tileMatrixSetId: str = Path(..., description="Tile matrix set"),
     item: str | None = Query(None, description="Item ID within the collection"),
     datetime: str | None = Query(None, description="ISO 8601 datetime for time selection"),
-    agg: str | None = Query(None, description="Temporal aggregation method: mean|sum|min|max|anomaly"),
-    colormap_name: str | None = Query(None, description="Colormap name (e.g. viridis, plasma, RdYlGn)"),
+    agg: str | None = Query(
+        None, description="Temporal aggregation method: mean|sum|min|max|anomaly"
+    ),
+    colormap_name: str | None = Query(
+        None, description="Colormap name (e.g. viridis, plasma, RdYlGn)"
+    ),
     rescale: str | None = Query(None, description="Colormap range as min,max"),
 ) -> dict:
     _resolve(collection_id, item)  # validate early
@@ -178,9 +186,15 @@ async def collection_tile(
     y: int = Path(..., description="Tile row"),
     item: str | None = Query(None, description="Item ID within the collection"),
     datetime: str | None = Query(None, description="ISO 8601 datetime for time selection"),
-    agg: str | None = Query(None, description="Temporal aggregation method: mean|sum|min|max|anomaly"),
-    baseline: str | None = Query(None, description="ISO 8601 interval used as baseline for anomaly aggregation"),
-    colormap_name: str | None = Query(None, description="Colormap name (e.g. viridis, plasma, RdYlGn)"),
+    agg: str | None = Query(
+        None, description="Temporal aggregation method: mean|sum|min|max|anomaly"
+    ),
+    baseline: str | None = Query(
+        None, description="ISO 8601 interval used as baseline for anomaly aggregation"
+    ),
+    colormap_name: str | None = Query(
+        None, description="Colormap name (e.g. viridis, plasma, RdYlGn)"
+    ),
     rescale: str | None = Query(None, description="Colormap range as min,max"),
 ) -> Response:
     resolved = _resolve(collection_id, item)

@@ -144,7 +144,9 @@ _raw_tiler = TilerFactory(
     router_prefix="/tiles",
     extensions=[VariablesExtension()],
 )
-app.include_router(_raw_tiler.router, prefix="/tiles", tags=["Tiles (direct)"], include_in_schema=False)
+app.include_router(
+    _raw_tiler.router, prefix="/tiles", tags=["Tiles (direct)"], include_in_schema=False
+)
 
 # ── OGC Processes ─────────────────────────────────────────────────────────────
 
@@ -267,13 +269,9 @@ def examples() -> dict:
                             f"/collections/{coll.id}/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}"
                             f"?{tile_qs}"
                         ),
-                        "map": (
-                            f"/collections/{coll.id}/tiles/WebMercatorQuad/map.html"
-                            f"?{tile_qs}"
-                        ),
+                        "map": (f"/collections/{coll.id}/tiles/WebMercatorQuad/map.html?{tile_qs}"),
                         "tilejson": (
-                            f"/collections/{coll.id}/tiles/WebMercatorQuad/tilejson.json"
-                            f"?{tile_qs}"
+                            f"/collections/{coll.id}/tiles/WebMercatorQuad/tilejson.json?{tile_qs}"
                         ),
                         "info": f"/collections/{coll.id}/info?item={item.id}",
                     },
@@ -405,7 +403,9 @@ def _dynamic_openapi() -> dict:
     param_examples = _catalog_openapi_examples()
     has_data = bool(param_examples["collection_id"])
 
-    tms_example = {"WebMercatorQuad": {"value": "WebMercatorQuad", "summary": "Web Mercator (standard)"}}
+    tms_example = {
+        "WebMercatorQuad": {"value": "WebMercatorQuad", "summary": "Web Mercator (standard)"}
+    }
 
     for path, path_item in schema.get("paths", {}).items():
         if "{collection_id}" not in path:
@@ -417,9 +417,7 @@ def _dynamic_openapi() -> dict:
                 name = param.get("name")
                 if name == "tileMatrixSetId":
                     param["examples"] = tms_example
-                elif name in ("colormap_name", "rescale"):
-                    param["examples"] = param_examples[name]
-                elif has_data and name in param_examples and param_examples[name]:
+                elif name in ("colormap_name", "rescale") or has_data and name in param_examples and param_examples[name]:
                     param["examples"] = param_examples[name]
 
     return schema

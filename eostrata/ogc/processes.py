@@ -69,11 +69,27 @@ _PROCESS_DESCRIPTION = {
 
 
 class ZonalStatsInputs(BaseModel):
-    url: str = Field(default=None, description="Zarr store root path (leave blank to use the server default)")
-    variable: str = Field(..., description="Variable name in the Zarr group (see /examples for valid values)", json_schema_extra={"example": "population"})
-    group: str = Field(..., description="Zarr group path inside the store (see /examples for valid values)", json_schema_extra={"example": "worldpop/nga"})
-    features: dict = Field(..., description="GeoJSON FeatureCollection, Feature, or Polygon geometry")
-    datetime: str | None = Field(None, description="ISO 8601 datetime for time selection (see /examples for valid values)", json_schema_extra={"example": "2020-01-01T00:00:00+00:00"})
+    url: str = Field(
+        default=None, description="Zarr store root path (leave blank to use the server default)"
+    )
+    variable: str = Field(
+        ...,
+        description="Variable name in the Zarr group (see /examples for valid values)",
+        json_schema_extra={"example": "population"},
+    )
+    group: str = Field(
+        ...,
+        description="Zarr group path inside the store (see /examples for valid values)",
+        json_schema_extra={"example": "worldpop/nga"},
+    )
+    features: dict = Field(
+        ..., description="GeoJSON FeatureCollection, Feature, or Polygon geometry"
+    )
+    datetime: str | None = Field(
+        None,
+        description="ISO 8601 datetime for time selection (see /examples for valid values)",
+        json_schema_extra={"example": "2020-01-01T00:00:00+00:00"},
+    )
 
 
 _EXECUTION_EXAMPLE = {

@@ -300,7 +300,7 @@ class TestTileRoutes:
         assert resp.status_code == 200
 
     def test_tile_with_optional_params(self, setup):
-        """Optional datetime/colormap/rescale params are forwarded to TiTiler."""
+        """Optional colormap/rescale params are forwarded to TiTiler."""
         tmp_path, catalog_path, zarr_root = setup
         from unittest.mock import MagicMock, patch
 
@@ -330,3 +330,45 @@ class TestTileRoutes:
 
         assert "colormap_name" in captured
         assert "rescale" in captured
+        # time is handled via context vars, not forwarded as sel
+        assert "sel" not in captured
+
+    def test_tile_agg_params_set_context_vars(self, setup):
+        """agg/baseline/datetime are propagated to AggregatingReader via ContextVar."""
+        tmp_path, catalog_path, zarr_root = setup
+        from unittest.mock import MagicMock, patch
+
+        from fastapi.responses import Response
+
+        from eostrata.aggregate import _CTX_AGG_BASELINE, _CTX_AGG_DATETIME, _CTX_AGG_METHOD
+
+        mock_settings = MagicMock()
+        mock_settings.catalog_path = catalog_path
+        mock_settings.zarr_root = zarr_root
+
+        ctx_snapshot = {}
+
+        async def fake_delegate(path, params):
+            ctx_snapshot["datetime"] = _CTX_AGG_DATETIME.get()
+            ctx_snapshot["agg"] = _CTX_AGG_METHOD.get()
+            ctx_snapshot["baseline"] = _CTX_AGG_BASELINE.get()
+            return Response(content=b"\x89PNG", media_type="image/png")
+
+        with (
+            patch("eostrata.ogc.tiles.settings", mock_settings),
+            patch("eostrata.ogc.tiles._delegate", side_effect=fake_delegate),
+        ):
+            from eostrata.server import app
+
+            client = TestClient(app)
+            client.get(
+                "/collections/worldpop/tiles/WebMercatorQuad/1/0/0"
+                "?item=worldpop_nga"
+                "&datetime=2020-01-01/2021-12-31"
+                "&agg=mean"
+                "&baseline=2019-01-01/2019-12-31"
+            )
+
+        assert ctx_snapshot["datetime"] == "2020-01-01/2021-12-31"
+        assert ctx_snapshot["agg"] == "mean"
+        assert ctx_snapshot["baseline"] == "2019-01-01/2019-12-31"

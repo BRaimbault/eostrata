@@ -8,7 +8,12 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from eostrata.aggregate import AggregatingReader
+from eostrata.aggregate import (
+    _CTX_AGG_BASELINE,
+    _CTX_AGG_DATETIME,
+    _CTX_AGG_METHOD,
+    AggregatingReader,
+)
 
 
 def _make_zarr_with_time(tmp_path: Path) -> Path:
@@ -59,6 +64,64 @@ class TestAggregatingReader:
         da = reader.get_variable(ds, "population")
         assert "time" not in da.dims
         assert float(da.mean()) == pytest.approx(2020.5)
+
+    def test_context_var_agg_mean(self, tmp_path):
+        """AggregatingReader reads agg params from ContextVar in __attrs_post_init__."""
+        zarr_root = _make_zarr_with_time(tmp_path)
+        _CTX_AGG_DATETIME.set("2020-01-01/2021-12-31")
+        _CTX_AGG_METHOD.set("mean")
+        _CTX_AGG_BASELINE.set(None)
+        try:
+            reader = AggregatingReader(
+                str(zarr_root),
+                variable="population",
+                group="worldpop/nga",
+            )
+        finally:
+            _CTX_AGG_DATETIME.set(None)
+            _CTX_AGG_METHOD.set(None)
+            _CTX_AGG_BASELINE.set(None)
+        assert "time" not in reader.input.dims
+        assert float(reader.input.mean()) == pytest.approx(2020.5)
+
+    def test_context_var_single_datetime(self, tmp_path):
+        """Single datetime selects the nearest available timestep."""
+        zarr_root = _make_zarr_with_time(tmp_path)
+        _CTX_AGG_DATETIME.set("2020-01-01")
+        _CTX_AGG_METHOD.set(None)
+        _CTX_AGG_BASELINE.set(None)
+        try:
+            reader = AggregatingReader(
+                str(zarr_root),
+                variable="population",
+                group="worldpop/nga",
+            )
+        finally:
+            _CTX_AGG_DATETIME.set(None)
+            _CTX_AGG_METHOD.set(None)
+            _CTX_AGG_BASELINE.set(None)
+        assert "time" not in reader.input.dims
+        assert float(reader.input.mean()) == pytest.approx(2020.0)
+
+    def test_context_var_anomaly(self, tmp_path):
+        """Anomaly agg computes deviation from baseline mean."""
+        zarr_root = _make_zarr_with_time(tmp_path)
+        _CTX_AGG_DATETIME.set("2020-01-01/2021-12-31")
+        _CTX_AGG_METHOD.set("anomaly")
+        _CTX_AGG_BASELINE.set("2020-01-01/2020-12-31")
+        try:
+            reader = AggregatingReader(
+                str(zarr_root),
+                variable="population",
+                group="worldpop/nga",
+            )
+        finally:
+            _CTX_AGG_DATETIME.set(None)
+            _CTX_AGG_METHOD.set(None)
+            _CTX_AGG_BASELINE.set(None)
+        # mean(2020,2021)=2020.5, baseline mean(2020)=2020 → anomaly=0.5
+        assert "time" not in reader.input.dims
+        assert float(reader.input.mean()) == pytest.approx(0.5)
 
     def test_get_variable_no_time_passthrough(self, tmp_path):
         zarr_root = tmp_path / "zarr"

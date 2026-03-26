@@ -42,9 +42,6 @@ _VARIABLE_MAP: dict[str, str] = {
     "sp": "surface_pressure",
 }
 
-# Reverse map: CDS long name → short name
-_CDS_TO_SHORT: dict[str, str] = {v: k for k, v in _VARIABLE_MAP.items()}
-
 _CDS_DATASET = "reanalysis-era5-single-levels-monthly-means"
 _PRODUCT_TYPE = "monthly_averaged_reanalysis"
 
@@ -137,12 +134,19 @@ def _netcdf_to_zarr(
         rename["latitude"] = "y"
     elif "lat" in ds.coords:
         rename["lat"] = "y"
+    if "valid_time" in ds.coords and "time" not in ds.coords:
+        rename["valid_time"] = "time"
     if rename:
         ds = ds.rename(rename)
 
     # Clip to bbox
     west, south, east, north = bbox
     ds = ds.sel(x=slice(west, east), y=slice(north, south))
+
+    # Drop ERA5 metadata variables that break Zarr append
+    for var in ["expver", "time_bnds"]:
+        if var in ds:
+            ds = ds.drop_vars(var)
 
     # Ensure variable name matches the short name stored in zarr_group
     short = zarr_group.split("/")[-1]  # e.g. "t2m" from "era5/t2m"
@@ -162,12 +166,15 @@ def _netcdf_to_zarr(
         },
     }
 
-    if group_exists:
-        logger.info("Appending ERA5 '%s' to existing Zarr group", zarr_group)
-        ds.to_zarr(store_path, group=zarr_group, mode="a", append_dim="time", consolidated=True)
-    else:
-        logger.info("Writing new ERA5 Zarr group '%s'", zarr_group)
-        ds.to_zarr(store_path, group=zarr_group, mode="w", encoding=encoding, consolidated=True)
+    try:
+        if group_exists:
+            logger.info("Appending ERA5 '%s' to existing Zarr group", zarr_group)
+            ds.to_zarr(store_path, group=zarr_group, mode="a", append_dim="time", consolidated=True)
+        else:
+            logger.info("Writing new ERA5 Zarr group '%s'", zarr_group)
+            ds.to_zarr(store_path, group=zarr_group, mode="w", encoding=encoding, consolidated=True)
+    finally:
+        ds.close()
 
     return ds
 

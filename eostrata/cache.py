@@ -164,7 +164,8 @@ def check_and_evict(
             size_mb,
             age_hours,
         )
-        freed_mb += evict_group(zarr_root, group_path)
+        evict_group(zarr_root, group_path)
+        freed_mb += size_mb  # size already known from list_groups; avoid re-walking
 
     remaining = current_mb - freed_mb
     if remaining > quota_mb:

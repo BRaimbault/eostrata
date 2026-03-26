@@ -27,6 +27,7 @@ dependencies = [
     "rioxarray>=0.19.0",
     "attrs>=26.1.0",
     "h5py>=3.16.0",
+    "cdsapi>=0.7.7",
 ]
 
 [project.optional-dependencies]

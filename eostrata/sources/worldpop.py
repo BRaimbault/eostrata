@@ -7,11 +7,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import httpx
 import numpy as np
-from tqdm import tqdm
 
-from eostrata.sources.base import BaseSource, register_source
+from eostrata.sources.base import BaseSource, _stream_download, register_source
 from eostrata.store import geotiff_to_zarr
 
 logger = logging.getLogger(__name__)
@@ -32,30 +30,6 @@ def _build_url(iso3: str, year: int) -> str:
     iso3_lower = iso3.lower()
     filename = f"{iso3_lower}_pop_{year}_CN_1km_{_RELEASE}_UA_v1.tif"
     return f"{_BASE_URL}/{year}/{iso3_upper}/v1/1km_ua/constrained/{filename}"
-
-
-def _download_file(url: str, dest: Path) -> Path:
-    """Download *url* to *dest*, skipping if already present."""
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
-    if dest.exists():
-        logger.info("Already downloaded: %s", dest.name)
-        return dest
-
-    logger.info("Downloading %s", url)
-    with httpx.stream("GET", url, follow_redirects=True, timeout=None) as resp:
-        resp.raise_for_status()
-        total = int(resp.headers.get("content-length", 0))
-        with (
-            open(dest, "wb") as fh,
-            tqdm(total=total, unit="B", unit_scale=True, desc=dest.name) as bar,
-        ):
-            for chunk in resp.iter_bytes(chunk_size=1 << 20):
-                fh.write(chunk)
-                bar.update(len(chunk))
-
-    logger.info("Saved to %s", dest)
-    return dest
 
 
 @register_source
@@ -81,7 +55,7 @@ class WorldPopSource(BaseSource):
         url = _build_url(iso3, year)
         filename = Path(url).name
         dest = Path(raw_dir) / "worldpop" / filename
-        return [_download_file(url, dest)]
+        return [_stream_download(url, dest)]
 
     def to_zarr(
         self,

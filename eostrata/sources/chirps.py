@@ -18,11 +18,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import httpx
 import numpy as np
-from tqdm import tqdm
 
-from eostrata.sources.base import BaseSource, register_source
+from eostrata.sources.base import BaseSource, _stream_download, register_source
 from eostrata.store import geotiff_to_zarr
 
 logger = logging.getLogger(__name__)
@@ -33,29 +31,6 @@ _NODATA = -9999.0
 
 def _build_url(year: int, month: int) -> str:
     return f"{_BASE_URL}/chirps-v2.0.{year}.{month:02d}.tif.gz"
-
-
-def _download_gz(url: str, dest_gz: Path) -> Path:
-    """Download a .tif.gz file to *dest_gz*, skipping if already present."""
-    dest_gz.parent.mkdir(parents=True, exist_ok=True)
-    if dest_gz.exists():
-        logger.info("Already downloaded: %s", dest_gz.name)
-        return dest_gz
-
-    logger.info("Downloading %s", url)
-    with httpx.stream("GET", url, follow_redirects=True, timeout=None) as resp:
-        resp.raise_for_status()
-        total = int(resp.headers.get("content-length", 0))
-        with (
-            open(dest_gz, "wb") as fh,
-            tqdm(total=total, unit="B", unit_scale=True, desc=dest_gz.name) as bar,
-        ):
-            for chunk in resp.iter_bytes(chunk_size=1 << 20):
-                fh.write(chunk)
-                bar.update(len(chunk))
-
-    logger.info("Saved gz to %s", dest_gz)
-    return dest_gz
 
 
 def _decompress_gz(src: Path, dest: Path) -> Path:
@@ -102,7 +77,7 @@ class CHIRPSSource(BaseSource):
             logger.info("Already available: %s", dest_tif.name)
             return [dest_tif]
 
-        _download_gz(url, dest_gz)
+        _stream_download(url, dest_gz)
         _decompress_gz(dest_gz, dest_tif)
         # Remove the gz to save space — the TIF is authoritative
         dest_gz.unlink(missing_ok=True)

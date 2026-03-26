@@ -11,35 +11,35 @@ import xarray as xr
 from rasterio.transform import from_bounds
 from typer.testing import CliRunner
 
-from eostrata.cli import _parse_months, _parse_years, app
+from eostrata.cli import _parse_int_list, app
 
 runner = CliRunner()
 
 
 class TestParseHelpers:
-    def test_parse_years_single(self):
-        assert _parse_years(2020, None, 2025) == [2020]
+    def test_single(self):
+        assert _parse_int_list(2020, None, 2025) == [2020]
 
-    def test_parse_years_default(self):
-        assert _parse_years(None, None, 2025) == [2025]
+    def test_default(self):
+        assert _parse_int_list(None, None, 2025) == [2025]
 
-    def test_parse_years_multi(self):
-        assert _parse_years(None, "2020,2021,2022", 2025) == [2020, 2021, 2022]
+    def test_multi(self):
+        assert _parse_int_list(None, "2020,2021,2022", 2025) == [2020, 2021, 2022]
 
-    def test_parse_years_multi_deduplicates_and_sorts(self):
-        assert _parse_years(None, "2022,2020,2021,2020", 2025) == [2020, 2021, 2022]
+    def test_multi_deduplicates_and_sorts(self):
+        assert _parse_int_list(None, "2022,2020,2021,2020", 2025) == [2020, 2021, 2022]
 
-    def test_parse_months_single(self):
-        assert _parse_months(6, None, 1) == [6]
+    def test_single_month(self):
+        assert _parse_int_list(6, None, 1) == [6]
 
-    def test_parse_months_default(self):
-        assert _parse_months(None, None, 3) == [3]
+    def test_default_month(self):
+        assert _parse_int_list(None, None, 3) == [3]
 
-    def test_parse_months_multi(self):
-        assert _parse_months(None, "1,2,3", 12) == [1, 2, 3]
+    def test_multi_months(self):
+        assert _parse_int_list(None, "1,2,3", 12) == [1, 2, 3]
 
-    def test_parse_months_multi_sorted(self):
-        assert _parse_months(None, "3,1,2", 12) == [1, 2, 3]
+    def test_multi_months_sorted(self):
+        assert _parse_int_list(None, "3,1,2", 12) == [1, 2, 3]
 
 
 def _make_tif(path: Path, bbox=(2.0, 4.0, 6.0, 8.0), width=10, height=10) -> Path:
@@ -245,6 +245,39 @@ class TestDownloadChirps:
         assert (2024, 1) in download_calls
         assert (2024, 2) in download_calls
 
+    def test_download_chirps_error_continues(self, tmp_path):
+        """A failed year/month is logged but does not abort the whole command."""
+        mock_settings = _make_settings_mock(tmp_path)
+
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch(
+                "eostrata.sources.chirps.CHIRPSSource.download",
+                side_effect=RuntimeError("network error"),
+            ),
+            patch("eostrata.cache.check_and_evict"),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "download",
+                    "chirps",
+                    "--year",
+                    "2024",
+                    "--month",
+                    "1",
+                    "--zarr-root",
+                    str(tmp_path / "zarr"),
+                    "--raw-dir",
+                    str(tmp_path / "raw"),
+                    "--catalog-path",
+                    str(tmp_path / "catalog.json"),
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert "Failed" in result.output
+
     def test_download_chirps_auto_period(self, tmp_path):
         """Omitting --year/--month uses latest_available()."""
         tif = tmp_path / "raw" / "chirps" / "chirps-v2.0.2026.01.tif"
@@ -321,6 +354,41 @@ class TestDownloadCds:
         assert "Done" in result.output
 
 
+class TestDownloadCdsErrorHandling:
+    def test_download_cds_error_continues(self, tmp_path):
+        """A failed year is logged but does not abort the whole command."""
+        mock_settings = _make_settings_mock(tmp_path)
+
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch(
+                "eostrata.sources.cds.CDSSource.download",
+                side_effect=RuntimeError("cds api error"),
+            ),
+            patch("eostrata.cache.check_and_evict"),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "download",
+                    "cds",
+                    "--variable",
+                    "t2m",
+                    "--year",
+                    "2023",
+                    "--zarr-root",
+                    str(tmp_path / "zarr"),
+                    "--raw-dir",
+                    str(tmp_path / "raw"),
+                    "--catalog-path",
+                    str(tmp_path / "catalog.json"),
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert "Failed" in result.output
+
+
 class TestDownloadCdsMultiYear:
     def test_download_cds_multiple_years(self, tmp_path):
         """--years 2022,2023 downloads each year separately."""
@@ -383,6 +451,40 @@ class TestList:
         )
         assert result.exit_code == 0
 
+    def test_list_with_catalog_items(self, tmp_path):
+        """list shows the STAC catalogue table when items are registered."""
+        from datetime import UTC, datetime
+
+        from eostrata import catalog as cat
+
+        catalog_path = tmp_path / "catalog.json"
+        catalogue = cat.load_or_create(catalog_path)
+        cat.register_item(
+            catalogue,
+            collection_id="worldpop",
+            item_id="worldpop_nga",
+            bbox=(2.0, 4.0, 15.0, 14.0),
+            datetime_=datetime(2020, 1, 1, tzinfo=UTC),
+            zarr_root=tmp_path / "zarr",
+            zarr_group="worldpop/nga",
+            variable="population",
+        )
+        cat.save(catalogue, catalog_path)
+
+        result = runner.invoke(
+            app,
+            [
+                "list",
+                "--zarr-root",
+                str(tmp_path / "zarr"),
+                "--catalog-path",
+                str(catalog_path),
+            ],
+        )
+        assert result.exit_code == 0
+        assert "worldpop_nga" in result.output
+        assert "2020" in result.output
+
     def test_list_with_zarr_store(self, tmp_path):
         zarr_root = tmp_path / "zarr"
         # Write a minimal zarr group
@@ -430,6 +532,37 @@ class TestList:
         assert "%" in result.output
 
 
+class TestMaybeEvict:
+    def test_eviction_called_when_quota_set(self, tmp_path):
+        """_maybe_evict calls check_and_evict only when store_quota_mb > 0."""
+        from eostrata.cli import _maybe_evict
+
+        mock_settings = _make_settings_mock(tmp_path)
+        mock_settings.store_quota_mb = 5000.0
+
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch("eostrata.cache.check_and_evict") as mock_evict,
+        ):
+            _maybe_evict(tmp_path / "zarr")
+
+        mock_evict.assert_called_once_with(tmp_path / "zarr", quota_mb=5000.0, required_mb=0.0)
+
+    def test_eviction_skipped_when_quota_zero(self, tmp_path):
+        from eostrata.cli import _maybe_evict
+
+        mock_settings = _make_settings_mock(tmp_path)
+        mock_settings.store_quota_mb = 0.0
+
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch("eostrata.cache.check_and_evict") as mock_evict,
+        ):
+            _maybe_evict(tmp_path / "zarr")
+
+        mock_evict.assert_not_called()
+
+
 class TestServe:
     def test_serve_invokes_uvicorn(self):
         with patch("uvicorn.run") as mock_run:
@@ -438,6 +571,56 @@ class TestServe:
         mock_run.assert_called_once()
         call_kwargs = mock_run.call_args
         assert call_kwargs[1]["port"] == 9999
+
+
+class TestRunTests:
+    def test_run_tests_calls_pytest(self):
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            result = runner.invoke(app, ["test", "--no-cov"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert "pytest" in cmd
+
+    def test_run_tests_includes_coverage_by_default(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            runner.invoke(app, ["test"])
+        cmd = mock_run.call_args[0][0]
+        assert "--cov=eostrata" in cmd
+
+    def test_run_tests_verbose_flag(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            runner.invoke(app, ["test", "--no-cov", "-v"])
+        cmd = mock_run.call_args[0][0]
+        assert "-v" in cmd
+
+
+class TestRunLint:
+    def test_run_lint_calls_ruff(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            result = runner.invoke(app, ["lint"])
+        assert result.exit_code == 0
+        assert mock_run.call_count == 2  # ruff check + ruff format
+        all_cmds = [call[0][0] for call in mock_run.call_args_list]
+        assert any("check" in cmd for cmd in all_cmds)
+        assert any("format" in cmd for cmd in all_cmds)
+
+    def test_run_lint_no_fix(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            runner.invoke(app, ["lint", "--no-fix"])
+        check_cmd = mock_run.call_args_list[0][0][0]
+        assert "--fix" not in check_cmd
 
 
 class TestCleanup:

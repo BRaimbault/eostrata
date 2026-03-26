@@ -11,6 +11,8 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Table
 
+logger = logging.getLogger(__name__)
+
 app = typer.Typer(
     name="eostrata",
     help="One tool to fetch, store, aggregate, and serve earth observation layers.",
@@ -31,18 +33,11 @@ def _maybe_evict(zarr_root: Path, required_mb: float = 0.0) -> None:
         check_and_evict(zarr_root, quota_mb=settings.store_quota_mb, required_mb=required_mb)
 
 
-def _parse_years(year: int | None, years: str | None, default: int) -> list[int]:
-    """Resolve --year / --years into a sorted list of ints."""
-    if years is not None:
-        return sorted({int(y.strip()) for y in years.split(",")})
-    return [year if year is not None else default]
-
-
-def _parse_months(month: int | None, months: str | None, default: int) -> list[int]:
-    """Resolve --month / --months into a sorted list of ints."""
-    if months is not None:
-        return sorted({int(m.strip()) for m in months.split(",")})
-    return [month if month is not None else default]
+def _parse_int_list(single: int | None, multi: str | None, default: int) -> list[int]:
+    """Resolve a single-value / comma-separated option into a sorted list of ints."""
+    if multi is not None:
+        return sorted({int(v.strip()) for v in multi.split(",")})
+    return [single if single is not None else default]
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -86,7 +81,7 @@ def download_worldpop(
     _bbox = settings.bbox
 
     latest_year = source.latest_available().year
-    _years = _parse_years(year, years, latest_year)
+    _years = _parse_int_list(year, years, latest_year)
 
     console.print(
         f"[bold]Downloading WorldPop[/bold] iso3=[cyan]{iso3.upper()}[/cyan] "
@@ -191,6 +186,47 @@ def list_datasets(
         console.print(stac_table)
     else:
         console.print(f"[yellow]No catalog found at {_catalog_path}[/yellow]")
+
+
+# ── test ──────────────────────────────────────────────────────────────────────
+
+
+@app.command("test")
+def run_tests(
+    verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose pytest output"),
+    no_cov: bool = typer.Option(False, "--no-cov", help="Skip coverage reporting"),
+) -> None:
+    """Run the test suite with coverage (uv run pytest tests/ --cov=eostrata)."""
+    import subprocess
+
+    cmd = ["uv", "run", "pytest", "tests/"]
+    if not no_cov:
+        cmd += ["--cov=eostrata", "--cov-report=term-missing"]
+    if verbose:
+        cmd.append("-v")
+    result = subprocess.run(cmd)
+    raise typer.Exit(result.returncode)
+
+
+# ── lint ──────────────────────────────────────────────────────────────────────
+
+
+@app.command("lint")
+def run_lint(
+    fix: bool = typer.Option(True, "--fix/--no-fix", help="Auto-fix ruff issues"),
+) -> None:
+    """Lint and format the codebase with ruff."""
+    import subprocess
+
+    check_cmd = ["uv", "run", "ruff", "check", "eostrata/", "tests/"]
+    if fix:
+        check_cmd.append("--fix")
+    r1 = subprocess.run(check_cmd)
+
+    fmt_cmd = ["uv", "run", "ruff", "format", "eostrata/", "tests/"]
+    r2 = subprocess.run(fmt_cmd)
+
+    raise typer.Exit(max(r1.returncode, r2.returncode))
 
 
 # ── serve ─────────────────────────────────────────────────────────────────────
@@ -300,8 +336,8 @@ def download_chirps(
     _bbox = settings.bbox
 
     latest = source.latest_available()
-    _years = _parse_years(year, years, latest.year)
-    _months = _parse_months(month, months, latest.month)
+    _years = _parse_int_list(year, years, latest.year)
+    _months = _parse_int_list(month, months, latest.month)
 
     console.print(
         f"[bold]Downloading CHIRPS[/bold] years=[cyan]{_years}[/cyan] "
@@ -313,36 +349,43 @@ def download_chirps(
     catalogue = cat.load_or_create(_catalog_path)
     zarr_group = source.zarr_group()
 
+    success_count = 0
     for _year in _years:
         for _month in _months:
-            console.print(f"  [dim]year {_year} month {_month:02d}[/dim]")
-            paths = source.download(_raw_dir, _bbox, year=_year, month=_month)
-            tif_path = paths[0]
-            console.print(f"  [green]Downloaded[/green] {tif_path}")
+            try:
+                console.print(f"  [dim]year {_year} month {_month:02d}[/dim]")
+                paths = source.download(_raw_dir, _bbox, year=_year, month=_month)
+                tif_path = paths[0]
+                console.print(f"  [green]Downloaded[/green] {tif_path}")
 
-            ds = source.to_zarr(tif_path, _zarr_root, _bbox, year=_year, month=_month)
-            console.print(f"  [green]Zarr written[/green] {_zarr_root}/{zarr_group}")
+                ds = source.to_zarr(tif_path, _zarr_root, _bbox, year=_year, month=_month)
+                console.print(f"  [green]Zarr written[/green] {_zarr_root}/{zarr_group}")
 
-            item_bbox = (
-                float(ds.x.min()),
-                float(ds.y.min()),
-                float(ds.x.max()),
-                float(ds.y.max()),
-            )
-            cat.register_item(
-                catalogue,
-                collection_id=source.collection_id,
-                item_id=source.stac_item_id(),
-                bbox=item_bbox,
-                datetime_=datetime(_year, _month, 1, tzinfo=UTC),
-                zarr_root=_zarr_root,
-                zarr_group=zarr_group,
-                variable=source.VARIABLE,
-                extra_properties=source.stac_properties(year=_year, month=_month),
-            )
+                item_bbox = (
+                    float(ds.x.min()),
+                    float(ds.y.min()),
+                    float(ds.x.max()),
+                    float(ds.y.max()),
+                )
+                cat.register_item(
+                    catalogue,
+                    collection_id=source.collection_id,
+                    item_id=source.stac_item_id(),
+                    bbox=item_bbox,
+                    datetime_=datetime(_year, _month, 1, tzinfo=UTC),
+                    zarr_root=_zarr_root,
+                    zarr_group=zarr_group,
+                    variable=source.VARIABLE,
+                    extra_properties=source.stac_properties(year=_year, month=_month),
+                )
+                success_count += 1
+            except Exception as exc:
+                console.print(f"  [red]Failed year {_year} month {_month:02d}: {exc}[/red]")
+                logger.exception("CHIRPS download failed for year %d month %d", _year, _month)
 
-    cat.save(catalogue, _catalog_path)
-    console.print(f"[green]STAC item registered[/green] {_catalog_path}")
+    if success_count > 0:
+        cat.save(catalogue, _catalog_path)
+        console.print(f"[green]STAC item registered[/green] {_catalog_path}")
     console.print("[bold green]Done.[/bold green]")
 
 
@@ -354,8 +397,9 @@ def download_cds(
     variable: str = typer.Option("t2m", help="ERA5 variable short name: t2m, tp, u10, v10, sp"),
     year: int = typer.Option(None, help="Single year (default: latest available)"),
     years: str = typer.Option(None, help="Multiple years, comma-separated: 2022,2023"),
+    month: int = typer.Option(None, help="Single month 1-12 (default: latest available)"),
     months: str = typer.Option(
-        None, help="Months to fetch, comma-separated: 1,2,3 (default: all 12)"
+        None, help="Months to fetch, comma-separated: 1,2,3 (default: latest available)"
     ),
     zarr_root: Path | None = typer.Option(None, help="Override Zarr store root"),
     raw_dir: Path | None = typer.Option(None, help="Override raw download directory"),
@@ -383,10 +427,8 @@ def download_cds(
     _bbox = settings.bbox
 
     latest = source.latest_available()
-    _years = _parse_years(year, years, latest.year)
-    _months: list[int] = (
-        [int(m.strip()) for m in months.split(",")] if months else list(range(1, 13))
-    )
+    _years = _parse_int_list(year, years, latest.year)
+    _months = _parse_int_list(month, months, latest.month)
 
     console.print(
         f"[bold]Downloading ERA5[/bold] variable=[cyan]{variable}[/cyan] "
@@ -398,37 +440,45 @@ def download_cds(
     catalogue = cat.load_or_create(_catalog_path)
     zarr_group = source.zarr_group(variable=variable)
 
+    success_count = 0
     for _year in _years:
-        console.print(f"  [dim]year {_year}[/dim]")
-        paths = source.download(_raw_dir, _bbox, variable=variable, year=_year, months=_months)
-        nc_path = paths[0]
-        console.print(f"  [green]Downloaded[/green] {nc_path}")
+        try:
+            console.print(f"  [dim]year {_year}[/dim]")
+            paths = source.download(_raw_dir, _bbox, variable=variable, year=_year, months=_months)
+            nc_path = paths[0]
+            console.print(f"  [green]Downloaded[/green] {nc_path}")
 
-        ds = source.to_zarr(nc_path, _zarr_root, _bbox, variable=variable, year=_year)
-        console.print(f"  [green]Zarr written[/green] {_zarr_root}/{zarr_group}")
+            ds = source.to_zarr(nc_path, _zarr_root, _bbox, variable=variable, year=_year)
+            console.print(f"  [green]Zarr written[/green] {_zarr_root}/{zarr_group}")
 
-        x_dim = "x" if "x" in ds.coords else "longitude"
-        y_dim = "y" if "y" in ds.coords else "latitude"
-        item_bbox = (
-            float(ds[x_dim].min()),
-            float(ds[y_dim].min()),
-            float(ds[x_dim].max()),
-            float(ds[y_dim].max()),
-        )
-        cat.register_item(
-            catalogue,
-            collection_id=source.collection_id,
-            item_id=source.stac_item_id(variable=variable),
-            bbox=item_bbox,
-            datetime_=datetime(_year, _months[0], 1, tzinfo=UTC),
-            zarr_root=_zarr_root,
-            zarr_group=zarr_group,
-            variable=variable,
-            extra_properties=source.stac_properties(variable=variable, year=_year),
-        )
+            x_dim = "x" if "x" in ds.coords else "longitude"
+            y_dim = "y" if "y" in ds.coords else "latitude"
+            item_bbox = (
+                float(ds[x_dim].min()),
+                float(ds[y_dim].min()),
+                float(ds[x_dim].max()),
+                float(ds[y_dim].max()),
+            )
+            for _month in _months:
+                cat.register_item(
+                    catalogue,
+                    collection_id=source.collection_id,
+                    item_id=source.stac_item_id(variable=variable),
+                    bbox=item_bbox,
+                    datetime_=datetime(_year, _month, 1, tzinfo=UTC),
+                    zarr_root=_zarr_root,
+                    zarr_group=zarr_group,
+                    variable=variable,
+                    extra_properties=source.stac_properties(variable=variable, year=_year),
+                )
+            success_count += 1
+        except Exception as exc:
+            console.print(f"  [red]Failed year {_year}: {exc}[/red]")
+            logger.exception("CDS download failed for year %d", _year)
 
-    cat.save(catalogue, _catalog_path)
-    console.print(f"[green]STAC item registered[/green] {_catalog_path}")
+    if success_count > 0:
+        cat.save(catalogue, _catalog_path)
+        console.print(f"[green]STAC item registered[/green] {_catalog_path}")
     console.print("[bold green]Done.[/bold green]")
 
 

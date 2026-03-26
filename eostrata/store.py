@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 def geotiff_to_zarr(
     tif_path: Path,
     zarr_root: Path,
-    dataset_name: str,
+    zarr_group: str,
     *,
     bbox: tuple[float, float, float, float] | None = None,
     time_coord: np.datetime64 | None = None,
@@ -36,7 +36,7 @@ def geotiff_to_zarr(
         Path to the source GeoTIFF.
     zarr_root:
         Root directory of the Zarr store.
-    dataset_name:
+    zarr_group:
         Group name inside the store, e.g. ``worldpop/nga``.
     bbox:
         Optional (west, south, east, north) clip extent in EPSG:4326.
@@ -47,7 +47,7 @@ def geotiff_to_zarr(
         Zarr chunk sizes. Defaults to 512x512.
     variable_name:
         Name of the data variable in the dataset. Defaults to the last
-        segment of dataset_name if not provided.
+        segment of zarr_group if not provided.
 
     Returns
     -------
@@ -90,11 +90,11 @@ def geotiff_to_zarr(
         dims = ("time", "y", "x")
         arr = data[np.newaxis, ...]
 
-    var_name = variable_name or dataset_name.split("/")[-1]
+    var_name = variable_name or zarr_group.split("/")[-1]
     da = xr.DataArray(arr, dims=dims, coords=coords, name=var_name)
     da.attrs.update(
         grid_mapping="crs",
-        long_name=dataset_name,
+        long_name=zarr_group,
     )
 
     ds = da.to_dataset()
@@ -120,15 +120,15 @@ def geotiff_to_zarr(
     }
 
     store_path = str(zarr_root)
-    group_exists = (zarr_root / dataset_name).exists()
+    group_exists = (zarr_root / zarr_group).exists()
 
     if group_exists and time_coord is not None:
         # Append new timestep along the time dimension
-        logger.info("Appending to existing Zarr dataset '%s'", dataset_name)
-        ds.to_zarr(store_path, group=dataset_name, mode="a", append_dim="time", consolidated=True)
+        logger.info("Appending to existing Zarr dataset '%s'", zarr_group)
+        ds.to_zarr(store_path, group=zarr_group, mode="a", append_dim="time", consolidated=True)
     else:
-        logger.info("Writing new Zarr dataset '%s'", dataset_name)
-        ds.to_zarr(store_path, group=dataset_name, mode="w", encoding=encoding, consolidated=True)
+        logger.info("Writing new Zarr dataset '%s'", zarr_group)
+        ds.to_zarr(store_path, group=zarr_group, mode="w", encoding=encoding, consolidated=True)
 
-    logger.info("Done: %s", dataset_name)
+    logger.info("Done: %s", zarr_group)
     return ds

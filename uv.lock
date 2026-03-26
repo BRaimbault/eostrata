@@ -473,6 +473,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "attrs" },
+    { name = "cdsapi" },
     { name = "h5py" },
     { name = "httpx" },
     { name = "numpy" },
@@ -521,6 +522,7 @@ dev = [
 requires-dist = [
     { name = "apscheduler", marker = "extra == 'scheduler'", specifier = ">=3.10" },
     { name = "attrs", specifier = ">=26.1.0" },
+    { name = "cdsapi", specifier = ">=0.7.7" },
     { name = "cdsapi", marker = "extra == 'cds'", specifier = ">=0.7" },
     { name = "h5py", specifier = ">=3.16.0" },
     { name = "httpx", specifier = ">=0.27" },

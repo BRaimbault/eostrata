@@ -23,6 +23,24 @@ def _write_zarr(zarr_root: Path, group: str = "worldpop/nga") -> None:
     ds.to_zarr(str(zarr_root), group=group, mode="w", consolidated=True)
 
 
+def _write_zarr_with_time(zarr_root: Path, group: str = "chirps/global") -> None:
+    """Write a Zarr dataset with a time dimension for aggregation testing."""
+    import rioxarray  # noqa: F401
+
+    y = np.linspace(14.0, 4.0, 20)
+    x = np.linspace(2.0, 15.0, 20)
+    times = np.array(
+        [np.datetime64("2020-01-01"), np.datetime64("2021-01-01"), np.datetime64("2022-01-01")]
+    )
+    # Values equal to the year (2020, 2021, 2022) for easy assertion
+    data = np.stack([np.full((20, 20), float(y), dtype="float32") for y in [2020, 2021, 2022]])
+    ds = xr.Dataset(
+        {"precipitation": (("time", "y", "x"), data)},
+        coords={"time": times, "y": y, "x": x},
+    )
+    ds.to_zarr(str(zarr_root), group=group, mode="w", consolidated=True)
+
+
 @pytest.fixture()
 def zarr_root(tmp_path):
     root = tmp_path / "zarr"
@@ -272,3 +290,111 @@ class TestExecuteZonalStats:
         assert resp.status_code == 200
         feat = resp.json()["features"][0]
         assert feat["statistics"] == {"error": "no geometry"}
+
+
+# ── Temporal aggregation tests ─────────────────────────────────────────────────
+
+
+@pytest.fixture()
+def zarr_root_time(tmp_path):
+    root = tmp_path / "zarr"
+    _write_zarr_with_time(root)
+    return root
+
+
+_GEOM = {
+    "type": "Polygon",
+    "coordinates": [[[3.0, 5.0], [8.0, 5.0], [8.0, 9.0], [3.0, 9.0], [3.0, 5.0]]],
+}
+
+
+class TestZonalStatsTemporalAggregation:
+    def _payload(self, zarr_root: str, **extra) -> dict:
+        return {
+            "inputs": {
+                "url": zarr_root,
+                "group": "chirps/global",
+                "variable": "precipitation",
+                "features": {
+                    "type": "FeatureCollection",
+                    "features": [{"type": "Feature", "properties": {}, "geometry": _GEOM}],
+                },
+                **extra,
+            }
+        }
+
+    def test_no_datetime_returns_last_timestep(self, app_client, zarr_root_time):
+        resp = app_client.post(
+            "/processes/zonalstats/execution", json=self._payload(str(zarr_root_time))
+        )
+        assert resp.status_code == 200
+        stats = resp.json()["features"][0]["statistics"]
+        # No agg → last timestep → 2022
+        assert stats["mean"] == pytest.approx(2022.0, abs=1.0)
+
+    def test_datetime_single_selects_timestep(self, app_client, zarr_root_time):
+        resp = app_client.post(
+            "/processes/zonalstats/execution",
+            json=self._payload(str(zarr_root_time), datetime="2020-01-01"),
+        )
+        assert resp.status_code == 200
+        stats = resp.json()["features"][0]["statistics"]
+        assert stats["mean"] == pytest.approx(2020.0, abs=1.0)
+
+    def test_agg_mean_over_interval(self, app_client, zarr_root_time):
+        resp = app_client.post(
+            "/processes/zonalstats/execution",
+            json=self._payload(
+                str(zarr_root_time),
+                datetime="2020-01-01/2021-12-31",
+                agg="mean",
+            ),
+        )
+        assert resp.status_code == 200
+        stats = resp.json()["features"][0]["statistics"]
+        # mean(2020, 2021) = 2020.5
+        assert stats["mean"] == pytest.approx(2020.5, abs=0.1)
+
+    def test_agg_sum_over_interval(self, app_client, zarr_root_time):
+        resp = app_client.post(
+            "/processes/zonalstats/execution",
+            json=self._payload(
+                str(zarr_root_time),
+                datetime="2020-01-01/2021-12-31",
+                agg="sum",
+            ),
+        )
+        assert resp.status_code == 200
+        stats = resp.json()["features"][0]["statistics"]
+        # sum(2020, 2021) per pixel = 4041.0
+        assert stats["mean"] == pytest.approx(4041.0, abs=1.0)
+
+    def test_agg_anomaly(self, app_client, zarr_root_time):
+        resp = app_client.post(
+            "/processes/zonalstats/execution",
+            json=self._payload(
+                str(zarr_root_time),
+                datetime="2020-01-01/2022-12-31",
+                agg="anomaly",
+                baseline="2020-01-01/2020-12-31",
+            ),
+        )
+        assert resp.status_code == 200
+        stats = resp.json()["features"][0]["statistics"]
+        # mean(2020,2021,2022)=2021, baseline mean(2020)=2020 → anomaly=1.0
+        assert stats["mean"] == pytest.approx(1.0, abs=0.1)
+
+    def test_agg_anomaly_missing_baseline_returns_422(self, app_client, zarr_root_time):
+        resp = app_client.post(
+            "/processes/zonalstats/execution",
+            json=self._payload(str(zarr_root_time), agg="anomaly"),
+        )
+        assert resp.status_code == 422
+
+    def test_out_of_range_interval_returns_422(self, app_client, zarr_root_time):
+        # An interval that matches zero timesteps raises a 422.
+        resp = app_client.post(
+            "/processes/zonalstats/execution",
+            json=self._payload(str(zarr_root_time), datetime="1900-01-01/1900-12-31", agg="mean"),
+        )
+        assert resp.status_code == 422

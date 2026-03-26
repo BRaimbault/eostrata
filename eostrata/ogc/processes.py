@@ -6,11 +6,13 @@ import logging
 
 import numpy as np
 import rioxarray  # noqa: F401 — registers .rio accessor on xarray
+import rioxarray.exceptions as rio_exc
 import xarray as xr
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from eostrata.aggregate import apply_temporal_aggregation
 from eostrata.config import settings
 
 logger = logging.getLogger(__name__)
@@ -55,6 +57,23 @@ _PROCESS_DESCRIPTION = {
             "description": "ISO 8601 datetime or interval for time selection (optional).",
             "schema": {"type": "string"},
         },
+        "agg": {
+            "title": "Aggregation method",
+            "description": (
+                "Temporal aggregation method applied before zonal extraction. "
+                "One of: mean, sum, min, max, anomaly. "
+                "If omitted, the last available timestep is used."
+            ),
+            "schema": {"type": "string", "enum": ["mean", "sum", "min", "max", "anomaly"]},
+        },
+        "baseline": {
+            "title": "Baseline interval",
+            "description": (
+                "ISO 8601 interval defining the reference period for anomaly aggregation, "
+                "e.g. 2015-01-01/2020-12-31. Required when agg=anomaly."
+            ),
+            "schema": {"type": "string"},
+        },
     },
     "outputs": {
         "results": {
@@ -87,8 +106,18 @@ class ZonalStatsInputs(BaseModel):
     )
     datetime: str | None = Field(
         None,
-        description="ISO 8601 datetime for time selection (see /examples for valid values)",
+        description="ISO 8601 datetime or interval for time selection",
         json_schema_extra={"example": "2020-01-01T00:00:00+00:00"},
+    )
+    agg: str | None = Field(
+        None,
+        description="Temporal aggregation method: mean, sum, min, max, anomaly",
+        json_schema_extra={"example": "mean"},
+    )
+    baseline: str | None = Field(
+        None,
+        description="ISO 8601 interval for anomaly baseline, e.g. 2015-01-01/2020-12-31",
+        json_schema_extra={"example": "2015-01-01/2020-12-31"},
     )
 
 
@@ -131,8 +160,19 @@ class ExecutionRequest(BaseModel):
 # ── Computation helpers ───────────────────────────────────────────────────────
 
 
-def _load_array(url: str, group: str, variable: str) -> xr.DataArray:
-    """Open the Zarr group and return the requested variable as a 2D DataArray."""
+def _load_array(
+    url: str,
+    group: str,
+    variable: str,
+    *,
+    datetime: str | None = None,
+    agg: str | None = None,
+    baseline: str | None = None,
+) -> xr.DataArray:
+    """Open the Zarr group and return the requested variable as a 2D DataArray.
+
+    Applies temporal aggregation when the array has a ``time`` dimension.
+    """
     store_path = url or str(settings.zarr_root)
     ds = xr.open_zarr(store_path, group=group, consolidated=True)
     if variable not in ds:
@@ -142,9 +182,22 @@ def _load_array(url: str, group: str, variable: str) -> xr.DataArray:
             detail=f"Variable '{variable}' not found. Available: {available}",
         )
     da = ds[variable]
-    # Collapse time dimension if present — use last timestep by default
+
+    # Normalise ERA5 time coordinate: valid_time → time
+    if "valid_time" in da.coords and "time" not in da.dims:
+        da = da.assign_coords(time=da["valid_time"]).swap_dims({"valid_time": "time"})
+
     if "time" in da.dims:
-        da = da.isel(time=-1)
+        try:
+            da = apply_temporal_aggregation(
+                da,
+                datetime_str=datetime,
+                agg=agg,
+                baseline=baseline,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     da = da.squeeze()
     # Write CRS from the dataset's crs variable if present
     if "crs" in ds and "crs_wkt" in ds["crs"].attrs:
@@ -158,7 +211,7 @@ def _feature_stats(da: xr.DataArray, geometry: dict) -> dict:
     """Clip *da* to *geometry* and return summary statistics."""
     try:
         clipped = da.rio.clip([geometry], crs="EPSG:4326", drop=True, all_touched=False)
-    except Exception as exc:
+    except (ValueError, rio_exc.RioXarrayError) as exc:
         logger.warning("Clip failed: %s", exc)
         return {"error": str(exc)}
 
@@ -168,6 +221,7 @@ def _feature_stats(da: xr.DataArray, geometry: dict) -> dict:
     if valid.size == 0:
         return {"count": 0, "nodata_count": int(values.size)}
 
+    p5, p25, p50, p75, p95 = np.percentile(valid, [5, 25, 50, 75, 95])
     return {
         "count": int(valid.size),
         "nodata_count": int(values.size - valid.size),
@@ -177,11 +231,11 @@ def _feature_stats(da: xr.DataArray, geometry: dict) -> dict:
         "std": float(valid.std()),
         "sum": float(valid.sum()),
         "percentiles": {
-            "p5": float(np.percentile(valid, 5)),
-            "p25": float(np.percentile(valid, 25)),
-            "p50": float(np.percentile(valid, 50)),
-            "p75": float(np.percentile(valid, 75)),
-            "p95": float(np.percentile(valid, 95)),
+            "p5": float(p5),
+            "p25": float(p25),
+            "p50": float(p50),
+            "p75": float(p75),
+            "p95": float(p95),
         },
     }
 
@@ -245,7 +299,14 @@ def execute_zonalstats(body: ExecutionRequest) -> dict:
         raise HTTPException(status_code=422, detail="FeatureCollection has no features.")
 
     # Load array once, clip to total bbox for efficiency
-    da = _load_array(inp.url or str(settings.zarr_root), inp.group, inp.variable)
+    da = _load_array(
+        inp.url,
+        inp.group,
+        inp.variable,
+        datetime=inp.datetime,
+        agg=inp.agg,
+        baseline=inp.baseline,
+    )
 
     result_features = []
     for feat in features:

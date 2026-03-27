@@ -155,6 +155,62 @@ def apply_temporal_aggregation(
         raise ValueError(f"Unknown agg method '{agg}'. Use: mean, sum, min, max, anomaly.")
 
 
+def resolve_accessed_times(
+    ds,
+    datetime_str: str | None,
+    agg_method: str | None = None,
+    baseline: str | None = None,
+) -> list:
+    """Return the numpy datetime64 values from *ds* that a request will access.
+
+    For a single-point datetime, returns the nearest timestamp.
+    For an interval (or temporal aggregation), returns all timestamps in range.
+    For ``agg="anomaly"``, also includes all timestamps in the baseline range.
+    For ``datetime_str=None``, returns the last timestamp (default behaviour).
+
+    Used to record per-timestamp last-access sentinels before the time
+    dimension is collapsed by aggregation.
+    """
+    import numpy as np
+
+    # Support both Dataset and DataArray
+    if "time" not in getattr(ds, "dims", {}) and "time" not in getattr(ds, "coords", {}):
+        return []
+    try:
+        times = ds["time"].values
+    except (KeyError, AttributeError):
+        return []
+    if len(times) == 0:
+        return []
+
+    def _in_range(dt_str: str | None) -> list:
+        if not dt_str:
+            return [times[-1]]
+        t0, t1 = _parse_datetime_interval(dt_str)
+        if not t0:
+            return [times[-1]]
+        t0s = _strip_tz(t0)
+        t1s = _strip_tz(t1) if t1 else t0s
+        times_s = times.astype("datetime64[s]")
+        if t0s == t1s:
+            target = np.datetime64(t0s, "s")
+            idx = int(np.argmin(np.abs(times_s - target)))
+            return [times[idx]]
+        start = np.datetime64(t0s, "s")
+        end = np.datetime64(t1s, "s")
+        return [times[i] for i, t in enumerate(times_s) if start <= t <= end]
+
+    accessed = _in_range(datetime_str)
+    if agg_method == "anomaly" and baseline:
+        baseline_times = _in_range(baseline)
+        seen = {t.tobytes() for t in accessed}
+        for t in baseline_times:
+            if t.tobytes() not in seen:
+                accessed.append(t)
+                seen.add(t.tobytes())
+    return accessed
+
+
 class AggregatingReader(Reader):
     """
     titiler.xarray Reader subclass that applies temporal aggregation
@@ -189,10 +245,6 @@ class AggregatingReader(Reader):
             decode_times=self.decode_times,
         )
 
-        # Update last-access sentinel so LRU eviction orders groups correctly.
-        if self.group:
-            record_access(Path(self.src_path), self.group)
-
         # Normalise ERA5 time coordinate: valid_time → time
         if "valid_time" in self.ds.coords and "time" not in self.ds.coords:
             self.ds = self.ds.rename({"valid_time": "time"})
@@ -202,6 +254,13 @@ class AggregatingReader(Reader):
         agg_datetime = _CTX_AGG_DATETIME.get()
         agg_method = _CTX_AGG_METHOD.get()
         agg_baseline = _CTX_AGG_BASELINE.get()
+
+        # Record per-timestamp access AFTER time coord is normalised and BEFORE
+        # apply_temporal_aggregation collapses the time dimension.
+        if self.group:
+            accessed = resolve_accessed_times(self.ds, agg_datetime, agg_method, agg_baseline)
+            if accessed:
+                record_access(Path(self.src_path), self.group, accessed)
 
         # Strip any time-related sel entries — we handle time ourselves via
         # apply_temporal_aggregation so that range queries and agg methods work.

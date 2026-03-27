@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Path, Response
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from eostrata import ingestion, jobs
 from eostrata.config import settings
@@ -69,8 +69,16 @@ _INGEST_DESCRIPTION = {
         },
         "months": {
             "title": "Months",
-            "description": "List of months 1-12 (chirps/cds only; default: latest available).",
-            "schema": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 12}},
+            "description": (
+                "List of months 1-12, or the string 'ALL' for every month "
+                "(chirps/cds only; default: latest available)."
+            ),
+            "schema": {
+                "oneOf": [
+                    {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 12}},
+                    {"type": "string", "enum": ["ALL"]},
+                ]
+            },
         },
     },
     "outputs": {"job_id": {"title": "Job ID", "schema": {"type": "string"}}},
@@ -79,6 +87,8 @@ _INGEST_DESCRIPTION = {
 # ── Pydantic model ────────────────────────────────────────────────────────────
 
 Month = Annotated[int, Field(ge=1, le=12)]
+
+_ALL_MONTHS = list(range(1, 13))
 
 
 class IngestInputs(BaseModel):
@@ -90,7 +100,16 @@ class IngestInputs(BaseModel):
         None, description="ERA5 variable short name (cds only)"
     )
     years: list[int] | None = Field(None, description="Years to ingest")
-    months: list[Month] | None = Field(None, description="Months 1-12 to ingest (chirps/cds only)")
+    months: list[Month] | Literal["ALL"] | None = Field(
+        None, description="Months 1-12 to ingest, or 'ALL' for every month (chirps/cds only)"
+    )
+
+    @field_validator("months", mode="before")
+    @classmethod
+    def expand_all_months(cls, v):
+        if isinstance(v, str) and v.strip().upper() == "ALL":
+            return _ALL_MONTHS
+        return v
 
     @model_validator(mode="after")
     def check_source_fields(self) -> IngestInputs:
@@ -117,12 +136,15 @@ class IngestExecutionRequest(BaseModel):
 
 
 def _run_job(job_id: str, fn, **kwargs) -> None:
+    fn_name = getattr(fn, "__name__", repr(fn))
+    logger.info("Job %s started: %s", job_id, fn_name)
     try:
         fn(**kwargs)
         jobs.mark_succeeded(job_id)
+        logger.info("Job %s succeeded", job_id)
     except Exception:
         error = traceback.format_exc()
-        logger.exception("Ingestion job %s failed", job_id)
+        logger.exception("Job %s failed: %s", job_id, fn_name)
         jobs.mark_failed(job_id, error)
 
 
@@ -185,6 +207,7 @@ def execute_ingest(body: IngestExecutionRequest, response: Response) -> dict:
     All year/month values default to the latest available when omitted.
     """
     inp = body.inputs
+    logger.info("API POST /processes/ingest/execution %s", inp.model_dump(exclude_none=True))
 
     if inp.source == "worldpop":
         from eostrata.sources import WorldPopSource
@@ -202,6 +225,7 @@ def execute_ingest(body: IngestExecutionRequest, response: Response) -> dict:
             catalog_path=settings.catalog_path,
             bbox=settings.bbox,
             quota_mb=settings.store_quota_mb,
+            eviction_buffer_mb=settings.store_eviction_buffer_mb,
         )
 
     elif inp.source == "chirps":
@@ -222,6 +246,7 @@ def execute_ingest(body: IngestExecutionRequest, response: Response) -> dict:
             catalog_path=settings.catalog_path,
             bbox=settings.bbox,
             quota_mb=settings.store_quota_mb,
+            eviction_buffer_mb=settings.store_eviction_buffer_mb,
         )
 
     else:  # cds
@@ -244,6 +269,7 @@ def execute_ingest(body: IngestExecutionRequest, response: Response) -> dict:
             catalog_path=settings.catalog_path,
             bbox=settings.bbox,
             quota_mb=settings.store_quota_mb,
+            eviction_buffer_mb=settings.store_eviction_buffer_mb,
         )
 
     response.headers["Location"] = f"/processes/jobs/{job.job_id}"

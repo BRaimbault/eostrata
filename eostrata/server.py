@@ -22,6 +22,7 @@ GET  /docs                                                  OpenAPI docs
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
 
 import pystac
@@ -51,6 +52,10 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from eostrata.log import setup_logging
+
+    setup_logging(rich_console=False)  # file-only; uvicorn owns the console
+
     scheduler = None
     try:
         from eostrata.scheduler import Scheduler
@@ -135,6 +140,24 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _log_requests(request: Request, call_next):
+    start = time.perf_counter()
+    response = await call_next(request)
+    ms = (time.perf_counter() - start) * 1000
+    # Skip tile/map requests to keep the log readable
+    if not request.url.path.startswith("/tiles/"):
+        logger.info(
+            "%s %s %s %.0fms",
+            request.method,
+            request.url.path,
+            response.status_code,
+            ms,
+        )
+    return response
+
 
 # ── STAC API — mounted at /stac ───────────────────────────────────────────────
 
@@ -402,20 +425,21 @@ def store_usage() -> dict:
     """
     from datetime import UTC, datetime
 
-    from eostrata.cache import list_groups, store_size_mb
+    from eostrata.cache import list_groups, list_timestamps, store_size_mb
 
     used_mb = store_size_mb(settings.zarr_root)
     quota_mb = settings.store_quota_mb
-    groups = [
-        {
-            "group": g[0],
-            "size_mb": round(g[1], 2),
-            "last_accessed": datetime.fromtimestamp(g[2], tz=UTC).isoformat()
-            if g[2]
-            else None,
-        }
-        for g in list_groups(settings.zarr_root)
-    ]
+    groups = []
+    for g_path, g_size_mb, _ in list_groups(settings.zarr_root):
+        timestamps = [
+            {
+                "datetime": ts_iso,
+                "size_mb": round(ts_size_mb, 2),
+                "last_accessed": datetime.fromtimestamp(la, tz=UTC).isoformat() if la else None,
+            }
+            for ts_iso, ts_size_mb, la in list_timestamps(settings.zarr_root, g_path)
+        ]
+        groups.append({"group": g_path, "size_mb": round(g_size_mb, 2), "timestamps": timestamps})
     return {
         "used_mb": round(used_mb, 2),
         "quota_mb": quota_mb,
@@ -626,6 +650,13 @@ _MAP_HTML = """<!DOCTYPE html>
     .cfg-key { color: #9ca3af; white-space: nowrap; }
     .cfg-val { color: #111827; font-weight: 500; word-break: break-all; }
     .cfg-path { font-family: monospace; font-size: 11px; font-weight: 400; }
+    .cfg-group-toggle {
+      width: 100%; text-align: left; background: #f9fafb; border: none;
+      padding: 4px 6px; cursor: pointer; font-family: monospace; font-weight: 600;
+      font-size: 12px; color: #111827;
+    }
+    .cfg-group-toggle:hover { background: #f3f4f6; }
+    .cfg-group-toggle .cfg-arrow { display: inline-block; width: 12px; color: #9ca3af; }
     #cfg-bbox-map {
       width: 100%; height: 80px; margin-top: 6px; border-radius: 4px;
       border: 1px solid #e5e7eb; background: #f9fafb;
@@ -755,7 +786,7 @@ _MAP_HTML = """<!DOCTYPE html>
 
       <div id="ing-months-row" style="display:none">
         <label>Months (comma-separated, blank = latest)</label>
-        <input id="ing-months" type="text" placeholder="e.g. 1,2,3"/>
+        <input id="ing-months" type="text" placeholder="e.g. 1,2,3 or ALL"/>
       </div>
 
       <button class="btn" id="btn-ingest" onclick="startIngest()">Start ingestion job</button>
@@ -886,16 +917,47 @@ _MAP_HTML = """<!DOCTYPE html>
         if (u.groups && u.groups.length) {
           const tbody = document.getElementById('cfg-groups-tbody');
           tbody.innerHTML = '';
-          u.groups.forEach((g, i) => {
-            const evictRisk = !u.quota_unlimited && i === 0 && u.used_pct > 80;
-            const tr = document.createElement('tr');
-            tr.style.borderBottom = '1px solid #f3f4f6';
-            if (evictRisk) tr.style.color = '#dc2626';
-            tr.innerHTML =
-              '<td style="padding:4px 6px;font-family:monospace">' + g.group + '</td>' +
-              '<td style="padding:4px 6px;text-align:right">' + fmtMb(g.size_mb) + '</td>' +
-              '<td style="padding:4px 6px;text-align:right">' + fmtTs(g.last_accessed) + '</td>';
-            tbody.appendChild(tr);
+          u.groups.forEach((g, gi) => {
+            const groupId = 'cfg-grp-' + gi;
+            // Group header row — collapsible, collapsed by default
+            const trg = document.createElement('tr');
+            const trgTd = document.createElement('td');
+            trgTd.colSpan = 3;
+            trgTd.style.padding = '0';
+            const btn = document.createElement('button');
+            btn.className = 'cfg-group-toggle';
+            btn.setAttribute('aria-expanded', 'false');
+            btn.setAttribute('aria-controls', groupId);
+            btn.innerHTML =
+              '<span class="cfg-arrow">▶</span> ' + g.group +
+              ' <span style="font-weight:normal;color:#6b7280">(' + fmtMb(g.size_mb) +
+              ', ' + (g.timestamps || []).length + ' timestamp' +
+              ((g.timestamps || []).length !== 1 ? 's' : '') + ')</span>';
+            btn.onclick = function() {
+              const expanded = this.getAttribute('aria-expanded') === 'true';
+              this.setAttribute('aria-expanded', String(!expanded));
+              this.querySelector('.cfg-arrow').textContent = expanded ? '▶' : '▼';
+              document.querySelectorAll('.' + groupId).forEach(r => {
+                r.style.display = expanded ? 'none' : '';
+              });
+            };
+            trgTd.appendChild(btn);
+            trg.appendChild(trgTd);
+            tbody.appendChild(trg);
+            // Per-timestamp rows — hidden by default
+            (g.timestamps || []).forEach((ts, i) => {
+              const evictRisk = !u.quota_unlimited && i === 0 && u.used_pct > 80;
+              const tr = document.createElement('tr');
+              tr.className = groupId;
+              tr.style.display = 'none';
+              tr.style.borderBottom = '1px solid #f3f4f6';
+              if (evictRisk) tr.style.color = '#dc2626';
+              tr.innerHTML =
+                '<td style="padding:2px 6px 2px 18px;font-family:monospace;font-size:11px">' + ts.datetime.slice(0,10) + '</td>' +
+                '<td style="padding:2px 6px;text-align:right;font-size:11px">' + fmtMb(ts.size_mb) + '</td>' +
+                '<td style="padding:2px 6px;text-align:right;font-size:11px">' + fmtTs(ts.last_accessed) + '</td>';
+              tbody.appendChild(tr);
+            });
           });
           document.getElementById('cfg-groups-wrap').style.display = 'block';
         }
@@ -1287,7 +1349,7 @@ _MAP_HTML = """<!DOCTYPE html>
       }
       if (src === 'cds') inputs.variable = varbl;
       if (years)  inputs.years  = _parseInts(years);
-      if (months) inputs.months = _parseInts(months);
+      if (months) inputs.months = months.toUpperCase() === 'ALL' ? 'ALL' : _parseInts(months);
 
       const btn = document.getElementById('btn-ingest');
       btn.disabled = true;

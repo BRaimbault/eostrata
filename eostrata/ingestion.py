@@ -22,13 +22,16 @@ def run_worldpop_ingest(
     catalog_path: Path,
     bbox: tuple[float, float, float, float],
     quota_mb: float = 0.0,
+    eviction_buffer_mb: float = 0.0,
 ) -> None:
     """Download WorldPop rasters, write to Zarr, and register STAC items."""
     from eostrata import catalog as cat
     from eostrata.cache import check_and_evict
     from eostrata.sources import WorldPopSource
 
-    check_and_evict(zarr_root, quota_mb=quota_mb)
+    check_and_evict(
+        zarr_root, quota_mb=quota_mb, required_mb=eviction_buffer_mb, catalog_path=catalog_path
+    )
 
     source = WorldPopSource()
     zarr_group = source.zarr_group(iso3=iso3)
@@ -66,23 +69,34 @@ def run_chirps_ingest(
     catalog_path: Path,
     bbox: tuple[float, float, float, float],
     quota_mb: float = 0.0,
+    eviction_buffer_mb: float = 0.0,
 ) -> None:
     """Download CHIRPS rasters, write to Zarr, and register STAC items."""
     from eostrata import catalog as cat
     from eostrata.cache import check_and_evict
     from eostrata.sources.chirps import CHIRPSSource
 
-    check_and_evict(zarr_root, quota_mb=quota_mb)
+    check_and_evict(
+        zarr_root, quota_mb=quota_mb, required_mb=eviction_buffer_mb, catalog_path=catalog_path
+    )
 
     source = CHIRPSSource()
     zarr_group = source.zarr_group()
     catalogue = cat.load_or_create(catalog_path)
 
+    import httpx
+
     success = False
     for year in years:
         for month in months:
             logger.info("CHIRPS: ingesting year=%d month=%02d", year, month)
-            paths = source.download(raw_dir, bbox, year=year, month=month)
+            try:
+                paths = source.download(raw_dir, bbox, year=year, month=month)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404:
+                    logger.warning("CHIRPS: %d-%02d not available yet (404), skipping", year, month)
+                    continue
+                raise
             ds = source.to_zarr(paths[0], zarr_root, bbox, year=year, month=month)
             paths[0].unlink(missing_ok=True)
             logger.debug("CHIRPS: removed raw file %s", paths[0])
@@ -120,13 +134,16 @@ def run_cds_ingest(
     catalog_path: Path,
     bbox: tuple[float, float, float, float],
     quota_mb: float = 0.0,
+    eviction_buffer_mb: float = 0.0,
 ) -> None:
     """Download ERA5 NetCDF files, write to Zarr, and register STAC items."""
     from eostrata import catalog as cat
     from eostrata.cache import check_and_evict
     from eostrata.sources.cds import CDSSource
 
-    check_and_evict(zarr_root, quota_mb=quota_mb)
+    check_and_evict(
+        zarr_root, quota_mb=quota_mb, required_mb=eviction_buffer_mb, catalog_path=catalog_path
+    )
 
     source = CDSSource()
     zarr_group = source.zarr_group(variable=variable)

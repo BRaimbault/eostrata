@@ -11,79 +11,109 @@ import pytest
 import xarray as xr
 
 from eostrata.cache import (
-    _ACCESSED_SENTINEL,
+    _ACCESS_DIR,
     _DEBOUNCE_S,
     check_and_evict,
     evict_group,
+    evict_timestamp,
     list_groups,
+    list_timestamps,
     record_access,
     store_size_mb,
 )
 
 
 def _write_fake_group(zarr_root: Path, group: str, size_kb: int = 10) -> None:
-    """Write a dummy Zarr group with roughly *size_kb* of data."""
-    data = np.random.rand(size_kb, 8).astype("float32")  # ~size_kb * 32 bytes
+    """Write a dummy Zarr group with no time dimension."""
+    data = np.random.rand(size_kb, 8).astype("float32")
     ds = xr.Dataset({"data": (("y", "x"), data)})
     ds.to_zarr(str(zarr_root), group=group, mode="w")
 
 
-class TestRecordAccess:
-    def test_creates_sentinel_file(self, tmp_path):
-        _write_fake_group(tmp_path, "worldpop/nga")
-        record_access(tmp_path, "worldpop/nga")
-        assert (tmp_path / "worldpop" / "nga" / _ACCESSED_SENTINEL).exists()
+def _write_fake_group_with_times(
+    zarr_root: Path, group: str, years: list[int], size_kb: int = 10
+) -> None:
+    """Write a Zarr group with a time dimension (one step per year)."""
+    n = len(years)
+    data = np.random.rand(n, size_kb, 8).astype("float32")
+    times = np.array([np.datetime64(f"{y}-01-01") for y in years])
+    ds = xr.Dataset(
+        {"data": (("time", "y", "x"), data)},
+        coords={"time": times},
+    )
+    ds.to_zarr(str(zarr_root), group=group, mode="w")
 
-    def test_updates_sentinel_mtime(self, tmp_path):
-        _write_fake_group(tmp_path, "worldpop/nga")
-        sentinel = tmp_path / "worldpop" / "nga" / _ACCESSED_SENTINEL
-        sentinel.touch()
-        mtime_before = sentinel.stat().st_mtime
-        time.sleep(0.05)
-        record_access(tmp_path, "worldpop/nga")
-        assert sentinel.stat().st_mtime >= mtime_before
+
+class TestRecordAccess:
+    def test_creates_sentinel_files(self, tmp_path):
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021])
+        ts = [np.datetime64("2020-01-01"), np.datetime64("2021-01-01")]
+        record_access(tmp_path, "worldpop/nga", ts)
+        access_dir = tmp_path / "worldpop" / "nga" / _ACCESS_DIR
+        assert (access_dir / "2020-01-01T00:00:00").exists()
+        assert (access_dir / "2021-01-01T00:00:00").exists()
 
     def test_debounce_skips_touch_within_window(self, tmp_path):
-        """Second call within _DEBOUNCE_S seconds does not update the sentinel."""
-        _write_fake_group(tmp_path, "worldpop/nga")
-        record_access(tmp_path, "worldpop/nga")
-        sentinel = tmp_path / "worldpop" / "nga" / _ACCESSED_SENTINEL
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020])
+        ts = [np.datetime64("2020-01-01")]
+        record_access(tmp_path, "worldpop/nga", ts)
+        sentinel = tmp_path / "worldpop" / "nga" / _ACCESS_DIR / "2020-01-01T00:00:00"
         mtime_first = sentinel.stat().st_mtime
-        # Simulate time just inside the debounce window
         with patch("eostrata.cache.time.time", return_value=mtime_first + _DEBOUNCE_S - 1):
-            record_access(tmp_path, "worldpop/nga")
+            record_access(tmp_path, "worldpop/nga", ts)
         assert sentinel.stat().st_mtime == mtime_first
 
     def test_debounce_allows_touch_after_window(self, tmp_path):
-        """Call after _DEBOUNCE_S seconds does update the sentinel."""
-        _write_fake_group(tmp_path, "worldpop/nga")
-        record_access(tmp_path, "worldpop/nga")
-        sentinel = tmp_path / "worldpop" / "nga" / _ACCESSED_SENTINEL
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020])
+        ts = [np.datetime64("2020-01-01")]
+        record_access(tmp_path, "worldpop/nga", ts)
+        sentinel = tmp_path / "worldpop" / "nga" / _ACCESS_DIR / "2020-01-01T00:00:00"
         mtime_first = sentinel.stat().st_mtime
-        # Simulate time just past the debounce window
         with patch("eostrata.cache.time.time", return_value=mtime_first + _DEBOUNCE_S + 1):
-            record_access(tmp_path, "worldpop/nga")
+            record_access(tmp_path, "worldpop/nga", ts)
         assert sentinel.stat().st_mtime >= mtime_first
 
     def test_oserror_is_silenced(self, tmp_path):
-        """record_access must not raise even if the sentinel cannot be written."""
-        with patch("eostrata.cache.Path.touch", side_effect=OSError("read-only")):
-            record_access(tmp_path, "worldpop/nga")  # should not raise
+        """record_access must not raise even if the access dir cannot be created."""
+        with patch("eostrata.cache.Path.mkdir", side_effect=OSError("read-only")):
+            record_access(tmp_path, "worldpop/nga", [np.datetime64("2020-01-01")])
 
     def test_sentinel_affects_lru_order(self, tmp_path):
         """Touching the sentinel of the older group makes it appear newer."""
-        _write_fake_group(tmp_path, "worldpop/nga")
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020])
         time.sleep(0.05)
-        _write_fake_group(tmp_path, "chirps/global")
+        _write_fake_group_with_times(tmp_path, "chirps/global", [2020])
 
-        # worldpop/nga is the oldest; touch its sentinel to make it the newest
         time.sleep(0.05)
-        record_access(tmp_path, "worldpop/nga")
+        record_access(tmp_path, "worldpop/nga", [np.datetime64("2020-01-01")])
 
         groups = list_groups(tmp_path)
-        # chirps/global should now be first (oldest)
         assert groups[0][0] == "chirps/global"
         assert groups[1][0] == "worldpop/nga"
+
+
+class TestListTimestamps:
+    def test_returns_timestamps_sorted_oldest_first(self, tmp_path):
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021, 2022])
+        # Touch 2022 sentinel so it's the newest
+        record_access(tmp_path, "worldpop/nga", [np.datetime64("2022-01-01")])
+        ts_list = list_timestamps(tmp_path, "worldpop/nga")
+        assert len(ts_list) == 3
+        # 2020 and 2021 have last_access=0 (never accessed), 2022 has last_access>0
+        assert ts_list[-1][0].startswith("2022")
+        assert all(ts[2] == 0.0 for ts in ts_list[:2])
+
+    def test_nonexistent_group_returns_empty(self, tmp_path):
+        assert list_timestamps(tmp_path, "worldpop/nonexistent") == []
+
+    def test_no_time_dim_returns_empty(self, tmp_path):
+        _write_fake_group(tmp_path, "worldpop/nga")
+        assert list_timestamps(tmp_path, "worldpop/nga") == []
+
+    def test_size_mb_is_positive(self, tmp_path):
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021])
+        ts_list = list_timestamps(tmp_path, "worldpop/nga")
+        assert all(ts[1] > 0 for ts in ts_list)
 
 
 class TestStoreSizeMb:
@@ -116,12 +146,19 @@ class TestListGroups:
 
     def test_sorted_oldest_first(self, tmp_path):
         _write_fake_group(tmp_path, "worldpop/nga")
-        time.sleep(0.05)  # ensure different mtime
+        time.sleep(0.05)
         _write_fake_group(tmp_path, "chirps/global")
         groups = list_groups(tmp_path)
         paths = [g[0] for g in groups]
         assert paths[0] == "worldpop/nga"
         assert paths[1] == "chirps/global"
+
+    def test_sentinel_files_excluded_from_size(self, tmp_path):
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020])
+        size_before = list_groups(tmp_path)[0][1]
+        record_access(tmp_path, "worldpop/nga", [np.datetime64("2020-01-01")])
+        size_after = list_groups(tmp_path)[0][1]
+        assert size_after == size_before  # sentinels are 0 bytes, excluded anyway
 
 
 class TestEvictGroup:
@@ -137,64 +174,151 @@ class TestEvictGroup:
         assert freed == 0.0
 
 
+class TestEvictTimestamp:
+    def test_removes_one_timestamp(self, tmp_path):
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021, 2022])
+        freed = evict_timestamp(tmp_path, "worldpop/nga", "2021-01-01T00:00:00")
+        assert freed > 0
+        ds = xr.open_zarr(str(tmp_path), group="worldpop/nga", consolidated=False)
+        years = [t.astype("datetime64[Y]").item().year for t in ds["time"].values]
+        assert 2021 not in years
+        assert 2020 in years
+        assert 2022 in years
+
+    def test_preserves_access_sentinels(self, tmp_path):
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021])
+        record_access(tmp_path, "worldpop/nga", [np.datetime64("2020-01-01")])
+        evict_timestamp(tmp_path, "worldpop/nga", "2021-01-01T00:00:00")
+        access_dir = tmp_path / "worldpop" / "nga" / _ACCESS_DIR
+        names = [f.name for f in access_dir.iterdir()]
+        assert any("2020" in n for n in names)
+        assert not any("2021" in n for n in names)
+
+    def test_nonexistent_group_returns_zero(self, tmp_path):
+        assert evict_timestamp(tmp_path, "worldpop/nonexistent", "2020-01-01T00:00:00") == 0.0
+
+    def test_nonexistent_timestamp_returns_zero(self, tmp_path):
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020])
+        assert evict_timestamp(tmp_path, "worldpop/nga", "2099-01-01T00:00:00") == 0.0
+
+    def test_no_time_dim_returns_zero(self, tmp_path):
+        _write_fake_group(tmp_path, "worldpop/nga")
+        assert evict_timestamp(tmp_path, "worldpop/nga", "2020-01-01T00:00:00") == 0.0
+
+    def test_updates_catalog(self, tmp_path):
+        from datetime import UTC, datetime
+
+        from eostrata import catalog as cat
+
+        catalog_path = tmp_path / "catalog.json"
+        catalogue = cat.load_or_create(catalog_path)
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021])
+        cat.register_item(
+            catalogue,
+            collection_id="worldpop",
+            item_id="worldpop_nga",
+            bbox=(2.0, 4.0, 15.0, 14.0),
+            datetime_=datetime(2020, 1, 1, tzinfo=UTC),
+            zarr_root=tmp_path,
+            zarr_group="worldpop/nga",
+            variable="data",
+        )
+        cat.register_item(
+            catalogue,
+            collection_id="worldpop",
+            item_id="worldpop_nga",
+            bbox=(2.0, 4.0, 15.0, 14.0),
+            datetime_=datetime(2021, 1, 1, tzinfo=UTC),
+            zarr_root=tmp_path,
+            zarr_group="worldpop/nga",
+            variable="data",
+        )
+        cat.save(catalogue, catalog_path)
+
+        evict_timestamp(tmp_path, "worldpop/nga", "2021-01-01T00:00:00", catalog_path=catalog_path)
+
+        updated = cat.load_or_create(catalog_path)
+        item = updated.get_child("worldpop").get_item("worldpop_nga")
+        assert item is not None
+        datetimes = item.properties["eostrata:datetimes"]
+        assert not any(d.startswith("2021") for d in datetimes)
+        assert any(d.startswith("2020") for d in datetimes)
+
+
 class TestCheckAndEvict:
     def test_unlimited_quota_is_noop(self, tmp_path):
         _write_fake_group(tmp_path, "worldpop/nga")
-        # Should not raise or evict anything
         check_and_evict(tmp_path, quota_mb=0.0)
         assert (tmp_path / "worldpop" / "nga").exists()
 
     def test_within_quota_no_eviction(self, tmp_path):
-        _write_fake_group(tmp_path, "worldpop/nga", size_kb=1)
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020])
         check_and_evict(tmp_path, quota_mb=1000.0)
         assert (tmp_path / "worldpop" / "nga").exists()
 
-    def test_exceeds_quota_evicts_oldest(self, tmp_path):
-        _write_fake_group(tmp_path, "worldpop/nga", size_kb=50)
+    def test_exceeds_quota_evicts_oldest_timestamp_first(self, tmp_path):
+        """Oldest timestamp (no access sentinel) is evicted before the newer one."""
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021])
         time.sleep(0.05)
-        _write_fake_group(tmp_path, "chirps/global", size_kb=50)
+        record_access(tmp_path, "worldpop/nga", [np.datetime64("2021-01-01")])
 
         size_before = store_size_mb(tmp_path)
-        # Set quota just below current size — should evict oldest (worldpop/nga)
-        quota = size_before * 0.6
-        check_and_evict(tmp_path, quota_mb=quota)
+        with (
+            patch("eostrata.cache.evict_timestamp") as mock_evict,
+            patch(
+                "eostrata.cache.store_size_mb",
+                # Call sequence: initial check, loop iter 1 (2020→evict),
+                # loop iter 2 (2021→quota met→break), final remaining check
+                side_effect=[size_before, size_before, size_before * 0.3, size_before * 0.3],
+            ),
+        ):
+            check_and_evict(tmp_path, quota_mb=size_before * 0.6)
 
-        assert not (tmp_path / "worldpop" / "nga").exists()
-        # chirps/global may or may not survive depending on sizes, but store is smaller
-        assert store_size_mb(tmp_path) <= quota
+        mock_evict.assert_called_once()
+        evicted_ts = mock_evict.call_args[0][2]
+        assert evicted_ts.startswith("2020")  # oldest (no sentinel) evicted first
 
-    def test_exceeds_quota_no_groups_raises(self, tmp_path):
-        """RuntimeError when store exceeds quota but no two-level groups found (line 151)."""
+    def test_exceeds_quota_no_timestamps_raises(self, tmp_path):
         with (
             patch("eostrata.cache.store_size_mb", return_value=100.0),
-            patch("eostrata.cache.list_groups", return_value=[]),
-            pytest.raises(RuntimeError, match="no groups found"),
+            patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 100.0, 1.0)]),
+            patch("eostrata.cache.list_timestamps", return_value=[]),
+            pytest.raises(RuntimeError, match="no timestamps"),
         ):
             check_and_evict(tmp_path, quota_mb=10.0)
 
-    def test_eviction_break_when_first_eviction_sufficient(self, tmp_path):
-        """Eviction loop breaks early once quota is satisfied (line 159)."""
+    def test_eviction_stops_when_quota_met(self, tmp_path):
+        # store_size_mb call sequence:
+        # 1. initial check: 10.0 → exceeds quota of 5 MB
+        # 2. loop iter 1 (2020): 10.0 → still over → evict 2020
+        # 3. loop iter 2 (2021): 3.0 → within quota → break
+        # 4. final remaining check: 3.0 → within quota → no raise
         with (
-            patch("eostrata.cache.store_size_mb", return_value=10.0),
+            patch("eostrata.cache.store_size_mb", side_effect=[10.0, 10.0, 3.0, 3.0]),
+            patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 10.0, 1.0)]),
             patch(
-                "eostrata.cache.list_groups",
+                "eostrata.cache.list_timestamps",
                 return_value=[
-                    ("worldpop/nga", 7.0, 1.0),
-                    ("chirps/global", 3.0, 2.0),
+                    ("2020-01-01T00:00:00", 7.0, 1.0),
+                    ("2021-01-01T00:00:00", 3.0, 2.0),
                 ],
             ),
-            patch("eostrata.cache.evict_group") as mock_evict,
+            patch("eostrata.cache.evict_timestamp") as mock_evict,
         ):
             check_and_evict(tmp_path, quota_mb=5.0)
-
-        mock_evict.assert_called_once_with(tmp_path, "worldpop/nga")
+        mock_evict.assert_called_once_with(
+            tmp_path, "worldpop/nga", "2020-01-01T00:00:00", catalog_path=None
+        )
 
     def test_still_over_quota_after_all_evictions_raises(self, tmp_path):
-        """RuntimeError when freed space (per list_groups) doesn't cover the quota (line 172)."""
+        # store_size_mb: initial=100, re-measure in loop=100 (still over), final=100
         with (
             patch("eostrata.cache.store_size_mb", return_value=100.0),
-            patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 1.0, 1.0)]),
-            patch("eostrata.cache.evict_group"),
+            patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 100.0, 1.0)]),
+            patch(
+                "eostrata.cache.list_timestamps", return_value=[("2020-01-01T00:00:00", 1.0, 1.0)]
+            ),
+            patch("eostrata.cache.evict_timestamp"),
             pytest.raises(RuntimeError, match="Could not reduce store"),
         ):
             check_and_evict(tmp_path, quota_mb=50.0)

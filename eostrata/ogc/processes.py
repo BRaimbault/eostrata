@@ -175,11 +175,11 @@ def _load_array(
     """
     from pathlib import Path
 
+    from eostrata.aggregate import resolve_accessed_times
     from eostrata.cache import record_access
 
     store_path = url or str(settings.zarr_root)
     ds = xr.open_zarr(store_path, group=group, consolidated=True)
-    record_access(Path(store_path), group)
     if variable not in ds:
         available = [v for v in ds.data_vars if v != "crs"]
         raise HTTPException(
@@ -191,6 +191,11 @@ def _load_array(
     # Normalise ERA5 time coordinate: valid_time → time
     if "valid_time" in da.coords and "time" not in da.dims:
         da = da.assign_coords(time=da["valid_time"]).swap_dims({"valid_time": "time"})
+
+    # Record per-timestamp access BEFORE apply_temporal_aggregation collapses the time dim.
+    accessed = resolve_accessed_times(da, datetime, agg, baseline)
+    if accessed:
+        record_access(Path(store_path), group, accessed)
 
     if "time" in da.dims:
         try:
@@ -284,6 +289,18 @@ def execute_zonalstats(body: ExecutionRequest) -> dict:
     ```
     """
     inp = body.inputs
+    logger.info(
+        "API POST /processes/zonalstats/execution group=%s variable=%s datetime=%s agg=%s features=%d",
+        inp.group,
+        inp.variable,
+        inp.datetime,
+        inp.agg,
+        len(
+            (inp.features.get("features") or [inp.features])
+            if isinstance(inp.features, dict)
+            else []
+        ),
+    )
     fc = inp.features
 
     if fc.get("type") != "FeatureCollection":

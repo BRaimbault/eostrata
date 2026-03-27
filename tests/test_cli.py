@@ -614,6 +614,27 @@ class TestList:
         assert "worldpop/nga" in result.output
         assert "MB" in result.output
 
+    def test_list_shows_last_accessed_when_sentinel_exists(self, tmp_path):
+        from eostrata.cache import _ACCESS_DIR
+        zarr_root = tmp_path / "zarr"
+        ds = xr.Dataset({"v": (("y", "x"), np.ones((4, 4)))})
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
+        # Create a sentinel file so the "last accessed" branch is exercised
+        access_dir = zarr_root / "worldpop" / "nga" / _ACCESS_DIR
+        access_dir.mkdir(parents=True)
+        (access_dir / "2020-01-01T00:00:00").touch()
+
+        result = runner.invoke(
+            app,
+            [
+                "list",
+                "--zarr-root", str(zarr_root),
+                "--catalog-path", str(tmp_path / "catalog.json"),
+            ],
+        )
+        assert result.exit_code == 0
+        assert "UTC" in result.output  # date is shown as "YYYY-MM-DD HH:MM UTC"
+
     def test_list_no_quota(self, tmp_path):
         """When no quota is configured, list shows size without percentage."""
         zarr_root = tmp_path / "zarr"

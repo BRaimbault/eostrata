@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -72,6 +72,14 @@ class TestRecordAccess:
         with patch("eostrata.cache.time.time", return_value=mtime_first + _DEBOUNCE_S + 1):
             record_access(tmp_path, "worldpop/nga", ts)
         assert sentinel.stat().st_mtime >= mtime_first
+
+    def test_track_access_false_skips_sentinel(self, tmp_path):
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020])
+        with patch("eostrata.config.settings") as mock_settings:
+            mock_settings.track_access = False
+            record_access(tmp_path, "worldpop/nga", [np.datetime64("2020-01-01")])
+        access_dir = tmp_path / "worldpop" / "nga" / _ACCESS_DIR
+        assert not access_dir.exists()
 
     def test_oserror_is_silenced(self, tmp_path):
         """record_access must not raise even if the access dir cannot be created."""
@@ -205,6 +213,26 @@ class TestEvictTimestamp:
         _write_fake_group(tmp_path, "worldpop/nga")
         assert evict_timestamp(tmp_path, "worldpop/nga", "2020-01-01T00:00:00") == 0.0
 
+    def test_empty_time_array_returns_zero(self, tmp_path):
+        import xarray as xr
+        ds = xr.Dataset(
+            {"v": (("time", "y", "x"), np.zeros((0, 4, 4)))},
+            coords={"time": np.array([], dtype="datetime64[ns]")},
+        )
+        ds.to_zarr(str(tmp_path), group="worldpop/nga", mode="w")
+        assert evict_timestamp(tmp_path, "worldpop/nga", "2020-01-01T00:00:00") == 0.0
+
+    def test_evicts_sentinel_for_removed_timestamp(self, tmp_path):
+        """When the evicted timestamp has its own sentinel, that sentinel is removed."""
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021])
+        # Record access for both timestamps so both sentinels exist
+        record_access(tmp_path, "worldpop/nga", [np.datetime64("2020-01-01"), np.datetime64("2021-01-01")])
+        evict_timestamp(tmp_path, "worldpop/nga", "2020-01-01T00:00:00")
+        access_dir = tmp_path / "worldpop" / "nga" / _ACCESS_DIR
+        names = [f.name for f in access_dir.iterdir()]
+        assert not any("2020" in n for n in names)
+        assert any("2021" in n for n in names)
+
     def test_updates_catalog(self, tmp_path):
         from datetime import UTC, datetime
 
@@ -316,9 +344,61 @@ class TestCheckAndEvict:
             patch("eostrata.cache.store_size_mb", return_value=100.0),
             patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 100.0, 1.0)]),
             patch(
-                "eostrata.cache.list_timestamps", return_value=[("2020-01-01T00:00:00", 1.0, 1.0, 0.5)]
+                "eostrata.cache.list_timestamps",
+                return_value=[("2020-01-01T00:00:00", 1.0, 1.0, 0.5)],
             ),
             patch("eostrata.cache.evict_timestamp"),
             pytest.raises(RuntimeError, match="Could not reduce store"),
         ):
             check_and_evict(tmp_path, quota_mb=50.0)
+
+    def test_no_access_or_ingestion_time_age_desc(self, tmp_path):
+        """Timestamps with last_access=0 and ingestion_time=0 log 'no access or ingestion'."""
+        with (
+            patch("eostrata.cache.store_size_mb", side_effect=[10.0, 10.0, 0.0, 0.0]),
+            patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 10.0, 0.0)]),
+            patch(
+                "eostrata.cache.list_timestamps",
+                return_value=[("2020-01-01T00:00:00", 10.0, 0.0, 0.0)],
+            ),
+            patch("eostrata.cache.evict_timestamp"),
+        ):
+            check_and_evict(tmp_path, quota_mb=5.0)
+
+
+class TestListTimestampsEdgeCases:
+    def test_zarr_open_failure_returns_empty(self, tmp_path):
+        with patch("xarray.open_zarr", side_effect=Exception("bad zarr")):
+            assert list_timestamps(tmp_path, "worldpop/nga") == []
+
+    def test_time_values_raises_returns_empty(self, tmp_path):
+        """ds['time'].values raising an exception → return []."""
+        import xarray as xr
+        mock_ds = MagicMock(spec=xr.Dataset)
+        mock_ds.__contains__ = lambda self, key: key == "time"
+        mock_ds.__getitem__ = MagicMock(side_effect=KeyError("time"))
+        with patch("xarray.open_zarr", return_value=mock_ds):
+            assert list_timestamps(tmp_path, "worldpop/nga") == []
+
+    def test_empty_time_array_returns_empty(self, tmp_path):
+        import xarray as xr
+        ds = xr.Dataset(
+            {"v": (("time", "y", "x"), np.zeros((0, 4, 4)))},
+            coords={"time": np.array([], dtype="datetime64[ns]")},
+        )
+        ds.to_zarr(str(tmp_path), group="worldpop/nga", mode="w")
+        assert list_timestamps(tmp_path, "worldpop/nga") == []
+
+    def test_sort_key_zero_access_and_ingestion(self, tmp_path):
+        """Timestamps with both last_access=0 and ingestion_time=0 still sort stably."""
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021])
+        # Zero out all file mtimes so ingestion_time = 0
+        group_dir = tmp_path / "worldpop" / "nga"
+        for f in group_dir.rglob("*"):
+            if f.is_file():
+                import os
+                os.utime(f, (0, 0))
+        ts_list = list_timestamps(tmp_path, "worldpop/nga")
+        assert len(ts_list) == 2
+        # Should still sort by ts_iso when both times are 0
+        assert ts_list[0][0] < ts_list[1][0]

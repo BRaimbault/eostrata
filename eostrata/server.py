@@ -439,7 +439,9 @@ def store_usage() -> dict:
                 "datetime": ts_iso,
                 "size_mb": ts_size_mb,
                 "last_accessed": datetime.fromtimestamp(la, tz=UTC).isoformat() if la else None,
-                "ingested": datetime.fromtimestamp(ing, tz=UTC).isoformat() if ing and not la else None,
+                "ingested": datetime.fromtimestamp(ing, tz=UTC).isoformat()
+                if ing and not la
+                else None,
             }
             for ts_iso, ts_size_mb, la, ing in ts_details
         ]
@@ -906,9 +908,7 @@ _MAP_HTML = """<!DOCTYPE html>
         const fmtMb = mb => mb >= 1024
           ? (mb / 1024).toFixed(2) + ' GB'
           : mb.toFixed(1) + ' MB';
-        const fmtTs = iso => iso
-          ? new Date(iso).toLocaleString(undefined, {dateStyle:'short', timeStyle:'short'})
-          : '—';
+        const fmtTs = iso => iso ? iso.slice(0, 10) : '—';
         document.getElementById('cfg-used').textContent = fmtMb(u.used_mb);
         if (!u.quota_unlimited && u.used_pct !== null) {
           const pct = Math.min(u.used_pct, 100);
@@ -961,7 +961,7 @@ _MAP_HTML = """<!DOCTYPE html>
               tr.style.borderBottom = '1px solid #f3f4f6';
               if (evictRisk && i === 0) tr.style.color = '#dc2626';
               const accessCell = ts.last_accessed
-                ? fmtTs(ts.last_accessed)
+                ? 'accessed ' + fmtTs(ts.last_accessed)
                 : ts.ingested ? '<span style="color:#9ca3af">ingested ' + fmtTs(ts.ingested) + '</span>' : '—';
               tr.innerHTML =
                 '<td style="padding:2px 6px 2px 18px;font-family:monospace;font-size:11px">' + ts.datetime.slice(0,10) + '</td>' +

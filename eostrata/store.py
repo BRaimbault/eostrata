@@ -129,7 +129,8 @@ def geotiff_to_zarr(
             if "time" in existing and time_coord in existing["time"].values:
                 logger.info(
                     "Timestamp %s already exists in '%s' — skipping duplicate write",
-                    time_coord, zarr_group,
+                    time_coord,
+                    zarr_group,
                 )
                 return ds
         except Exception:

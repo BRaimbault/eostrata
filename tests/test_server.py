@@ -292,6 +292,26 @@ class TestStoreUsage:
         assert "size_mb" in t
         assert "last_accessed" in t
 
+    def test_group_without_time_dimension_excluded(self, tmp_path):
+        """A Zarr group with no time dimension should be skipped in the response."""
+        import xarray as xr
+        import numpy as np
+
+        zarr_root = tmp_path / "zarr"
+        # Write a group with no time dimension
+        ds = xr.Dataset({"v": (("y", "x"), np.zeros((4, 4)))})
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
+
+        mock_settings = MagicMock()
+        mock_settings.store_quota_mb = 0
+        mock_settings.zarr_root = zarr_root
+
+        from eostrata.server import app
+
+        with patch("eostrata.server.settings", mock_settings), TestClient(app) as c:
+            data = c.get("/store-usage").json()
+        assert data["groups"] == []
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

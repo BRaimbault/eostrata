@@ -498,6 +498,41 @@ class TestIngestionFunctions:
         assert mock_register.call_count == 1
         mock_save.assert_called_once()
 
+    def test_chirps_ingest_reraises_non_404_http_errors(self, tmp_path):
+        """Non-404 HTTP errors should propagate, not be swallowed."""
+        import httpx
+
+        from eostrata import ingestion
+
+        server_error = httpx.HTTPStatusError(
+            "500",
+            request=MagicMock(),
+            response=MagicMock(status_code=500),
+        )
+
+        with ExitStack() as stack:
+            src, _mock_register, _mock_save = _setup_source(
+                stack,
+                "eostrata.sources.chirps.CHIRPSSource",
+                "chirps/global",
+                _mock_ds(),
+                tmp_path,
+                collection_id="chirps",
+                VARIABLE="precipitation",
+            )
+            src.download.side_effect = server_error
+
+            import pytest
+            with pytest.raises(httpx.HTTPStatusError):
+                ingestion.run_chirps_ingest(
+                    years=[2023],
+                    months=[6],
+                    zarr_root=tmp_path / "zarr",
+                    raw_dir=tmp_path / "raw",
+                    catalog_path=tmp_path / "catalog.json",
+                    bbox=_BBOX,
+                )
+
     def test_cds_ingest_calls_source_and_catalog(self, tmp_path):
         from eostrata import ingestion
 

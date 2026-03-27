@@ -127,3 +127,28 @@ class TestGeotiffToZarr:
             chunks={"y": 64, "x": 64},
         )
         assert "v" in ds.data_vars
+
+    def test_duplicate_timestamp_skipped(self, tmp_path):
+        """Writing the same time_coord twice should not append a duplicate."""
+        tif = tmp_path / "test.tif"
+        _write_tif(tif, (0.0, 0.0, 5.0, 5.0))
+        zarr_root = tmp_path / "zarr"
+        t = np.datetime64("2020-01-01", "ns")
+        geotiff_to_zarr(tif, zarr_root, "col/d", variable_name="v", time_coord=t)
+        geotiff_to_zarr(tif, zarr_root, "col/d", variable_name="v", time_coord=t)
+        ds = xr.open_zarr(str(zarr_root), group="col/d", consolidated=False)
+        assert len(ds["time"]) == 1
+
+    def test_appends_when_existing_zarr_unreadable(self, tmp_path):
+        """If the existing group can't be opened, proceed with append (don't crash)."""
+        from unittest.mock import patch
+        tif = tmp_path / "test.tif"
+        _write_tif(tif, (0.0, 0.0, 5.0, 5.0))
+        zarr_root = tmp_path / "zarr"
+        t1 = np.datetime64("2020-01-01", "ns")
+        geotiff_to_zarr(tif, zarr_root, "col/d", variable_name="v", time_coord=t1)
+        t2 = np.datetime64("2021-01-01", "ns")
+        with patch("eostrata.store.xr.open_zarr", side_effect=Exception("corrupted")):
+            geotiff_to_zarr(tif, zarr_root, "col/d", variable_name="v", time_coord=t2)
+        ds = xr.open_zarr(str(zarr_root), group="col/d", consolidated=False)
+        assert len(ds["time"]) >= 1

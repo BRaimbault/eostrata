@@ -115,7 +115,7 @@ class TestInputValidation:
 
     def test_months_all_string_is_accepted(self, client, sync_executor):
         """'ALL' string must be accepted and expanded to all 12 months."""
-        with patch("eostrata.ingestion.run_chirps_ingest") as mock_fn:
+        with patch("eostrata.ingestion.run_chirps_ingest", return_value=([], True)) as mock_fn:
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "chirps", "months": "ALL"}},
@@ -136,7 +136,7 @@ class TestInputValidation:
 
 class TestWorldPopExecution:
     def test_returns_201_with_job_id(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_worldpop_ingest"):
+        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], True)):
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "NGA"}},
@@ -147,7 +147,7 @@ class TestWorldPopExecution:
         assert any("/processes/jobs/" in link["href"] for link in data["links"])
 
     def test_success_path(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_worldpop_ingest") as mock_fn:
+        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], True)) as mock_fn:
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "NGA", "years": [2022]}},
@@ -173,8 +173,41 @@ class TestWorldPopExecution:
         assert data["status"] == "failed"
         assert "network error" in data["error"]
 
+    def test_nothing_saved_marks_job_failed(self, client, sync_executor):
+        """When saved=False (e.g. all 404), the job status must be 'failed', not 'successful'."""
+        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], False)):
+            resp = client.post(
+                "/processes/ingest/execution",
+                json={"inputs": {"source": "worldpop", "iso3": "MAU", "years": [2022]}},
+            )
+        job = client.get(f"/processes/jobs/{resp.json()['jobID']}").json()
+        assert job["status"] == "failed"
+        assert "unavailable" in job["error"]
+
+    def test_nothing_saved_with_failures_marks_job_failed_with_details(self, client, sync_executor):
+        """When saved=False and some periods failed, error message lists the failed periods."""
+        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=(["NGA/2022"], False)):
+            resp = client.post(
+                "/processes/ingest/execution",
+                json={"inputs": {"source": "worldpop", "iso3": "NGA", "years": [2022]}},
+            )
+        job = client.get(f"/processes/jobs/{resp.json()['jobID']}").json()
+        assert job["status"] == "failed"
+        assert "NGA/2022" in job["error"]
+
+    def test_partial_save_marks_job_succeeded_with_message(self, client, sync_executor):
+        """When saved=True but some periods failed, job is successful with a warning message."""
+        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=(["NGA/2021"], True)):
+            resp = client.post(
+                "/processes/ingest/execution",
+                json={"inputs": {"source": "worldpop", "iso3": "NGA", "years": [2021, 2022]}},
+            )
+        job = client.get(f"/processes/jobs/{resp.json()['jobID']}").json()
+        assert job["status"] == "successful"
+        assert "NGA/2021" in job["message"]
+
     def test_default_year_used_when_omitted(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_worldpop_ingest") as mock_fn:
+        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], True)) as mock_fn:
             client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "NGA"}},
@@ -183,7 +216,7 @@ class TestWorldPopExecution:
         assert len(years) == 1 and isinstance(years[0], int)
 
     def test_iso3_uppercased_in_params(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_worldpop_ingest"):
+        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], True)):
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "nga"}},
@@ -197,12 +230,12 @@ class TestWorldPopExecution:
 
 class TestCHIRPSExecution:
     def test_returns_201(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_chirps_ingest"):
+        with patch("eostrata.ingestion.run_chirps_ingest", return_value=([], True)):
             resp = client.post("/processes/ingest/execution", json={"inputs": {"source": "chirps"}})
         assert resp.status_code == 201
 
     def test_success_path(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_chirps_ingest") as mock_fn:
+        with patch("eostrata.ingestion.run_chirps_ingest", return_value=([], True)) as mock_fn:
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "chirps", "years": [2023], "months": [6]}},
@@ -225,7 +258,7 @@ class TestCHIRPSExecution:
 
 class TestCDSExecution:
     def test_returns_201(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_cds_ingest"):
+        with patch("eostrata.ingestion.run_cds_ingest", return_value=([], True)):
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "cds", "variable": "t2m"}},
@@ -233,7 +266,7 @@ class TestCDSExecution:
         assert resp.status_code == 201
 
     def test_success_path(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_cds_ingest") as mock_fn:
+        with patch("eostrata.ingestion.run_cds_ingest", return_value=([], True)) as mock_fn:
             resp = client.post(
                 "/processes/ingest/execution",
                 json={
@@ -254,7 +287,7 @@ class TestCDSExecution:
         assert client.get(f"/processes/jobs/{resp.json()['jobID']}").json()["status"] == "failed"
 
     def test_default_variable_is_t2m(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_cds_ingest") as mock_fn:
+        with patch("eostrata.ingestion.run_cds_ingest", return_value=([], True)) as mock_fn:
             client.post("/processes/ingest/execution", json={"inputs": {"source": "cds"}})
         assert mock_fn.call_args.kwargs["variable"] == "t2m"
 
@@ -272,7 +305,7 @@ class TestJobPolling:
         assert any(link["rel"] == "self" for link in data["links"])
 
     def test_list_jobs_after_submissions(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_worldpop_ingest"):
+        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], True)):
             client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "NGA"}},
@@ -284,7 +317,7 @@ class TestJobPolling:
         assert len(client.get("/processes/jobs").json()["jobs"]) == 2
 
     def test_job_dict_has_expected_keys(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_worldpop_ingest"):
+        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], True)):
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "NGA"}},
@@ -294,7 +327,7 @@ class TestJobPolling:
             assert key in job
 
     def test_params_stored_in_job(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_worldpop_ingest"):
+        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], True)):
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "ETH", "years": [2021]}},
@@ -310,7 +343,7 @@ class TestJobPolling:
 class TestConcurrency:
     def test_many_jobs_have_unique_ids(self, client, sync_executor):
         job_ids = []
-        with patch("eostrata.ingestion.run_worldpop_ingest"):
+        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], True)):
             for _ in range(10):
                 resp = client.post(
                     "/processes/ingest/execution",
@@ -433,6 +466,7 @@ class TestIngestionFunctions:
         mock_save.assert_called_once()
 
     def test_chirps_ingest_no_save_on_failure(self, tmp_path):
+        """When all downloads fail, nothing is saved and the failed periods are returned."""
         from eostrata import ingestion
 
         with ExitStack() as stack:
@@ -446,16 +480,17 @@ class TestIngestionFunctions:
                 VARIABLE="precipitation",
             )
             src.download.side_effect = RuntimeError("fail")
-            with pytest.raises(RuntimeError):
-                ingestion.run_chirps_ingest(
-                    years=[2023],
-                    months=[6],
-                    zarr_root=tmp_path / "zarr",
-                    raw_dir=tmp_path / "raw",
-                    catalog_path=tmp_path / "catalog.json",
-                    bbox=_BBOX,
-                )
+            failed, saved = ingestion.run_chirps_ingest(
+                years=[2023],
+                months=[6],
+                zarr_root=tmp_path / "zarr",
+                raw_dir=tmp_path / "raw",
+                catalog_path=tmp_path / "catalog.json",
+                bbox=_BBOX,
+            )
 
+        assert failed == ["2023-06"]
+        assert not saved
         mock_save.assert_not_called()
 
     def test_chirps_ingest_skips_404_months(self, tmp_path):
@@ -498,8 +533,8 @@ class TestIngestionFunctions:
         assert mock_register.call_count == 1
         mock_save.assert_called_once()
 
-    def test_chirps_ingest_reraises_non_404_http_errors(self, tmp_path):
-        """Non-404 HTTP errors should propagate, not be swallowed."""
+    def test_chirps_ingest_non_404_http_errors_collected(self, tmp_path):
+        """Non-404 HTTP errors are collected in the failed list, not re-raised."""
         import httpx
 
         from eostrata import ingestion
@@ -511,7 +546,7 @@ class TestIngestionFunctions:
         )
 
         with ExitStack() as stack:
-            src, _mock_register, _mock_save = _setup_source(
+            src, _mock_register, mock_save = _setup_source(
                 stack,
                 "eostrata.sources.chirps.CHIRPSSource",
                 "chirps/global",
@@ -521,18 +556,18 @@ class TestIngestionFunctions:
                 VARIABLE="precipitation",
             )
             src.download.side_effect = server_error
+            failed, saved = ingestion.run_chirps_ingest(
+                years=[2023],
+                months=[6],
+                zarr_root=tmp_path / "zarr",
+                raw_dir=tmp_path / "raw",
+                catalog_path=tmp_path / "catalog.json",
+                bbox=_BBOX,
+            )
 
-            import pytest
-
-            with pytest.raises(httpx.HTTPStatusError):
-                ingestion.run_chirps_ingest(
-                    years=[2023],
-                    months=[6],
-                    zarr_root=tmp_path / "zarr",
-                    raw_dir=tmp_path / "raw",
-                    catalog_path=tmp_path / "catalog.json",
-                    bbox=_BBOX,
-                )
+        assert failed == ["2023-06"]
+        assert not saved
+        mock_save.assert_not_called()
 
     def test_cds_ingest_calls_source_and_catalog(self, tmp_path):
         from eostrata import ingestion
@@ -561,6 +596,72 @@ class TestIngestionFunctions:
         )
         assert mock_register.call_count == 2
         mock_save.assert_called_once()
+
+    def test_worldpop_ingest_skips_404_years(self, tmp_path):
+        """A 404 for a WorldPop year is silently skipped (not added to failed)."""
+        import httpx
+
+        from eostrata import ingestion
+
+        not_found = httpx.HTTPStatusError(
+            "404", request=MagicMock(), response=MagicMock(status_code=404)
+        )
+        with ExitStack() as stack:
+            src, mock_register, mock_save = _setup_source(
+                stack,
+                "eostrata.sources.WorldPopSource",
+                "worldpop/nga",
+                _mock_ds(),
+                tmp_path,
+                collection_id="worldpop",
+                VARIABLE="population",
+            )
+            src.download.side_effect = not_found
+            failed, saved = ingestion.run_worldpop_ingest(
+                iso3="NGA",
+                years=[2099],
+                zarr_root=tmp_path / "zarr",
+                raw_dir=tmp_path / "raw",
+                catalog_path=tmp_path / "catalog.json",
+                bbox=_BBOX,
+            )
+
+        assert failed == []  # 404 is a skip, not a failure
+        assert not saved
+        mock_save.assert_not_called()
+
+    def test_worldpop_ingest_non_404_http_error_collected(self, tmp_path):
+        """A non-404 HTTP error for a WorldPop year is added to the failed list."""
+        import httpx
+
+        from eostrata import ingestion
+
+        server_error = httpx.HTTPStatusError(
+            "500", request=MagicMock(), response=MagicMock(status_code=500)
+        )
+        with ExitStack() as stack:
+            src, mock_register, mock_save = _setup_source(
+                stack,
+                "eostrata.sources.WorldPopSource",
+                "worldpop/nga",
+                _mock_ds(),
+                tmp_path,
+                collection_id="worldpop",
+                VARIABLE="population",
+            )
+            src.download.side_effect = server_error
+            failed, saved = ingestion.run_worldpop_ingest(
+                iso3="NGA",
+                years=[2023],
+                zarr_root=tmp_path / "zarr",
+                raw_dir=tmp_path / "raw",
+                catalog_path=tmp_path / "catalog.json",
+                bbox=_BBOX,
+            )
+
+        assert failed == ["NGA/2023"]
+        assert not saved
+        mock_save.assert_not_called()
 
     def test_cds_ingest_uses_longitude_fallback(self, tmp_path):
         from eostrata import ingestion

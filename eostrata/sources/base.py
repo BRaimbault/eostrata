@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
@@ -16,28 +17,55 @@ logger = logging.getLogger(__name__)
 
 # ── Shared download helper ─────────────────────────────────────────────────────
 
+_DOWNLOAD_RETRIES = 2
+_RETRY_DELAYS = (5, 15)  # seconds between attempts 1→2 and 2→3
+
 
 def _stream_download(url: str, dest: Path) -> Path:
-    """Stream *url* to *dest*, skipping if the file already exists."""
+    """Stream *url* to *dest*, skipping if the file already exists.
+
+    Retries up to ``_DOWNLOAD_RETRIES`` times on transient network errors
+    (connection reset, timeout, etc.), removing any partial file before each
+    retry so the next attempt starts clean.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         logger.info("Already downloaded: %s", dest.name)
         return dest
 
-    logger.info("Downloading %s", url)
-    with httpx.stream("GET", url, follow_redirects=True, timeout=None) as resp:
-        resp.raise_for_status()
-        total = int(resp.headers.get("content-length", 0))
-        with (
-            open(dest, "wb") as fh,
-            tqdm(total=total, unit="B", unit_scale=True, desc=dest.name) as bar,
-        ):
-            for chunk in resp.iter_bytes(chunk_size=1 << 20):
-                fh.write(chunk)
-                bar.update(len(chunk))
+    last_exc: Exception | None = None
+    for attempt in range(1, _DOWNLOAD_RETRIES + 2):
+        try:
+            logger.info("Downloading %s (attempt %d)", url, attempt)
+            with httpx.stream("GET", url, follow_redirects=True, timeout=None) as resp:
+                resp.raise_for_status()
+                total = int(resp.headers.get("content-length", 0))
+                with (
+                    open(dest, "wb") as fh,
+                    tqdm(total=total, unit="B", unit_scale=True, desc=dest.name) as bar,
+                ):
+                    for chunk in resp.iter_bytes(chunk_size=1 << 20):
+                        fh.write(chunk)
+                        bar.update(len(chunk))
+            logger.info("Saved to %s", dest)
+            return dest
+        except httpx.TransportError as exc:
+            last_exc = exc
+            dest.unlink(missing_ok=True)  # remove partial file before retry
+            if attempt <= _DOWNLOAD_RETRIES:
+                delay = _RETRY_DELAYS[attempt - 1]
+                logger.warning(
+                    "Download failed (attempt %d/%d): %s — retrying in %ds",
+                    attempt,
+                    _DOWNLOAD_RETRIES + 1,
+                    exc,
+                    delay,
+                )
+                time.sleep(delay)
+            else:
+                logger.error("Download failed after %d attempts: %s", _DOWNLOAD_RETRIES + 1, exc)
 
-    logger.info("Saved to %s", dest)
-    return dest
+    raise last_exc  # type: ignore[misc]
 
 
 # ── Registry ──────────────────────────────────────────────────────────────────

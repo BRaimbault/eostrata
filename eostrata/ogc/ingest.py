@@ -23,7 +23,7 @@ from eostrata.config import settings
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/processes", tags=["OGC Ingest"])
+router = APIRouter(prefix="/processes", tags=["Data Ingestion"])
 
 _executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ingest")
 
@@ -139,9 +139,21 @@ def _run_job(job_id: str, fn, **kwargs) -> None:
     fn_name = getattr(fn, "__name__", repr(fn))
     logger.info("Job %s started: %s", job_id, fn_name)
     try:
-        fn(**kwargs)
-        jobs.mark_succeeded(job_id)
-        logger.info("Job %s succeeded", job_id)
+        failed, saved = fn(**kwargs)
+        if not saved:
+            if failed:
+                msg = f"Nothing ingested — {len(failed)} period(s) failed: {', '.join(failed)}"
+            else:
+                msg = "Nothing ingested — all requested periods may be unavailable"
+            logger.warning("Job %s failed — %s", job_id, msg)
+            jobs.mark_failed(job_id, msg)
+        elif failed:
+            msg = f"Partial: {len(failed)} period(s) failed to download: {', '.join(failed)}"
+            logger.warning("Job %s succeeded with warnings — %s", job_id, msg)
+            jobs.mark_succeeded(job_id, message=msg)
+        else:
+            jobs.mark_succeeded(job_id)
+            logger.info("Job %s succeeded", job_id)
     except Exception:
         error = traceback.format_exc()
         logger.exception("Job %s failed: %s", job_id, fn_name)
@@ -279,12 +291,18 @@ def execute_ingest(body: IngestExecutionRequest, response: Response) -> dict:
 # ── Rebuild-catalog endpoints ─────────────────────────────────────────────────
 
 
-@router.get("/rebuild-catalog", summary="Rebuild-catalog process description")
+@router.get(
+    "/rebuild-catalog", tags=["Store & Catalog"], summary="Rebuild-catalog process description"
+)
 def describe_rebuild_catalog() -> dict:
     return _REBUILD_CATALOG_DESCRIPTION
 
 
-@router.post("/rebuild-catalog/execution", summary="Rebuild STAC catalogue from Zarr store")
+@router.post(
+    "/rebuild-catalog/execution",
+    tags=["Store & Catalog"],
+    summary="Rebuild STAC catalogue from Zarr store",
+)
 def execute_rebuild_catalog() -> dict:
     """
     Scan all Zarr groups and rebuild the STAC catalogue from scratch.

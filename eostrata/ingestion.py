@@ -25,8 +25,12 @@ def run_worldpop_ingest(
     bbox: tuple[float, float, float, float],
     quota_mb: float = 0.0,
     eviction_buffer_mb: float = 0.0,
-) -> None:
-    """Download WorldPop rasters, write to Zarr, and register STAC items."""
+) -> tuple[list[str], bool]:
+    """Download WorldPop rasters, write to Zarr, and register STAC items.
+
+    Returns ``(failed, saved)`` where *failed* is a list of period labels that
+    encountered errors and *saved* is True if at least one period was written.
+    """
     from eostrata import catalog as cat
     from eostrata.cache import check_and_evict
     from eostrata.sources import WorldPopSource
@@ -38,11 +42,26 @@ def run_worldpop_ingest(
     source = WorldPopSource()
     zarr_group = source.zarr_group(iso3=iso3)
     catalogue = cat.load_or_create(catalog_path)
+    failed: list[str] = []
+    saved = False
 
     for year in years:
+        label = f"{iso3.upper()}/{year}"
         logger.info("WorldPop: ingesting iso3=%s year=%d", iso3.upper(), year)
-        paths = source.download(raw_dir, bbox, iso3=iso3, year=year)
-        ds = source.to_zarr(paths[0], zarr_root, bbox, iso3=iso3, year=year)
+        try:
+            paths = source.download(raw_dir, bbox, iso3=iso3, year=year)
+            ds = source.to_zarr(paths[0], zarr_root, bbox, iso3=iso3, year=year)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                logger.warning("WorldPop: %s not available yet (404), skipping", label)
+                continue
+            logger.error("WorldPop: HTTP error for %s: %s", label, exc)
+            failed.append(label)
+            continue
+        except Exception as exc:
+            logger.error("WorldPop: failed to ingest %s: %s", label, exc)
+            failed.append(label)
+            continue
         paths[0].unlink(missing_ok=True)
         logger.debug("WorldPop: removed raw file %s", paths[0])
         item_bbox = (float(ds.x.min()), float(ds.y.min()), float(ds.x.max()), float(ds.y.max()))
@@ -57,9 +76,13 @@ def run_worldpop_ingest(
             variable=source.VARIABLE,
             extra_properties=source.stac_properties(iso3=iso3, year=year),
         )
+        saved = True
 
-    cat.save(catalogue, catalog_path)
-    logger.info("WorldPop: STAC item saved to %s", catalog_path)
+    if saved:
+        cat.save(catalogue, catalog_path)
+        logger.info("WorldPop: STAC item saved to %s", catalog_path)
+
+    return failed, saved
 
 
 def run_chirps_ingest(
@@ -72,8 +95,12 @@ def run_chirps_ingest(
     bbox: tuple[float, float, float, float],
     quota_mb: float = 0.0,
     eviction_buffer_mb: float = 0.0,
-) -> None:
-    """Download CHIRPS rasters, write to Zarr, and register STAC items."""
+) -> tuple[list[str], bool]:
+    """Download CHIRPS rasters, write to Zarr, and register STAC items.
+
+    Returns ``(failed, saved)`` where *failed* is a list of period labels that
+    encountered errors and *saved* is True if at least one period was written.
+    """
     from eostrata import catalog as cat
     from eostrata.cache import check_and_evict
     from eostrata.sources.chirps import CHIRPSSource
@@ -85,10 +112,12 @@ def run_chirps_ingest(
     source = CHIRPSSource()
     zarr_group = source.zarr_group()
     catalogue = cat.load_or_create(catalog_path)
+    failed: list[str] = []
+    saved = False
 
-    success = False
     for year in years:
         for month in months:
+            label = f"{year}-{month:02d}"
             logger.info("CHIRPS: ingesting year=%d month=%02d", year, month)
             try:
                 paths = source.download(raw_dir, bbox, year=year, month=month)
@@ -96,7 +125,13 @@ def run_chirps_ingest(
                 if exc.response.status_code == 404:
                     logger.warning("CHIRPS: %d-%02d not available yet (404), skipping", year, month)
                     continue
-                raise
+                logger.error("CHIRPS: HTTP error for %s: %s", label, exc)
+                failed.append(label)
+                continue
+            except Exception as exc:
+                logger.error("CHIRPS: failed to download %s: %s", label, exc)
+                failed.append(label)
+                continue
             ds = source.to_zarr(paths[0], zarr_root, bbox, year=year, month=month)
             paths[0].unlink(missing_ok=True)
             logger.debug("CHIRPS: removed raw file %s", paths[0])
@@ -117,11 +152,13 @@ def run_chirps_ingest(
                 variable=source.VARIABLE,
                 extra_properties=source.stac_properties(year=year, month=month),
             )
-            success = True
+            saved = True
 
-    if success:
+    if saved:
         cat.save(catalogue, catalog_path)
         logger.info("CHIRPS: STAC item saved to %s", catalog_path)
+
+    return failed, saved
 
 
 def run_cds_ingest(
@@ -135,8 +172,12 @@ def run_cds_ingest(
     bbox: tuple[float, float, float, float],
     quota_mb: float = 0.0,
     eviction_buffer_mb: float = 0.0,
-) -> None:
-    """Download ERA5 NetCDF files, write to Zarr, and register STAC items."""
+) -> tuple[list[str], bool]:
+    """Download ERA5 NetCDF files, write to Zarr, and register STAC items.
+
+    Returns ``(failed, saved)`` where *failed* is a list of period labels that
+    encountered errors and *saved* is True if at least one period was written.
+    """
     from eostrata import catalog as cat
     from eostrata.cache import check_and_evict
     from eostrata.sources.cds import CDSSource
@@ -148,12 +189,19 @@ def run_cds_ingest(
     source = CDSSource()
     zarr_group = source.zarr_group(variable=variable)
     catalogue = cat.load_or_create(catalog_path)
+    failed: list[str] = []
+    saved = False
 
-    success = False
     for year in years:
+        label = f"{variable}/{year}"
         logger.info("CDS: ingesting variable=%s year=%d", variable, year)
-        paths = source.download(raw_dir, bbox, variable=variable, year=year, months=months)
-        ds = source.to_zarr(paths[0], zarr_root, bbox, variable=variable, year=year)
+        try:
+            paths = source.download(raw_dir, bbox, variable=variable, year=year, months=months)
+            ds = source.to_zarr(paths[0], zarr_root, bbox, variable=variable, year=year)
+        except Exception as exc:
+            logger.error("CDS: failed to ingest %s: %s", label, exc)
+            failed.append(label)
+            continue
         paths[0].unlink(missing_ok=True)
         logger.debug("CDS: removed raw file %s", paths[0])
         x_dim = "x" if "x" in ds.coords else "longitude"
@@ -176,11 +224,13 @@ def run_cds_ingest(
                 variable=variable,
                 extra_properties=source.stac_properties(variable=variable, year=year),
             )
-        success = True
+        saved = True
 
-    if success:
+    if saved:
         cat.save(catalogue, catalog_path)
         logger.info("CDS: STAC item saved to %s", catalog_path)
+
+    return failed, saved
 
 
 def rebuild_catalog_from_zarr(

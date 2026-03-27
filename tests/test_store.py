@@ -139,6 +139,30 @@ class TestGeotiffToZarr:
         ds = xr.open_zarr(str(zarr_root), group="col/d", consolidated=False)
         assert len(ds["time"]) == 1
 
+    def test_nodata_override_replaces_value_when_file_has_no_nodata(self, tmp_path):
+        """nodata_override masks sentinel values even when file metadata omits nodata."""
+        tif = tmp_path / "test.tif"
+        bbox = (0.0, 0.0, 5.0, 5.0)
+        # Write a file with -9999 values but NO nodata tag in metadata
+        transform = from_bounds(*bbox, width=4, height=4)
+        data = np.full((4, 4), -9999.0, dtype="float32")
+        with rasterio.open(
+            tif,
+            "w",
+            driver="GTiff",
+            height=4,
+            width=4,
+            count=1,
+            dtype="float32",
+            crs="EPSG:4326",
+            transform=transform,
+            # nodata intentionally omitted
+        ) as dst:
+            dst.write(data, 1)
+        zarr_root = tmp_path / "zarr"
+        ds = geotiff_to_zarr(tif, zarr_root, "col/nd", variable_name="v", nodata_override=-9999.0)
+        assert np.all(np.isnan(ds["v"].values))
+
     def test_appends_when_existing_zarr_unreadable(self, tmp_path):
         """If the existing group can't be opened, proceed with append (don't crash)."""
         from unittest.mock import patch

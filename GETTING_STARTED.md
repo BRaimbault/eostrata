@@ -11,10 +11,12 @@ This guide walks through downloading earth observation data, storing it as Zarr,
   - [WorldPop — population](#worldpop--population)
   - [CHIRPS — precipitation](#chirps--precipitation)
   - [CDS / ERA5 — climate reanalysis](#cds--era5--climate-reanalysis)
+- [Ingesting data via the API](#ingesting-data-via-the-api)
 - [Starting the server](#starting-the-server)
 - [Exploring the map viewer](#exploring-the-map-viewer)
 - [STAC catalogue walkthrough](#stac-catalogue-walkthrough)
 - [Zonal statistics example](#zonal-statistics-example)
+- [Scheduled ingestion](#scheduled-ingestion)
 - [CLI reference](#cli-reference)
 
 ---
@@ -71,6 +73,9 @@ EOSTRATA_CATALOG_PATH=data/catalog.json
 
 # Access tracking — set to false if last_access should reflect ingestion time only.
 # EOSTRATA_TRACK_ACCESS=true
+
+# Log file — daily rotating, 30 days history. Set to empty string to disable.
+# EOSTRATA_LOG_FILE=data/eostrata.log
 
 # Bounding box (west, south, east, north) in EPSG:4326
 # Example below covers Nigeria
@@ -273,6 +278,49 @@ uv run eostrata download cds --variable u10 --year 2023
 
 ---
 
+## Ingesting data via the API
+
+Once the server is running you can trigger ingestion jobs via HTTP without blocking the server. Jobs run in the background on a thread pool.
+
+**Start a WorldPop ingestion job:**
+```bash
+curl -s -X POST http://127.0.0.1:8000/processes/ingest/execution \
+  -H "Content-Type: application/json" \
+  -d '{"inputs": {"source": "worldpop", "iso3": "NGA", "years": [2022, 2023]}}' \
+  | python -m json.tool
+```
+
+**Start a CHIRPS job:**
+```bash
+curl -s -X POST http://127.0.0.1:8000/processes/ingest/execution \
+  -H "Content-Type: application/json" \
+  -d '{"inputs": {"source": "chirps", "years": [2024], "months": [1,2,3]}}' \
+  | python -m json.tool
+```
+
+**Start an ERA5 job:**
+```bash
+curl -s -X POST http://127.0.0.1:8000/processes/ingest/execution \
+  -H "Content-Type: application/json" \
+  -d '{"inputs": {"source": "cds", "variable": "t2m", "years": [2023]}}' \
+  | python -m json.tool
+```
+
+The response contains a `jobID`. Poll for status:
+
+```bash
+curl http://127.0.0.1:8000/processes/jobs/<jobID> | python -m json.tool
+```
+
+`status` will be `running`, `successful`, or `failed`. When nothing could be ingested (e.g. all requested periods returned 404), the job is marked `failed` with a descriptive `error` message.
+
+List all jobs:
+```bash
+curl http://127.0.0.1:8000/processes/jobs | python -m json.tool
+```
+
+---
+
 ## Starting the server
 
 ```bash
@@ -450,6 +498,30 @@ You can pass any number of features in the `FeatureCollection`, statistics are c
 
 ---
 
+## Scheduled ingestion
+
+eostrata includes an in-process APScheduler that runs alongside the server. Edit `schedules.yml` to declare cron-based ingestion jobs. Each job supports:
+
+- `auto_period: true` — automatically targets the latest available interval (year/month) rather than requiring explicit dates
+- Exponential-backoff retry (3 attempts)
+- Optional webhook alert (`webhook_url`) on final failure
+
+Example `schedules.yml` entry:
+
+```yaml
+jobs:
+  - id: chirps_monthly
+    source: chirps
+    params: {}
+    cron: "0 3 15 * *"   # 03:00 on the 15th of each month
+    auto_period: true
+    enabled: true
+```
+
+The scheduler starts automatically with `eostrata serve` and stops cleanly on shutdown.
+
+---
+
 ## CLI reference
 
 ```
@@ -460,6 +532,7 @@ Commands:
   download cds        Download ERA5 monthly reanalysis from Copernicus CDS
   download worldpop   Download a WorldPop population raster
   list                List datasets in the Zarr store and STAC catalogue
+  rebuild-catalog     Rebuild the STAC catalogue by scanning the Zarr store
   serve               Start the tile server, STAC catalogue and OGC Processes API
   test                Run the test suite with coverage
   lint                Run ruff linter and formatter
@@ -547,6 +620,17 @@ uv run eostrata lint [OPTIONS]
 Options:
   --fix / --no-fix        Auto-fix ruff lint violations (default: --fix)
 ```
+
+**rebuild-catalog**
+```
+uv run eostrata rebuild-catalog [OPTIONS]
+
+Options:
+  --zarr-root PATH        Zarr store root
+  --catalog-path PATH     Path to catalog.json
+```
+
+Scans all Zarr groups in the store and reconstructs `catalog.json` from scratch. Useful when the catalogue is missing or out of sync with the stored data (e.g. after manual edits or a partial failure). Also available as `POST /processes/rebuild-catalog/execution` via the API.
 
 **cleanup**
 ```

@@ -152,8 +152,8 @@ class TestDownloadWorldpop:
         assert result.exit_code == 0, result.output
         assert "Done" in result.output
 
-    def test_download_worldpop_error_exits_nonzero(self, tmp_path):
-        """A download failure aborts the command with a non-zero exit code."""
+    def test_download_worldpop_partial_failure_shows_warning(self, tmp_path):
+        """When nothing is ingested due to failures, CLI exits 1 with an error."""
         mock_settings = _make_settings_mock(tmp_path)
 
         with (
@@ -183,6 +183,89 @@ class TestDownloadWorldpop:
 
         assert result.exit_code == 1
         assert "Error" in result.output
+        assert "NGA/2020" in result.output
+
+    def test_download_worldpop_raises_exit_1(self, tmp_path):
+        """Unexpected exception from run_worldpop_ingest exits 1 with error message."""
+        mock_settings = _make_settings_mock(tmp_path)
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch(
+                "eostrata.ingestion.run_worldpop_ingest",
+                side_effect=RuntimeError("unexpected boom"),
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "download",
+                    "worldpop",
+                    "NGA",
+                    "--year",
+                    "2020",
+                    "--zarr-root",
+                    str(tmp_path / "zarr"),
+                    "--raw-dir",
+                    str(tmp_path / "raw"),
+                    "--catalog-path",
+                    str(tmp_path / "catalog.json"),
+                ],
+            )
+        assert result.exit_code == 1
+        assert "Error" in result.output
+
+    def test_download_worldpop_nothing_saved_no_failures(self, tmp_path):
+        """When saved=False and failed=[], CLI exits 1 with 'unavailable' message."""
+        mock_settings = _make_settings_mock(tmp_path)
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], False)),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "download",
+                    "worldpop",
+                    "NGA",
+                    "--year",
+                    "2020",
+                    "--zarr-root",
+                    str(tmp_path / "zarr"),
+                    "--raw-dir",
+                    str(tmp_path / "raw"),
+                    "--catalog-path",
+                    str(tmp_path / "catalog.json"),
+                ],
+            )
+        assert result.exit_code == 1
+        assert "unavailable" in result.output
+
+    def test_download_worldpop_partial_success_shows_warning(self, tmp_path):
+        """When saved=True but some periods failed, CLI exits 0 with a warning."""
+        mock_settings = _make_settings_mock(tmp_path)
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch("eostrata.ingestion.run_worldpop_ingest", return_value=(["NGA/2020"], True)),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "download",
+                    "worldpop",
+                    "NGA",
+                    "--year",
+                    "2020",
+                    "--zarr-root",
+                    str(tmp_path / "zarr"),
+                    "--raw-dir",
+                    str(tmp_path / "raw"),
+                    "--catalog-path",
+                    str(tmp_path / "catalog.json"),
+                ],
+            )
+        assert result.exit_code == 0
+        assert "Warning" in result.output
+        assert "NGA/2020" in result.output
 
     def test_download_worldpop_auto_year(self, tmp_path):
         """When --year is omitted, CLI resolves latest available."""
@@ -292,8 +375,8 @@ class TestDownloadChirps:
         assert (2024, 1) in download_calls
         assert (2024, 2) in download_calls
 
-    def test_download_chirps_error_exits_nonzero(self, tmp_path):
-        """A download failure aborts the command with a non-zero exit code."""
+    def test_download_chirps_partial_failure_shows_warning(self, tmp_path):
+        """When nothing is ingested due to failures, CLI exits 1 with an error."""
         mock_settings = _make_settings_mock(tmp_path)
 
         with (
@@ -324,6 +407,92 @@ class TestDownloadChirps:
 
         assert result.exit_code == 1
         assert "Error" in result.output
+        assert "2024-01" in result.output
+
+    def test_download_chirps_raises_exit_1(self, tmp_path):
+        """Unexpected exception from run_chirps_ingest exits 1 with error message."""
+        mock_settings = _make_settings_mock(tmp_path)
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch(
+                "eostrata.ingestion.run_chirps_ingest",
+                side_effect=RuntimeError("unexpected boom"),
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "download",
+                    "chirps",
+                    "--year",
+                    "2024",
+                    "--month",
+                    "1",
+                    "--zarr-root",
+                    str(tmp_path / "zarr"),
+                    "--raw-dir",
+                    str(tmp_path / "raw"),
+                    "--catalog-path",
+                    str(tmp_path / "catalog.json"),
+                ],
+            )
+        assert result.exit_code == 1
+        assert "Error" in result.output
+
+    def test_download_chirps_nothing_saved_no_failures(self, tmp_path):
+        """When saved=False and failed=[], CLI exits 1 with 'unavailable' message."""
+        mock_settings = _make_settings_mock(tmp_path)
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch("eostrata.ingestion.run_chirps_ingest", return_value=([], False)),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "download",
+                    "chirps",
+                    "--year",
+                    "2024",
+                    "--month",
+                    "1",
+                    "--zarr-root",
+                    str(tmp_path / "zarr"),
+                    "--raw-dir",
+                    str(tmp_path / "raw"),
+                    "--catalog-path",
+                    str(tmp_path / "catalog.json"),
+                ],
+            )
+        assert result.exit_code == 1
+        assert "unavailable" in result.output
+
+    def test_download_chirps_partial_success_shows_warning(self, tmp_path):
+        """When saved=True but some periods failed, CLI exits 0 with a warning."""
+        mock_settings = _make_settings_mock(tmp_path)
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch("eostrata.ingestion.run_chirps_ingest", return_value=(["2024-01"], True)),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "download",
+                    "chirps",
+                    "--year",
+                    "2024",
+                    "--month",
+                    "1",
+                    "--zarr-root",
+                    str(tmp_path / "zarr"),
+                    "--raw-dir",
+                    str(tmp_path / "raw"),
+                    "--catalog-path",
+                    str(tmp_path / "catalog.json"),
+                ],
+            )
+        assert result.exit_code == 0
+        assert "Warning" in result.output
+        assert "2024-01" in result.output
 
     def test_download_chirps_auto_period(self, tmp_path):
         """Omitting --year/--month uses latest_available()."""
@@ -401,9 +570,96 @@ class TestDownloadCds:
         assert "Done" in result.output
 
 
+class TestDownloadCdsEdgeCases:
+    def test_download_cds_raises_exit_1(self, tmp_path):
+        """Unexpected exception from run_cds_ingest exits 1 with error message."""
+        mock_settings = _make_settings_mock(tmp_path)
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch(
+                "eostrata.ingestion.run_cds_ingest",
+                side_effect=RuntimeError("unexpected boom"),
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "download",
+                    "cds",
+                    "--variable",
+                    "t2m",
+                    "--year",
+                    "2023",
+                    "--zarr-root",
+                    str(tmp_path / "zarr"),
+                    "--raw-dir",
+                    str(tmp_path / "raw"),
+                    "--catalog-path",
+                    str(tmp_path / "catalog.json"),
+                ],
+            )
+        assert result.exit_code == 1
+        assert "Error" in result.output
+
+    def test_download_cds_nothing_saved_no_failures(self, tmp_path):
+        """When saved=False and failed=[], CLI exits 1 with 'unavailable' message."""
+        mock_settings = _make_settings_mock(tmp_path)
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch("eostrata.ingestion.run_cds_ingest", return_value=([], False)),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "download",
+                    "cds",
+                    "--variable",
+                    "t2m",
+                    "--year",
+                    "2023",
+                    "--zarr-root",
+                    str(tmp_path / "zarr"),
+                    "--raw-dir",
+                    str(tmp_path / "raw"),
+                    "--catalog-path",
+                    str(tmp_path / "catalog.json"),
+                ],
+            )
+        assert result.exit_code == 1
+        assert "unavailable" in result.output
+
+    def test_download_cds_partial_success_shows_warning(self, tmp_path):
+        """When saved=True but some periods failed, CLI exits 0 with a warning."""
+        mock_settings = _make_settings_mock(tmp_path)
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch("eostrata.ingestion.run_cds_ingest", return_value=(["t2m/2023"], True)),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "download",
+                    "cds",
+                    "--variable",
+                    "t2m",
+                    "--year",
+                    "2023",
+                    "--zarr-root",
+                    str(tmp_path / "zarr"),
+                    "--raw-dir",
+                    str(tmp_path / "raw"),
+                    "--catalog-path",
+                    str(tmp_path / "catalog.json"),
+                ],
+            )
+        assert result.exit_code == 0
+        assert "Warning" in result.output
+        assert "t2m/2023" in result.output
+
+
 class TestDownloadCdsErrorHandling:
-    def test_download_cds_error_exits_nonzero(self, tmp_path):
-        """A download failure aborts the command with a non-zero exit code."""
+    def test_download_cds_partial_failure_shows_warning(self, tmp_path):
+        """When nothing is ingested due to failures, CLI exits 1 with an error."""
         mock_settings = _make_settings_mock(tmp_path)
 
         with (
@@ -434,6 +690,7 @@ class TestDownloadCdsErrorHandling:
 
         assert result.exit_code == 1
         assert "Error" in result.output
+        assert "t2m/2023" in result.output
 
 
 class TestDownloadCdsMultiYear:

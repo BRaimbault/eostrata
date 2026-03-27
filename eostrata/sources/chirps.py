@@ -102,6 +102,7 @@ class CHIRPSSource(BaseSource):
             bbox=bbox,
             time_coord=time_coord,
             variable_name=self.VARIABLE,
+            nodata_override=_NODATA,
         )
 
     def zarr_group(self, **_: Any) -> str:

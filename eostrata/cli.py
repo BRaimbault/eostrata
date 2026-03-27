@@ -90,7 +90,7 @@ def download_worldpop(
     )
 
     try:
-        run_worldpop_ingest(
+        failed, saved = run_worldpop_ingest(
             iso3=iso3,
             years=_years,
             zarr_root=_zarr_root,
@@ -105,6 +105,22 @@ def download_worldpop(
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from None
 
+    if not saved:
+        if failed:
+            console.print(
+                f"[red]Error: nothing ingested — {len(failed)} period(s) failed: "
+                f"{', '.join(failed)}[/red]"
+            )
+        else:
+            console.print(
+                "[red]Error: nothing ingested — all requested periods may be unavailable[/red]"
+            )
+        raise typer.Exit(1) from None
+    if failed:
+        console.print(
+            f"[yellow]Warning: {len(failed)} period(s) failed to download: "
+            f"{', '.join(failed)}[/yellow]"
+        )
     console.print("[bold green]Done.[/bold green]")
 
 
@@ -340,7 +356,7 @@ def download_chirps(
     )
 
     try:
-        run_chirps_ingest(
+        failed, saved = run_chirps_ingest(
             years=_years,
             months=_months,
             zarr_root=_zarr_root,
@@ -355,6 +371,22 @@ def download_chirps(
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from None
 
+    if not saved:
+        if failed:
+            console.print(
+                f"[red]Error: nothing ingested — {len(failed)} period(s) failed: "
+                f"{', '.join(failed)}[/red]"
+            )
+        else:
+            console.print(
+                "[red]Error: nothing ingested — all requested periods may be unavailable[/red]"
+            )
+        raise typer.Exit(1) from None
+    if failed:
+        console.print(
+            f"[yellow]Warning: {len(failed)} period(s) failed to download: "
+            f"{', '.join(failed)}[/yellow]"
+        )
     console.print("[bold green]Done.[/bold green]")
 
 
@@ -409,7 +441,7 @@ def download_cds(
     )
 
     try:
-        run_cds_ingest(
+        failed, saved = run_cds_ingest(
             variable=variable,
             years=_years,
             months=_months,
@@ -425,6 +457,22 @@ def download_cds(
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from None
 
+    if not saved:
+        if failed:
+            console.print(
+                f"[red]Error: nothing ingested — {len(failed)} period(s) failed: "
+                f"{', '.join(failed)}[/red]"
+            )
+        else:
+            console.print(
+                "[red]Error: nothing ingested — all requested periods may be unavailable[/red]"
+            )
+        raise typer.Exit(1) from None
+    if failed:
+        console.print(
+            f"[yellow]Warning: {len(failed)} period(s) failed to download: "
+            f"{', '.join(failed)}[/yellow]"
+        )
     console.print("[bold green]Done.[/bold green]")
 
 

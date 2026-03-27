@@ -8,6 +8,7 @@ from __future__ import annotations
 import gzip
 from unittest.mock import MagicMock, patch
 
+import httpx
 import numpy as np
 import pytest
 import rasterio
@@ -92,6 +93,50 @@ class TestStreamDownload:
             pytest.raises(Exception, match="404"),
         ):
             _stream_download("http://example.com/missing.tif", dest)
+
+    def test_transport_error_retries_then_raises(self, tmp_path):
+        """TransportError triggers retries; after all attempts the error is re-raised."""
+        dest = tmp_path / "retry_fail.tif"
+        err = httpx.TransportError("connection reset")
+
+        with (
+            patch(
+                "eostrata.sources.base.httpx.stream",
+                side_effect=err,
+            ),
+            patch("eostrata.sources.base.time.sleep"),
+            pytest.raises(httpx.TransportError),
+        ):
+            _stream_download("http://example.com/test.tif", dest)
+
+        # Partial file must be cleaned up after each failed attempt
+        assert not dest.exists()
+
+    def test_transport_error_first_attempt_then_success(self, tmp_path):
+        """First attempt raises TransportError; second attempt succeeds."""
+        dest = tmp_path / "retry_ok.tif"
+        tif_bytes = _make_tif_bytes()
+        err = httpx.TransportError("timeout")
+        ok_stream = _make_httpx_stream_mock(tif_bytes)
+
+        call_count = 0
+
+        def _stream_side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise err
+            return ok_stream
+
+        with (
+            patch("eostrata.sources.base.httpx.stream", side_effect=_stream_side_effect),
+            patch("eostrata.sources.base.time.sleep"),
+        ):
+            result = _stream_download("http://example.com/test.tif", dest)
+
+        assert result == dest
+        assert dest.exists()
+        assert call_count == 2
 
 
 class TestWorldPopDownloadIntegration:

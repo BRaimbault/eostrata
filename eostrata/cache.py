@@ -55,6 +55,7 @@ from pathlib import Path
 
 import numpy as np
 import xarray as xr
+import zarr
 
 logger = logging.getLogger(__name__)
 
@@ -349,8 +350,8 @@ def evict_timestamp(
     )
     freed_mb = (total_size_bytes / (1024**2)) / n_times
 
-    # Select remaining timestamps
-    remaining = ds.sel(time=times[mask])
+    # Select remaining timestamps by position to avoid issues with duplicate time values
+    remaining = ds.isel(time=np.where(mask)[0])
 
     # Write to a temp group path in the same parent dir (same filesystem)
     tmp_name = f"._tmp_{Path(group_path).name}_{uuid.uuid4().hex[:8]}"
@@ -374,6 +375,13 @@ def evict_timestamp(
     target.rename(old)
     tmp_target.rename(target)
     shutil.rmtree(old)
+
+    # Refresh the root consolidated metadata so tile requests don't read stale
+    # time encoding from before the eviction.
+    try:
+        zarr.consolidate_metadata(str(zarr_root))
+    except Exception as exc:
+        logger.debug("Could not consolidate zarr metadata after eviction: %s", exc)
 
     logger.info(
         "Evicted timestamp '%s' from group '%s' (freed ~%.1f MB)",

@@ -55,6 +55,10 @@ def setup_logging(
         log_file = settings.log_file
     log_path = Path(log_file) if log_file else None
 
+    # Route warnings.warn() calls through the logging system so they appear in
+    # the file alongside regular log messages.
+    logging.captureWarnings(True)
+
     if log_path and str(log_path) != "":
         log_path.parent.mkdir(parents=True, exist_ok=True)
         file_handler = logging.handlers.TimedRotatingFileHandler(
@@ -71,4 +75,12 @@ def setup_logging(
             )
         )
         root.addHandler(file_handler)
+
+        # Uvicorn's dictConfig resets its loggers and disables propagation to the
+        # root logger, so the file handler would never receive uvicorn records.
+        # Attach it directly to the uvicorn loggers to ensure access logs and
+        # uvicorn-level messages land in the file.
+        for uvicorn_logger_name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+            logging.getLogger(uvicorn_logger_name).addHandler(file_handler)
+
         logging.getLogger(__name__).debug("File logging enabled: %s", log_path)

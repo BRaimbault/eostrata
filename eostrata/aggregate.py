@@ -107,6 +107,12 @@ def apply_temporal_aggregation(
     if not da.indexes["time"].is_monotonic_increasing:
         da = da.sortby("time")
 
+    # Deduplicate the time axis — re-ingesting the same year produces duplicate
+    # timestamps that cause .sel(method="nearest") to raise InvalidIndexError.
+    if not da.indexes["time"].is_unique:
+        _, first_occurrence = np.unique(da.indexes["time"], return_index=True)
+        da = da.isel(time=first_occurrence)
+
     t0, t1 = _parse_datetime_interval(datetime_str)
     if t0:
         t0 = _strip_tz(t0)

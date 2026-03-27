@@ -264,12 +264,13 @@ class TestStoreUsage:
         assert "groups" in data
         assert isinstance(data["groups"], list)
 
-    def test_groups_include_last_accessed(self, tmp_path):
+    def test_groups_include_timestamps(self, tmp_path):
         import numpy as np
         import xarray as xr
 
         zarr_root = tmp_path / "zarr"
-        ds = xr.Dataset({"v": (("y", "x"), np.zeros((4, 4)))})
+        times = np.array([np.datetime64("2020-01-01"), np.datetime64("2021-01-01")])
+        ds = xr.Dataset({"v": (("time", "y", "x"), np.zeros((2, 4, 4)))}, coords={"time": times})
         ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
 
         mock_settings = MagicMock()
@@ -284,7 +285,12 @@ class TestStoreUsage:
         g = data["groups"][0]
         assert g["group"] == "worldpop/nga"
         assert g["size_mb"] >= 0
-        assert "last_accessed" in g
+        assert "timestamps" in g
+        assert len(g["timestamps"]) == 2
+        t = g["timestamps"][0]
+        assert "datetime" in t
+        assert "size_mb" in t
+        assert "last_accessed" in t
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

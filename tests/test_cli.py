@@ -11,7 +11,7 @@ import xarray as xr
 from rasterio.transform import from_bounds
 from typer.testing import CliRunner
 
-from eostrata.cli import _parse_int_list, app
+from eostrata.cli import _ALL_MONTHS, _parse_int_list, app
 
 runner = CliRunner()
 
@@ -40,6 +40,18 @@ class TestParseHelpers:
 
     def test_multi_months_sorted(self):
         assert _parse_int_list(None, "3,1,2", 12) == [1, 2, 3]
+
+    def test_all_months(self):
+        assert _parse_int_list(None, "ALL", 1, all_values=_ALL_MONTHS) == list(range(1, 13))
+
+    def test_all_months_case_insensitive(self):
+        assert _parse_int_list(None, "all", 1, all_values=_ALL_MONTHS) == list(range(1, 13))
+
+    def test_all_without_all_values_raises(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="'ALL' is not supported"):
+            _parse_int_list(None, "ALL", 1)
 
 
 def _make_tif(path: Path, bbox=(2.0, 4.0, 6.0, 8.0), width=10, height=10) -> Path:

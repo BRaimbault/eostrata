@@ -1,0 +1,74 @@
+"""Logging configuration for eostrata.
+
+Sets up a daily-rotating file handler alongside the console handler.
+Rotation happens at midnight; files older than 30 days are deleted
+automatically by the handler.
+
+The log file path is controlled by ``EOSTRATA_LOG_FILE`` (default:
+``data/eostrata.log``).  Set it to an empty string to disable file logging.
+"""
+
+from __future__ import annotations
+
+import logging
+import logging.handlers
+from pathlib import Path
+
+
+def setup_logging(
+    verbose: bool = False,
+    log_file: Path | str | None = None,
+    *,
+    rich_console: bool = True,
+) -> None:
+    """Configure root logger with a console handler and an optional rotating file handler.
+
+    Parameters
+    ----------
+    verbose:
+        If True, set log level to DEBUG; otherwise INFO.
+    log_file:
+        Path to the log file.  Pass ``None`` to use the value from settings.
+        Pass an empty string or ``Path("")`` to disable file logging entirely.
+    rich_console:
+        If True (default), attach a Rich console handler for terminal output.
+        Set to False when attaching to a server that manages its own console output.
+    """
+    from eostrata.config import settings
+
+    level = logging.DEBUG if verbose else logging.INFO
+    root = logging.getLogger()
+
+    # Avoid adding duplicate handlers if called more than once
+    if root.handlers:
+        return
+
+    root.setLevel(level)
+
+    if rich_console:
+        from rich.logging import RichHandler
+
+        root.addHandler(RichHandler(rich_tracebacks=True, show_path=False))
+
+    # Resolve log file path
+    if log_file is None:
+        log_file = settings.log_file
+    log_path = Path(log_file) if log_file else None
+
+    if log_path and str(log_path) != "":
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.handlers.TimedRotatingFileHandler(
+            filename=log_path,
+            when="midnight",
+            backupCount=30,  # keep 30 days of rotated files
+            encoding="utf-8",
+            utc=True,
+        )
+        file_handler.setFormatter(
+            logging.Formatter(
+                fmt="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
+                datefmt="%Y-%m-%dT%H:%M:%SZ",
+            )
+        )
+        root.addHandler(file_handler)
+        logging.getLogger(__name__).debug("File logging enabled: %s", log_path)

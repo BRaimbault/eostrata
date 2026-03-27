@@ -113,6 +113,16 @@ class TestInputValidation:
         )
         assert resp.status_code == 422
 
+    def test_months_all_string_is_accepted(self, client, sync_executor):
+        """'ALL' string must be accepted and expanded to all 12 months."""
+        with patch("eostrata.ingestion.run_chirps_ingest") as mock_fn:
+            resp = client.post(
+                "/processes/ingest/execution",
+                json={"inputs": {"source": "chirps", "months": "ALL"}},
+            )
+        assert resp.status_code == 201
+        assert mock_fn.call_args.kwargs["months"] == list(range(1, 13))
+
     def test_cds_invalid_variable_returns_422(self, client):
         resp = client.post(
             "/processes/ingest/execution",
@@ -447,6 +457,46 @@ class TestIngestionFunctions:
                 )
 
         mock_save.assert_not_called()
+
+    def test_chirps_ingest_skips_404_months(self, tmp_path):
+        """A 404 for a specific month should be skipped, not abort the job."""
+        import httpx
+
+        from eostrata import ingestion
+
+        not_found = httpx.HTTPStatusError(
+            "404",
+            request=MagicMock(),
+            response=MagicMock(status_code=404),
+        )
+
+        with ExitStack() as stack:
+            src, mock_register, mock_save = _setup_source(
+                stack,
+                "eostrata.sources.chirps.CHIRPSSource",
+                "chirps/global",
+                _mock_ds(),
+                tmp_path,
+                collection_id="chirps",
+                VARIABLE="precipitation",
+            )
+            # month 6 succeeds, month 7 returns 404
+            src.download.side_effect = [
+                [tmp_path / "raw" / "chirps" / "chirps-v2.0.2023.06.tif"],
+                not_found,
+            ]
+            ingestion.run_chirps_ingest(
+                years=[2023],
+                months=[6, 7],
+                zarr_root=tmp_path / "zarr",
+                raw_dir=tmp_path / "raw",
+                catalog_path=tmp_path / "catalog.json",
+                bbox=_BBOX,
+            )
+
+        # Only month 6 registered; 404 month silently skipped
+        assert mock_register.call_count == 1
+        mock_save.assert_called_once()
 
     def test_cds_ingest_calls_source_and_catalog(self, tmp_path):
         from eostrata import ingestion

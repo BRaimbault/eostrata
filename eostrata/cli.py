@@ -7,7 +7,6 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
-from rich.logging import RichHandler
 from rich.table import Table
 
 logger = logging.getLogger(__name__)
@@ -23,21 +22,34 @@ download_app = typer.Typer(help="Download data from a source.", no_args_is_help=
 app.add_typer(download_app, name="download")
 
 
-def _parse_int_list(single: int | None, multi: str | None, default: int) -> list[int]:
-    """Resolve a single-value / comma-separated option into a sorted list of ints."""
+_ALL_MONTHS = list(range(1, 13))
+_ALL_DAYS = list(range(1, 32))
+
+
+def _parse_int_list(
+    single: int | None,
+    multi: str | None,
+    default: int,
+    *,
+    all_values: list[int] | None = None,
+) -> list[int]:
+    """Resolve a single-value / comma-separated option into a sorted list of ints.
+
+    Passing ``"ALL"`` (case-insensitive) as *multi* expands to *all_values*.
+    """
     if multi is not None:
+        if multi.strip().upper() == "ALL":
+            if all_values is None:
+                raise ValueError("'ALL' is not supported for this parameter")
+            return all_values
         return sorted({int(v.strip()) for v in multi.split(",")})
     return [single if single is not None else default]
 
 
 def _setup_logging(verbose: bool) -> None:
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        handlers=[RichHandler(rich_tracebacks=True, show_path=False)],
-        format="%(message)s",
-        datefmt="[%X]",
-    )
+    from eostrata.log import setup_logging
+
+    setup_logging(verbose=verbose)
 
 
 # ── download worldpop ─────────────────────────────────────────────────────────
@@ -69,6 +81,9 @@ def download_worldpop(
 
     _years = _parse_int_list(year, years, WorldPopSource().latest_available().year)
 
+    logger.info(
+        "CLI download worldpop iso3=%s years=%s bbox=%s", iso3.upper(), _years, settings.bbox
+    )
     console.print(
         f"[bold]Downloading WorldPop[/bold] iso3=[cyan]{iso3.upper()}[/cyan] "
         f"years=[cyan]{_years}[/cyan] bbox=[cyan]{settings.bbox}[/cyan]"
@@ -83,8 +98,10 @@ def download_worldpop(
             catalog_path=_catalog_path,
             bbox=settings.bbox,
             quota_mb=settings.store_quota_mb,
+            eviction_buffer_mb=settings.store_eviction_buffer_mb,
         )
     except Exception as exc:
+        logger.exception("CLI command failed: %s", exc)
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from None
 
@@ -122,15 +139,16 @@ def list_datasets(
 
         from datetime import UTC, datetime
 
-        from eostrata.cache import _ACCESSED_SENTINEL
+        from eostrata.cache import _ACCESS_DIR
 
         table = Table(
             "Group", "Size", "Last accessed", title=f"Zarr store: {_zarr_root}  [{size_summary}]"
         )
         for group_path, size_mb, _ in sorted(groups, key=lambda t: t[0]):
-            sentinel = Path(_zarr_root) / group_path / _ACCESSED_SENTINEL
-            if sentinel.exists():
-                ts = datetime.fromtimestamp(sentinel.stat().st_mtime, tz=UTC)
+            access_dir = Path(_zarr_root) / group_path / _ACCESS_DIR
+            if access_dir.exists() and any(access_dir.iterdir()):
+                newest = max(access_dir.iterdir(), key=lambda f: f.stat().st_mtime)
+                ts = datetime.fromtimestamp(newest.stat().st_mtime, tz=UTC)
                 last_read = ts.strftime("%Y-%m-%d %H:%M UTC")
             else:
                 last_read = "[dim]never read[/dim]"
@@ -290,7 +308,7 @@ def download_chirps(
     year: int = typer.Option(None, help="Single year (default: latest available)"),
     years: str = typer.Option(None, help="Multiple years, comma-separated: 2022,2023"),
     month: int = typer.Option(None, help="Single month 1-12 (default: latest available)"),
-    months: str = typer.Option(None, help="Multiple months, comma-separated: 1,2,3"),
+    months: str = typer.Option(None, help="Multiple months, comma-separated: 1,2,3 or ALL"),
     zarr_root: Path | None = typer.Option(None, help="Override Zarr store root"),
     raw_dir: Path | None = typer.Option(None, help="Override raw download directory"),
     catalog_path: Path | None = typer.Option(None, help="Override catalog.json path"),
@@ -313,8 +331,9 @@ def download_chirps(
 
     latest = CHIRPSSource().latest_available()
     _years = _parse_int_list(year, years, latest.year)
-    _months = _parse_int_list(month, months, latest.month)
+    _months = _parse_int_list(month, months, latest.month, all_values=_ALL_MONTHS)
 
+    logger.info("CLI download chirps years=%s months=%s bbox=%s", _years, _months, settings.bbox)
     console.print(
         f"[bold]Downloading CHIRPS[/bold] years=[cyan]{_years}[/cyan] "
         f"months=[cyan]{_months}[/cyan] bbox=[cyan]{settings.bbox}[/cyan]"
@@ -329,8 +348,10 @@ def download_chirps(
             catalog_path=_catalog_path,
             bbox=settings.bbox,
             quota_mb=settings.store_quota_mb,
+            eviction_buffer_mb=settings.store_eviction_buffer_mb,
         )
     except Exception as exc:
+        logger.exception("CLI command failed: %s", exc)
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from None
 
@@ -347,7 +368,7 @@ def download_cds(
     years: str = typer.Option(None, help="Multiple years, comma-separated: 2022,2023"),
     month: int = typer.Option(None, help="Single month 1-12 (default: latest available)"),
     months: str = typer.Option(
-        None, help="Months to fetch, comma-separated: 1,2,3 (default: latest available)"
+        None, help="Months to fetch, comma-separated: 1,2,3 or ALL (default: latest available)"
     ),
     zarr_root: Path | None = typer.Option(None, help="Override Zarr store root"),
     raw_dir: Path | None = typer.Option(None, help="Override raw download directory"),
@@ -373,8 +394,15 @@ def download_cds(
 
     latest = CDSSource().latest_available()
     _years = _parse_int_list(year, years, latest.year)
-    _months = _parse_int_list(month, months, latest.month)
+    _months = _parse_int_list(month, months, latest.month, all_values=_ALL_MONTHS)
 
+    logger.info(
+        "CLI download cds variable=%s years=%s months=%s bbox=%s",
+        variable,
+        _years,
+        _months,
+        settings.bbox,
+    )
     console.print(
         f"[bold]Downloading ERA5[/bold] variable=[cyan]{variable}[/cyan] "
         f"years=[cyan]{_years}[/cyan] months=[cyan]{_months}[/cyan] bbox=[cyan]{settings.bbox}[/cyan]"
@@ -390,8 +418,10 @@ def download_cds(
             catalog_path=_catalog_path,
             bbox=settings.bbox,
             quota_mb=settings.store_quota_mb,
+            eviction_buffer_mb=settings.store_eviction_buffer_mb,
         )
     except Exception as exc:
+        logger.exception("CLI command failed: %s", exc)
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from None
 

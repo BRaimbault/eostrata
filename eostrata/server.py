@@ -847,6 +847,7 @@ _MAP_HTML = """<!DOCTYPE html>
         <div class="cfg-grid">
           <span class="cfg-key">Used</span><span id="cfg-used" class="cfg-val"></span>
           <span class="cfg-key">Quota</span><span id="cfg-quota" class="cfg-val"></span>
+          <span class="cfg-key">Buffer</span><span id="cfg-buffer" class="cfg-val"></span>
         </div>
         <div id="cfg-quota-bar-wrap" style="display:none;margin-top:8px">
           <div style="background:#e5e7eb;border-radius:4px;height:10px;overflow:hidden">
@@ -854,7 +855,7 @@ _MAP_HTML = """<!DOCTYPE html>
           </div>
           <div id="cfg-quota-pct" style="font-size:11px;color:#6b7280;margin-top:3px;text-align:right"></div>
         </div>
-        <div id="cfg-groups-wrap" style="display:none;margin-top:12px">
+        <div id="cfg-groups-wrap" style="display:none;margin-top:12px;max-height:40vh;overflow-y:auto">
           <table style="width:100%;border-collapse:collapse;font-size:12px">
             <thead>
               <tr style="color:#6b7280;text-align:left;border-bottom:1px solid #e5e7eb">
@@ -903,6 +904,8 @@ _MAP_HTML = """<!DOCTYPE html>
       document.getElementById('cfg-catalog').textContent   = CONFIG.catalog_path;
       document.getElementById('cfg-quota').textContent =
         CONFIG.quota_mb > 0 ? CONFIG.quota_mb.toLocaleString() + ' MB' : 'Unlimited';
+      document.getElementById('cfg-buffer').textContent =
+        CONFIG.eviction_buffer_mb > 0 ? CONFIG.eviction_buffer_mb.toLocaleString() + ' MB' : 'None';
 
       fetch('/store-usage').then(r => r.json()).then(u => {
         const fmtMb = mb => mb >= 1024
@@ -921,8 +924,22 @@ _MAP_HTML = """<!DOCTYPE html>
         if (u.groups && u.groups.length) {
           const tbody = document.getElementById('cfg-groups-tbody');
           tbody.innerHTML = '';
+          // Mark individual timestamps at eviction risk (oldest-first across all groups).
+          // Groups are already sorted oldest-first; timestamps within each group likewise.
+          const targetMb = u.quota_mb > 0 ? u.quota_mb - (CONFIG.eviction_buffer_mb || 0) : Infinity;
+          const atRiskTs = new Set(); // "group|datetime" keys
+          if (!u.quota_unlimited && u.used_mb > targetMb) {
+            let excess = u.used_mb - targetMb;
+            outer: for (const g of u.groups) {
+              for (const ts of (g.timestamps || [])) {
+                if (excess <= 0) break outer;
+                atRiskTs.add(g.group + '|' + ts.datetime);
+                excess -= ts.size_mb;
+              }
+            }
+          }
           u.groups.forEach((g, gi) => {
-            const evictRisk = !u.quota_unlimited && gi === 0 && u.used_pct > 80;
+            const evictRisk = (g.timestamps || []).some(ts => atRiskTs.has(g.group + '|' + ts.datetime));
             const groupId = 'cfg-grp-' + gi;
 
             // Collapsible group header row
@@ -959,7 +976,7 @@ _MAP_HTML = """<!DOCTYPE html>
               tr.className = groupId;
               tr.style.display = 'none';
               tr.style.borderBottom = '1px solid #f3f4f6';
-              if (evictRisk && i === 0) tr.style.color = '#dc2626';
+              if (atRiskTs.has(g.group + '|' + ts.datetime)) tr.style.color = '#dc2626';
               const accessCell = ts.last_accessed
                 ? 'accessed ' + fmtTs(ts.last_accessed)
                 : ts.ingested ? '<span style="color:#9ca3af">ingested ' + fmtTs(ts.ingested) + '</span>' : '—';
@@ -1522,6 +1539,7 @@ def map_viewer(
         {
             "bbox": list(settings.bbox),
             "quota_mb": settings.store_quota_mb,
+            "eviction_buffer_mb": settings.store_eviction_buffer_mb,
             "zarr_root": str(settings.zarr_root),
             "raw_dir": str(settings.raw_dir),
             "catalog_path": str(settings.catalog_path),

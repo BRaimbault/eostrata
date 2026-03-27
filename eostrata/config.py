@@ -20,9 +20,6 @@ class Settings(BaseSettings):
     zarr_root: Path = Path("data/zarr")
     raw_dir: Path = Path("data/raw")
     catalog_path: Path = Path("data/catalog.json")
-    # Log file path. Rotates daily; 30 days of history kept.
-    # Set to empty string to disable file logging.
-    log_file: str = "data/eostrata.log"
 
     # ── Area of interest (bbox) ───────────────────────────────────────────────
     # Format: west, south, east, north (EPSG:4326)

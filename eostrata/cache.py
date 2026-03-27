@@ -53,13 +53,30 @@ import time
 import uuid
 from pathlib import Path
 
+import numpy as np
+import xarray as xr
+
 logger = logging.getLogger(__name__)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-_ACCESS_DIR = ".eostrata_access"  # replaces _ACCESSED_SENTINEL
+_ACCESS_DIR = ".eostrata_access"
 _DEBOUNCE_S = 60  # minimum seconds between sentinel touches for the same timestamp
+
+
+def _eviction_sort_key(ts_iso: str, last_access: float, ingestion_time: float) -> tuple:
+    """Sort key for LRU eviction: never-accessed timestamps sort first.
+
+    Priority:
+    1. Unaccessed (last_access=0) — sorted by ingestion_time, then ts_iso.
+    2. Accessed — sorted by last_access ascending (oldest first), then ts_iso.
+    """
+    if last_access > 0:
+        return (1, last_access, ts_iso)
+    if ingestion_time > 0:
+        return (0, ingestion_time, ts_iso)
+    return (0, 0.0, ts_iso)
 
 
 def _ts_to_iso(ts) -> str:
@@ -206,8 +223,6 @@ def list_timestamps(zarr_root: Path, group_path: str) -> list[tuple[str, float, 
     ``ingestion_time`` is 0.0 if no zarr data files are found.
     Duplicate timestamps are deduplicated, keeping the first occurrence.
     """
-    import xarray as xr
-
     try:
         ds = xr.open_zarr(str(zarr_root), group=group_path, consolidated=False)
     except Exception:
@@ -252,17 +267,7 @@ def list_timestamps(zarr_root: Path, group_path: str) -> list[tuple[str, float, 
         last_access = sentinel.stat().st_mtime if sentinel.exists() else 0.0
         result.append((ts_iso, per_ts_mb, last_access, ingestion_time))
 
-    def _sort_key(t: tuple[str, float, float, float]):
-        ts_iso, _size, last_access, ingestion_time = t
-        # Never-accessed timestamps are eviction candidates first;
-        # accessed ones sort last (most recently used = least likely to evict).
-        if last_access > 0:
-            return (1, last_access, ts_iso)
-        if ingestion_time > 0:
-            return (0, ingestion_time, ts_iso)
-        return (0, 0.0, ts_iso)
-
-    result.sort(key=_sort_key)
+    result.sort(key=lambda t: _eviction_sort_key(t[0], t[2], t[3]))
     return result
 
 
@@ -313,9 +318,6 @@ def evict_timestamp(
     Estimated megabytes freed (``total_group_size / n_timestamps``).
     Returns 0.0 if the group or timestamp was not found.
     """
-    import numpy as np
-    import xarray as xr
-
     try:
         ds = xr.open_zarr(str(zarr_root), group=group_path, consolidated=False)
     except Exception:
@@ -456,16 +458,8 @@ def check_and_evict(
         )
 
     # Sort oldest-first using same priority as list_timestamps:
-    # last_access → ingestion_time → ts_iso
-    def _eviction_key(t: tuple[str, str, float, float, float]):
-        _, ts_iso, _, last_access, ingestion_time = t
-        if last_access > 0:
-            return (1, last_access, ts_iso)
-        if ingestion_time > 0:
-            return (0, ingestion_time, ts_iso)
-        return (0, 0.0, ts_iso)
-
-    all_timestamps.sort(key=_eviction_key)
+    # unaccessed first, then by last_access ascending, then ts_iso
+    all_timestamps.sort(key=lambda t: _eviction_sort_key(t[1], t[3], t[4]))
 
     for group_path, ts_iso, ts_size_mb, last_access, ingestion_time in all_timestamps:
         current_mb = store_size_mb(zarr_root)  # re-measure after each eviction

@@ -10,6 +10,7 @@ import logging
 from contextvars import ContextVar
 from typing import Literal
 
+import numpy as np
 import xarray as xr
 from titiler.xarray.io import Reader
 from titiler.xarray.io import get_variable as _base_get_variable
@@ -171,8 +172,6 @@ def resolve_accessed_times(
     Used to record per-timestamp last-access sentinels before the time
     dimension is collapsed by aggregation.
     """
-    import numpy as np
-
     # Support both Dataset and DataArray
     if "time" not in getattr(ds, "dims", {}) and "time" not in getattr(ds, "coords", {}):
         return []

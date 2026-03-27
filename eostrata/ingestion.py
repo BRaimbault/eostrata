@@ -10,6 +10,8 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
+
 logger = logging.getLogger(__name__)
 
 
@@ -83,8 +85,6 @@ def run_chirps_ingest(
     source = CHIRPSSource()
     zarr_group = source.zarr_group()
     catalogue = cat.load_or_create(catalog_path)
-
-    import httpx
 
     success = False
     for year in years:

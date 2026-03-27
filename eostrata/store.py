@@ -134,7 +134,9 @@ def geotiff_to_zarr(
                 )
                 return ds
         except Exception:
-            pass  # if we can't read it, proceed with the append
+            logger.debug(
+                "Could not read existing Zarr group '%s', proceeding with append", zarr_group
+            )
         # Append new timestep along the time dimension
         logger.info("Appending to existing Zarr dataset '%s'", zarr_group)
         ds.to_zarr(store_path, group=zarr_group, mode="a", append_dim="time", consolidated=True)

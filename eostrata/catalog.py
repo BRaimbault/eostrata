@@ -60,6 +60,11 @@ def _make_catalog() -> pystac.Catalog:
     return catalog
 
 
+def create_empty() -> pystac.Catalog:
+    """Create a fresh catalog with the three default collections and no items."""
+    return _make_catalog()
+
+
 def load_or_create(catalog_path: Path) -> pystac.Catalog:
     """Load an existing catalog.json or create a new one."""
     catalog_path = Path(catalog_path)
@@ -217,6 +222,48 @@ def register_item(
     collection.add_item(item)
     logger.info("Registered STAC item '%s' in collection '%s'", item_id, collection_id)
     return item
+
+
+def remove_timestamp(
+    catalog: pystac.Catalog,
+    group_path: str,
+    timestamp_iso: str,
+) -> bool:
+    """Remove one timestamp from the STAC item that references *group_path*.
+
+    Matches by the date portion of *timestamp_iso* (first 10 chars) against
+    ``eostrata:datetimes`` values.  If no timestamps remain, the item is
+    removed from its collection entirely.
+
+    Returns True if the catalog was modified.
+    """
+    ts_date = timestamp_iso[:10]
+    for collection in catalog.get_children():
+        if not isinstance(collection, pystac.Collection):
+            continue
+        for item in list(collection.get_items()):
+            if item.properties.get("eostrata:zarr_group") != group_path:
+                continue
+            datetimes: list[str] = item.properties.get("eostrata:datetimes", [])
+            remaining = [dt for dt in datetimes if not dt.startswith(ts_date)]
+            if len(remaining) == len(datetimes):
+                continue
+            if not remaining:
+                collection.remove_item(item.id)
+                logger.info("Removed STAC item '%s' (no timestamps remain)", item.id)
+            else:
+                dts = [datetime.fromisoformat(dt) for dt in remaining]
+                start = min(dts).replace(tzinfo=UTC) if min(dts).tzinfo is None else min(dts)
+                end = max(dts).replace(tzinfo=UTC) if max(dts).tzinfo is None else max(dts)
+                item.properties["eostrata:datetimes"] = sorted(remaining)
+                item.properties["start_datetime"] = start.isoformat()
+                item.properties["end_datetime"] = end.isoformat()
+                item.common_metadata.start_datetime = start
+                item.common_metadata.end_datetime = end
+                logger.info("Removed timestamp '%s' from STAC item '%s'", timestamp_iso, item.id)
+            return True
+    logger.debug("Timestamp '%s' not found in catalog for group '%s'", timestamp_iso, group_path)
+    return False
 
 
 def resolve_item(

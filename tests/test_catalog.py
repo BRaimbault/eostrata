@@ -13,6 +13,7 @@ from eostrata.catalog import (
     _make_catalog,
     load_or_create,
     register_item,
+    remove_timestamp,
     resolve_item,
     save,
 )
@@ -153,6 +154,40 @@ class TestRegisterItem:
         item = cat.get_child("worldpop").get_item("worldpop_nga")
         assert item.properties["eostrata:datetimes"].count(_DT.isoformat()) == 1
 
+    def test_existing_item_with_null_datetimes_uses_new_datetime(self, tmp_path):
+        """When existing item has no start/end/datetime, new values are used (lines 156-157)."""
+        cat_ = _make_catalog()
+        coll = cat_.get_child("worldpop")
+        # Create an item with all date fields set to None
+        item = pystac.Item(
+            id="worldpop_nga",
+            geometry=None,
+            bbox=list(_BBOX),
+            datetime=None,
+            properties={
+                "start_datetime": None,
+                "end_datetime": None,
+                "datetime": None,
+                "eostrata:variable": "population",
+                "eostrata:zarr_group": "worldpop/nga",
+                "eostrata:zarr_root": str(tmp_path / "zarr"),
+            },
+        )
+        coll.add_item(item)
+
+        register_item(
+            cat_,
+            collection_id="worldpop",
+            item_id="worldpop_nga",
+            bbox=_BBOX,
+            datetime_=_DT,
+            zarr_root=tmp_path / "zarr",
+            zarr_group="worldpop/nga",
+            variable="population",
+        )
+        updated = cat_.get_child("worldpop").get_item("worldpop_nga")
+        assert updated.common_metadata.start_datetime == _DT
+
     def test_unknown_collection_raises(self, tmp_path):
         cat = _make_catalog()
         with pytest.raises(ValueError, match="not found"):
@@ -185,6 +220,25 @@ class TestResolveItem:
         save(_make_catalog(), tmp_path / "catalog.json")
         with pytest.raises(ValueError, match="Item"):
             resolve_item(tmp_path / "catalog.json", "worldpop", "missing_item")
+
+    def test_item_without_zarr_asset_raises(self, tmp_path):
+        """resolve_item raises ValueError when item has no zarr asset (line 250)."""
+        cat_ = _make_catalog()
+        coll = cat_.get_child("worldpop")
+        item = pystac.Item(
+            id="worldpop_nga",
+            geometry=None,
+            bbox=list(_BBOX),
+            datetime=_DT,
+            properties={
+                "eostrata:variable": "population",
+                "eostrata:zarr_group": "worldpop/nga",
+            },
+        )
+        coll.add_item(item)
+        save(cat_, tmp_path / "catalog.json")
+        with pytest.raises(ValueError, match="no zarr asset"):
+            resolve_item(tmp_path / "catalog.json", "worldpop", "worldpop_nga")
 
 
 class TestPystacClient:
@@ -233,3 +287,102 @@ class TestPystacClient:
     def test_post_search_same_as_get(self, tmp_path):
         client = self._client(tmp_path)
         assert client.post_search(None) == client.get_search()
+
+    def test_item_collection_nonexistent_collection(self, tmp_path):
+        """item_collection raises NotFoundError for unknown collection (line 305)."""
+        client = self._client(tmp_path)
+        with pytest.raises(Exception, match="not found"):
+            client.item_collection("nonexistent")
+
+    def test_get_item_nonexistent_collection(self, tmp_path):
+        """get_item raises NotFoundError when collection doesn't exist (line 313)."""
+        client = self._client(tmp_path)
+        with pytest.raises(Exception, match="not found"):
+            client.get_item("worldpop_nga", "nonexistent")
+
+
+class TestRemoveTimestamp:
+    def _catalog_with_two_items(self, tmp_path):
+        cat = _make_catalog()
+        register_item(
+            cat,
+            collection_id="worldpop",
+            item_id="worldpop_nga",
+            bbox=_BBOX,
+            datetime_=_DT,
+            zarr_root=tmp_path / "zarr",
+            zarr_group="worldpop/nga",
+            variable="population",
+        )
+        dt2 = datetime(2021, 1, 1, tzinfo=UTC)
+        register_item(
+            cat,
+            collection_id="worldpop",
+            item_id="worldpop_nga",
+            bbox=_BBOX,
+            datetime_=dt2,
+            zarr_root=tmp_path / "zarr",
+            zarr_group="worldpop/nga",
+            variable="population",
+        )
+        return cat
+
+    def test_removes_one_timestamp_leaves_item(self, tmp_path):
+        cat = self._catalog_with_two_items(tmp_path)
+        changed = remove_timestamp(cat, "worldpop/nga", "2021-01-01T00:00:00+00:00")
+        assert changed
+        item = cat.get_child("worldpop").get_item("worldpop_nga")
+        assert item is not None
+        dts = item.properties["eostrata:datetimes"]
+        assert len(dts) == 1
+        assert dts[0].startswith("2020")
+
+    def test_removes_last_timestamp_removes_item(self, tmp_path):
+        cat = _catalog_with_item(tmp_path)
+        changed = remove_timestamp(cat, "worldpop/nga", "2020-01-01T00:00:00+00:00")
+        assert changed
+        assert cat.get_child("worldpop").get_item("worldpop_nga") is None
+
+    def test_timestamp_not_found_returns_false(self, tmp_path):
+        cat = _catalog_with_item(tmp_path)
+        changed = remove_timestamp(cat, "worldpop/nga", "2099-01-01T00:00:00")
+        assert not changed
+
+    def test_wrong_group_returns_false(self, tmp_path):
+        cat = _catalog_with_item(tmp_path)
+        changed = remove_timestamp(cat, "chirps/global", "2020-01-01T00:00:00+00:00")
+        assert not changed
+
+    def test_non_collection_child_is_skipped(self, tmp_path):
+        """A non-Collection catalog child that appears before the target collection is skipped."""
+        # Build catalog with non-Collection child FIRST, then the collection with the item
+        cat = pystac.Catalog(id="eostrata", description="test")
+        cat.add_child(pystac.Catalog(id="extra", description="non-collection"))
+        collection = pystac.Collection(
+            id="worldpop",
+            description="WorldPop",
+            extent=pystac.Extent(
+                spatial=pystac.SpatialExtent([[-180, -90, 180, 90]]),
+                temporal=pystac.TemporalExtent([[None, None]]),
+            ),
+        )
+        cat.add_child(collection)
+        register_item(
+            cat,
+            collection_id="worldpop",
+            item_id="worldpop_nga",
+            bbox=_BBOX,
+            datetime_=_DT,
+            zarr_root=tmp_path / "zarr",
+            zarr_group="worldpop/nga",
+            variable="population",
+        )
+        changed = remove_timestamp(cat, "worldpop/nga", "2020-01-01T00:00:00+00:00")
+        assert changed
+
+    def test_updates_date_interval_on_partial_removal(self, tmp_path):
+        cat = self._catalog_with_two_items(tmp_path)
+        remove_timestamp(cat, "worldpop/nga", "2020-01-01T00:00:00+00:00")
+        item = cat.get_child("worldpop").get_item("worldpop_nga")
+        assert item.common_metadata.start_datetime.year == 2021
+        assert item.common_metadata.end_datetime.year == 2021

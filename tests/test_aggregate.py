@@ -6,7 +6,12 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from eostrata.aggregate import _parse_datetime_interval, _strip_tz, apply_temporal_aggregation
+from eostrata.aggregate import (
+    _parse_datetime_interval,
+    _strip_tz,
+    apply_temporal_aggregation,
+    resolve_accessed_times,
+)
 
 
 def _make_da(years: list[int]) -> xr.DataArray:
@@ -163,3 +168,93 @@ class TestApplyTemporalAggregation:
             agg="mean",
         )
         assert float(result.mean()) == pytest.approx(2020.5)
+
+    def test_non_monotonic_time_is_sorted(self):
+        """Non-monotonic time axis is sorted before slicing (line 107)."""
+        times = np.array(
+            [np.datetime64("2022-01-01"), np.datetime64("2020-01-01"), np.datetime64("2021-01-01")]
+        )
+        data = np.stack([np.full((4, 4), float(y), dtype="float32") for y in [2022, 2020, 2021]])
+        da = xr.DataArray(
+            data,
+            dims=("time", "y", "x"),
+            coords={"time": times, "y": np.arange(4), "x": np.arange(4)},
+        )
+        result = apply_temporal_aggregation(da, datetime_str="2020-01-01/2021-01-01", agg="mean")
+        assert float(result.mean()) == pytest.approx(2020.5)
+
+    def test_open_end_interval_uses_nearest(self):
+        """Open-end interval '2021-01-01/' → t0 set, t1=None → nearest match (line 124)."""
+        da = _make_da([2020, 2021, 2022])
+        result = apply_temporal_aggregation(da, datetime_str="2021-01-01/")
+        assert float(result.mean()) == pytest.approx(2021.0)
+
+
+class TestResolveAccessedTimes:
+    def _make_ds(self, years: list[int]) -> xr.Dataset:
+        times = np.array([np.datetime64(f"{y}-01-01") for y in years])
+        data = np.ones((len(years), 4, 4), dtype="float32")
+        return xr.Dataset(
+            {"v": (("time", "y", "x"), data)},
+            coords={"time": times},
+        )
+
+    def test_no_time_dim_returns_empty(self):
+        ds = xr.Dataset({"v": (("y", "x"), np.ones((4, 4)))})
+        assert resolve_accessed_times(ds, None) == []
+
+    def test_time_values_access_error_returns_empty(self):
+        """Dataset with time coord but values raises AttributeError → []."""
+        import unittest.mock as mock
+
+        ds = self._make_ds([2020])
+        with mock.patch.object(
+            type(ds["time"]), "values", new_callable=mock.PropertyMock, side_effect=AttributeError
+        ):
+            result = resolve_accessed_times(ds, None)
+        assert result == []
+
+    def test_empty_time_returns_empty(self):
+        ds = xr.Dataset(
+            {"v": (("time", "y", "x"), np.ones((0, 4, 4), dtype="float32"))},
+            coords={"time": np.array([], dtype="datetime64[ns]")},
+        )
+        assert resolve_accessed_times(ds, None) == []
+
+    def test_none_datetime_returns_last(self):
+        ds = self._make_ds([2020, 2021, 2022])
+        result = resolve_accessed_times(ds, None)
+        assert len(result) == 1
+        assert result[0].astype("datetime64[Y]").item().year == 2022
+
+    def test_open_start_interval_returns_last(self):
+        """Open-start interval (t0=None from _parse_datetime_interval) → last timestamp."""
+        ds = self._make_ds([2020, 2021])
+        result = resolve_accessed_times(ds, "/2021-12-31")
+        assert len(result) == 1
+
+    def test_single_point_returns_nearest(self):
+        ds = self._make_ds([2020, 2021, 2022])
+        result = resolve_accessed_times(ds, "2021-01-01")
+        assert len(result) == 1
+        assert result[0].astype("datetime64[Y]").item().year == 2021
+
+    def test_interval_returns_range(self):
+        ds = self._make_ds([2020, 2021, 2022])
+        result = resolve_accessed_times(ds, "2020-01-01/2021-12-31")
+        years = [r.astype("datetime64[Y]").item().year for r in result]
+        assert sorted(years) == [2020, 2021]
+
+    def test_anomaly_includes_baseline_timestamps(self):
+        ds = self._make_ds([2018, 2019, 2020, 2021])
+        result = resolve_accessed_times(ds, "2021-01-01", "anomaly", "2018-01-01/2019-12-31")
+        years = sorted(r.astype("datetime64[Y]").item().year for r in result)
+        assert years == [2018, 2019, 2021]
+
+    def test_anomaly_no_duplicate_when_overlap(self):
+        """A timestamp in both period and baseline should appear only once."""
+        ds = self._make_ds([2020, 2021])
+        result = resolve_accessed_times(
+            ds, "2020-01-01/2021-12-31", "anomaly", "2020-01-01/2021-12-31"
+        )
+        assert len(result) == 2

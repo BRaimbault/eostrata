@@ -33,8 +33,9 @@ class TestSettings:
         with pytest.raises((ValidationError, ValueError)):
             Settings(bbox_south=10.0, bbox_north=5.0)
 
-    def test_default_quota_unlimited(self):
-        s = Settings()
+    def test_default_quota_unlimited(self, monkeypatch):
+        monkeypatch.delenv("EOSTRATA_STORE_QUOTA_MB", raising=False)
+        s = Settings(_env_file=None)
         assert s.store_quota_mb == 0.0
 
     def test_quota_setting(self):

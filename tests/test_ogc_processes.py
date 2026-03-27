@@ -133,6 +133,10 @@ class TestListProcesses:
         ids = [p["id"] for p in data["processes"]]
         assert "zonalstats" in ids
 
+    def test_has_self_link(self, app_client):
+        data = app_client.get("/processes").json()
+        assert any(link["rel"] == "self" for link in data["links"])
+
 
 class TestDescribeProcess:
     def test_status_200(self, app_client):
@@ -398,3 +402,113 @@ class TestZonalStatsTemporalAggregation:
             json=self._payload(str(zarr_root_time), datetime="1900-01-01/1900-12-31", agg="mean"),
         )
         assert resp.status_code == 422
+
+
+class TestPrepareDaEdgeCases:
+    """Edge cases in _prepare_da (lines 188, 204)."""
+
+    def _geom(self) -> dict:
+        return {
+            "type": "Polygon",
+            "coordinates": [[[3.0, 5.0], [8.0, 5.0], [8.0, 9.0], [3.0, 9.0], [3.0, 5.0]]],
+        }
+
+    def test_valid_time_coord_renamed(self, app_client, tmp_path):
+        """valid_time dimension is renamed to time before aggregation (line 188)."""
+        zarr_root = tmp_path / "era5"
+        y = np.linspace(14.0, 4.0, 20)
+        x = np.linspace(2.0, 15.0, 20)
+        times = np.array([np.datetime64("2020-01-01")], dtype="datetime64[ns]")
+        data = np.ones((1, 20, 20), dtype="float32") * 99.0
+        ds = xr.Dataset(
+            {"t2m": (("valid_time", "y", "x"), data)},
+            coords={"valid_time": times, "y": y, "x": x},
+        )
+        ds.to_zarr(str(zarr_root), group="era5/t2m", mode="w", consolidated=True)
+
+        payload = {
+            "inputs": {
+                "url": str(zarr_root),
+                "group": "era5/t2m",
+                "variable": "t2m",
+                "features": {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "properties": {},
+                            "geometry": self._geom(),
+                        }
+                    ],
+                },
+            }
+        }
+        resp = app_client.post("/processes/zonalstats/execution", json=payload)
+        assert resp.status_code == 200
+        stats = resp.json()["features"][0]["statistics"]
+        assert stats["mean"] == pytest.approx(99.0, abs=1.0)
+
+    def test_crs_wkt_from_crs_variable(self, app_client, tmp_path):
+        """CRS is read from dataset's crs variable crs_wkt attr (line 204)."""
+        import rioxarray  # noqa: F401
+
+        zarr_root = tmp_path / "with_crs_var"
+        y = np.linspace(14.0, 4.0, 20)
+        x = np.linspace(2.0, 15.0, 20)
+        data = np.ones((20, 20), dtype="float32") * 55.0
+        ds = xr.Dataset(
+            {"population": (("y", "x"), data)},
+            coords={"y": y, "x": x},
+        )
+        # Add a 'crs' variable with crs_wkt attribute (mimics CF conventions)
+        from pyproj import CRS
+
+        crs_obj = CRS.from_epsg(4326)
+        ds["crs"] = xr.DataArray(0, attrs={"crs_wkt": crs_obj.to_wkt()})
+        ds.to_zarr(str(zarr_root), group="worldpop/test", mode="w", consolidated=True)
+
+        payload = {
+            "inputs": {
+                "url": str(zarr_root),
+                "group": "worldpop/test",
+                "variable": "population",
+                "features": {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "properties": {},
+                            "geometry": self._geom(),
+                        }
+                    ],
+                },
+            }
+        }
+        resp = app_client.post("/processes/zonalstats/execution", json=payload)
+        assert resp.status_code == 200
+        stats = resp.json()["features"][0]["statistics"]
+        assert stats["mean"] == pytest.approx(55.0, abs=1.0)
+
+
+class TestFeatureStatsClipFailure:
+    """_feature_stats returns error dict when clip raises (lines 214-216)."""
+
+    def test_geometry_outside_raster_returns_error(self):
+        import rioxarray  # noqa: F401
+
+        from eostrata.ogc.processes import _feature_stats
+
+        y = np.linspace(10.0, 0.0, 20)
+        x = np.linspace(0.0, 10.0, 20)
+        data = np.full((20, 20), 50.0, dtype="float32")
+        da = xr.DataArray(data, dims=("y", "x"), coords={"y": y, "x": x})
+        da = da.rio.write_crs("EPSG:4326")
+
+        geom_outside = {
+            "type": "Polygon",
+            "coordinates": [
+                [[100.0, 50.0], [120.0, 50.0], [120.0, 70.0], [100.0, 70.0], [100.0, 50.0]]
+            ],
+        }
+        result = _feature_stats(da, geom_outside)
+        assert "error" in result

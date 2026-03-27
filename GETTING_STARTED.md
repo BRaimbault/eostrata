@@ -61,8 +61,16 @@ EOSTRATA_RAW_DIR=data/raw
 EOSTRATA_CATALOG_PATH=data/catalog.json
 
 # Store quota — maximum size of the Zarr store in MB. 0 = unlimited (default).
-# When a download would exceed this limit, the oldest groups are evicted first.
+# When a download would exceed this limit, the least-recently-used timestamps
+# are evicted first (oldest first, one at a time across all groups).
 # EOSTRATA_STORE_QUOTA_MB=0
+
+# Eviction headroom — MB to keep free inside the quota before each download.
+# Recommended: ~10% of quota. Ignored if >= quota.
+# EOSTRATA_STORE_EVICTION_BUFFER_MB=0
+
+# Access tracking — set to false if last_access should reflect ingestion time only.
+# EOSTRATA_TRACK_ACCESS=true
 
 # Bounding box (west, south, east, north) in EPSG:4326
 # Example below covers Nigeria
@@ -73,6 +81,23 @@ EOSTRATA_BBOX_NORTH=14.0
 ```
 
 > **Tip** — keep the bounding box as small as your use case allows. Clipping to your area of interest significantly reduces storage and processing time.
+
+### Storage model and cache eviction
+
+Each dataset is stored as a single Zarr group containing **all its timestamps in one array** (e.g. `worldpop/nga` holds every ingested year as a time step). This layout is deliberately chosen to make temporal aggregation fast: computing a mean, anomaly, or any other reduction over a date range is a single array operation with no cross-file joins.
+
+**Cache eviction works at timestamp granularity**: when the store exceeds the configured quota before a new download, eostrata removes individual timestamps — oldest-accessed first — across all groups until the store fits within the quota. Removing a timestamp requires rebuilding the group in a temporary directory and atomically swapping it into place, so eviction I/O scales with the number of remaining timestamps in the group, not just the one being removed.
+
+**Eviction headroom** — set `EOSTRATA_STORE_EVICTION_BUFFER_MB` to keep a buffer free inside the quota before each download (recommended: ~10% of quota). If quota is 10 000 MB and buffer is 1 000 MB, eviction runs until the store is at or below 9 000 MB.
+
+**Last-access tracking** — filesystem `atime` is unreliable on most Linux mounts (`relatime`, `noatime`). eostrata instead maintains one sentinel file per timestamp inside a `.eostrata_access/` directory within each group. The sentinel is touched (debounced to once per minute) whenever that timestamp is accessed via tile serving or zonal statistics. The sentinel's modification time determines eviction order.
+
+Set `EOSTRATA_TRACK_ACCESS=false` to disable this — last-access time will then reflect the ingestion timestamp only, which is useful if you want eviction order to match ingest order rather than recent use.
+
+Practically this means:
+- A timestamp that was ingested but never served via tiles or zonal stats shows **"never read"** in `eostrata list` — it is the first eviction candidate.
+- A timestamp that is being actively served will not be evicted as long as it continues to receive requests within the debounce window.
+- You can inspect per-timestamp last-access times and sizes at any time via `eostrata list` or `GET /store-usage`.
 
 ---
 
@@ -91,17 +116,19 @@ Raw files are cached in `data/raw/` and reused on subsequent runs. Check what is
 uv run eostrata list
 ```
 
-This shows each Zarr group with its size, total store usage, and quota if one is configured:
+This shows each Zarr group with its size, last-access time, total store usage, and quota if one is configured:
 
 ```
 Zarr store: data/zarr  [142.3 MB / 10000 MB (1%)]
-┌───────────────┬──────────┐
-│ Group         │ Size     │
-├───────────────┼──────────┤
-│ chirps/global │  89.4 MB │
-│ worldpop/nga  │  52.9 MB │
-└───────────────┴──────────┘
+┌───────────────┬──────────┬──────────────────────┐
+│ Group         │ Size     │ Last accessed        │
+├───────────────┼──────────┼──────────────────────┤
+│ chirps/global │  89.4 MB │ 2026-03-27 09:12 UTC │
+│ worldpop/nga  │  52.9 MB │ never read           │
+└───────────────┴──────────┴──────────────────────┘
 ```
+
+"Never read" means the group was ingested but has never been opened for tile serving or zonal statistics — it is the first eviction candidate if quota is exceeded.
 
 ---
 
@@ -463,7 +490,7 @@ Options:
   --year INTEGER          Single year (default: latest available)
   --years TEXT            Multiple years, comma-separated: 2022,2023
   --month INTEGER         Single month 1-12 (default: latest available)
-  --months TEXT           Multiple months, comma-separated: 1,2,3
+  --months TEXT           Multiple months, comma-separated: 1,2,3 or ALL
   --zarr-root PATH        Override Zarr store root
   --raw-dir PATH          Override raw download directory
   --catalog-path PATH     Override catalog.json path
@@ -479,7 +506,7 @@ Options:
   --year INTEGER          Single year (default: latest available)
   --years TEXT            Multiple years, comma-separated: 2022,2023
   --month INTEGER         Single month 1-12 (default: latest available)
-  --months TEXT           Months to fetch, comma-separated: 1,2,3 (default: latest available)
+  --months TEXT           Months to fetch, comma-separated: 1,2,3 or ALL (default: latest available)
   --zarr-root PATH        Override Zarr store root
   --raw-dir PATH          Override raw download directory
   --catalog-path PATH     Override catalog.json path

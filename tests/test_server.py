@@ -131,6 +131,14 @@ class TestMapViewer:
         assert "worldpop" in resp.text
         assert "viridis" in resp.text
 
+    def test_ingest_tab_present(self, client):
+        resp = client.get("/map")
+        assert resp.status_code == 200
+        assert "tab-ingest-content" in resp.text
+        assert "startIngest" in resp.text
+        assert "loadJobs" in resp.text
+        assert "rebuildCatalog" in resp.text
+
 
 class TestDynamicOpenAPI:
     def test_openapi_schema_accessible(self, client):
@@ -215,6 +223,94 @@ class TestCollections:
             data = c.get("/collections").json()
         coll_ids = [c["id"] for c in data["collections"]]
         assert "worldpop" in coll_ids
+
+
+class TestStoreUsage:
+    def test_status_200(self, client):
+        assert client.get("/store-usage").status_code == 200
+
+    def test_unlimited_when_quota_zero(self, tmp_path):
+        mock_settings = MagicMock()
+        mock_settings.store_quota_mb = 0
+        mock_settings.zarr_root = tmp_path / "zarr"
+
+        from eostrata.server import app
+
+        with patch("eostrata.server.settings", mock_settings), TestClient(app) as c:
+            data = c.get("/store-usage").json()
+        assert data["quota_unlimited"] is True
+        assert data["used_pct"] is None
+        assert data["used_mb"] >= 0.0
+
+    def test_quota_set_returns_percent(self, tmp_path):
+        mock_settings = MagicMock()
+        mock_settings.store_quota_mb = 1000
+        mock_settings.zarr_root = tmp_path / "zarr"
+
+        from eostrata.server import app
+
+        with (
+            patch("eostrata.server.settings", mock_settings),
+            patch("eostrata.cache.store_size_mb", return_value=250.0),
+            TestClient(app) as c,
+        ):
+            data = c.get("/store-usage").json()
+        assert data["quota_unlimited"] is False
+        assert data["quota_mb"] == 1000
+        assert data["used_pct"] == 25.0
+
+    def test_groups_field_present(self, client):
+        data = client.get("/store-usage").json()
+        assert "groups" in data
+        assert isinstance(data["groups"], list)
+
+    def test_groups_include_timestamps(self, tmp_path):
+        import numpy as np
+        import xarray as xr
+
+        zarr_root = tmp_path / "zarr"
+        times = np.array([np.datetime64("2020-01-01"), np.datetime64("2021-01-01")])
+        ds = xr.Dataset({"v": (("time", "y", "x"), np.zeros((2, 4, 4)))}, coords={"time": times})
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
+
+        mock_settings = MagicMock()
+        mock_settings.store_quota_mb = 0
+        mock_settings.zarr_root = zarr_root
+
+        from eostrata.server import app
+
+        with patch("eostrata.server.settings", mock_settings), TestClient(app) as c:
+            data = c.get("/store-usage").json()
+        assert len(data["groups"]) == 1
+        g = data["groups"][0]
+        assert g["group"] == "worldpop/nga"
+        assert g["size_mb"] >= 0
+        assert "timestamps" in g
+        assert len(g["timestamps"]) == 2
+        t = g["timestamps"][0]
+        assert "datetime" in t
+        assert "size_mb" in t
+        assert "last_accessed" in t
+
+    def test_group_without_time_dimension_excluded(self, tmp_path):
+        """A Zarr group with no time dimension should be skipped in the response."""
+        import numpy as np
+        import xarray as xr
+
+        zarr_root = tmp_path / "zarr"
+        # Write a group with no time dimension
+        ds = xr.Dataset({"v": (("y", "x"), np.zeros((4, 4)))})
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
+
+        mock_settings = MagicMock()
+        mock_settings.store_quota_mb = 0
+        mock_settings.zarr_root = zarr_root
+
+        from eostrata.server import app
+
+        with patch("eostrata.server.settings", mock_settings), TestClient(app) as c:
+            data = c.get("/store-usage").json()
+        assert data["groups"] == []
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -381,3 +477,30 @@ class TestOpenAPIEdgeCases:
             "/collections/{collection_id}/tiles/{tileMatrixSetId}/{z}/{x}/{y}"
         ]["get"]
         assert "parameters" in get_op
+
+
+# ── RFC 7807 error handlers ───────────────────────────────────────────────────
+
+
+class TestOGCErrorHandlers:
+    def test_404_returns_problem_details(self, client):
+        resp = client.get("/does-not-exist")
+        assert resp.status_code == 404
+        data = resp.json()
+        assert data["type"] == "about:blank"
+        assert data["status"] == 404
+        assert data["title"] == "Not Found"
+        assert "detail" in data
+
+    def test_validation_error_returns_problem_details(self, client):
+        # POST to ingest with invalid body triggers RequestValidationError
+        resp = client.post(
+            "/processes/ingest/execution",
+            json={"inputs": {"source": "worldpop"}},  # missing iso3
+        )
+        assert resp.status_code == 422
+        data = resp.json()
+        assert data["type"] == "about:blank"
+        assert data["status"] == 422
+        assert data["title"] == "Unprocessable Content"
+        assert "errors" in data

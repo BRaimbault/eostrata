@@ -45,6 +45,20 @@ class Settings(BaseSettings):
     # Maximum size of the Zarr store in megabytes.  0 means unlimited.
     store_quota_mb: float = 0.0
 
+    # Optional headroom to keep free inside the quota before a new download.
+    # Recommended: ~10% of quota.  Ignored if it equals or exceeds the quota.
+    # Example: quota=10000, buffer=1000 → evict until store ≤ 9000 MB.
+    store_eviction_buffer_mb: float = 0.0
+
+    # Whether to update per-timestamp access sentinels on tile/zonal-stats requests.
+    # When False, last_access reflects the ingestion time only.
+    track_access: bool = True
+
+    # ── Logging ───────────────────────────────────────────────────────────────
+    # Log file path. Rotates daily; 30 days of history kept automatically.
+    # Set to empty string to disable file logging.
+    log_file: str = "data/eostrata.log"
+
     # ── WorldPop ──────────────────────────────────────────────────────────────
     worldpop_base_url: str = "https://data.worldpop.org/GIS/Population/Global_2000_2020"
     worldpop_resolution: str = "1km"

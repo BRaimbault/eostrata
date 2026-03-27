@@ -123,6 +123,20 @@ def geotiff_to_zarr(
     group_exists = (zarr_root / zarr_group).exists()
 
     if group_exists and time_coord is not None:
+        # Check whether this timestamp is already in the store — skip if so
+        try:
+            existing = xr.open_zarr(store_path, group=zarr_group, consolidated=False)
+            if "time" in existing and time_coord in existing["time"].values:
+                logger.info(
+                    "Timestamp %s already exists in '%s' — skipping duplicate write",
+                    time_coord,
+                    zarr_group,
+                )
+                return ds
+        except Exception:
+            logger.debug(
+                "Could not read existing Zarr group '%s', proceeding with append", zarr_group
+            )
         # Append new timestep along the time dimension
         logger.info("Appending to existing Zarr dataset '%s'", zarr_group)
         ds.to_zarr(store_path, group=zarr_group, mode="a", append_dim="time", consolidated=True)

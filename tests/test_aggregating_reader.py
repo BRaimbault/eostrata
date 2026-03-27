@@ -123,6 +123,27 @@ class TestAggregatingReader:
         assert "time" not in reader.input.dims
         assert float(reader.input.mean()) == pytest.approx(0.5)
 
+    def test_valid_time_coord_renamed_to_time(self, tmp_path):
+        """AggregatingReader renames valid_time → time in __attrs_post_init__ (line 190)."""
+        zarr_root = tmp_path / "zarr"
+        times = np.array([np.datetime64("2020-01-01")], dtype="datetime64[ns]")
+        data = np.ones((1, 8, 8), dtype="float32") * 42.0
+        ds = xr.Dataset(
+            {"t2m": (("valid_time", "y", "x"), data)},
+            coords={
+                "valid_time": times,
+                "y": np.linspace(14.0, 4.0, 8),
+                "x": np.linspace(2.0, 15.0, 8),
+            },
+        )
+        ds.to_zarr(str(zarr_root), group="era5/t2m", mode="w", consolidated=True)
+
+        reader = AggregatingReader(str(zarr_root), variable="t2m", group="era5/t2m")
+        # After renaming valid_time → time and aggregating to last timestep,
+        # the result should be 2D with no time dimension
+        assert "time" not in reader.input.dims
+        assert float(reader.input.mean()) == pytest.approx(42.0)
+
     def test_get_variable_no_time_passthrough(self, tmp_path):
         zarr_root = tmp_path / "zarr"
         ds_2d = xr.Dataset(

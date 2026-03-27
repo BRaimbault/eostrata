@@ -5,6 +5,18 @@ e.g. ``worldpop/nga`` or ``chirps/global``).  When the store exceeds the
 configured quota, the least-recently-accessed groups are removed until the
 store fits within the quota again.
 
+Last-access tracking
+--------------------
+File-system ``atime`` (access time) is unreliable — many Linux mounts use
+``relatime`` or ``noatime``, and it is never updated on reads via ``mmap`` or
+memory-mapped Zarr stores.  Instead, eostrata maintains a lightweight sentinel
+file named ``.eostrata_accessed`` inside each Zarr group directory.  The
+sentinel is touched (mtime updated) every time a group is opened for reading
+— either during tile serving (``AggregatingReader``) or during a zonal-stats
+request (``_load_array``).  Since ``list_groups`` uses the *maximum* mtime of
+all files in a group directory, the sentinel's mtime is automatically used as
+the "last access" timestamp, giving a correct LRU order.
+
 Configuration
 -------------
 Add to your .env file (all sizes in megabytes):
@@ -13,7 +25,10 @@ Add to your .env file (all sizes in megabytes):
 
 Public API
 ----------
-    from eostrata.cache import check_and_evict, store_size_mb, list_groups
+    from eostrata.cache import check_and_evict, record_access, store_size_mb, list_groups
+
+    # Record that a group was just read (called automatically on tile/stats requests):
+    record_access(zarr_root, "worldpop/nga")
 
     # Before a download, ensure there is room:
     check_and_evict(zarr_root, required_mb=500)
@@ -33,6 +48,32 @@ logger = logging.getLogger(__name__)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+_ACCESSED_SENTINEL = ".eostrata_accessed"
+_DEBOUNCE_S = 60  # minimum seconds between sentinel touches for the same group
+
+
+def record_access(zarr_root: Path, group_path: str) -> None:
+    """Touch a sentinel file inside *group_path* to record the access time.
+
+    The sentinel's mtime is picked up by ``list_groups`` as the last-access
+    timestamp for LRU eviction, because ``list_groups`` uses the maximum mtime
+    of all files in the group directory.  This avoids the unreliable filesystem
+    ``atime`` (disabled on many Linux mounts).
+
+    Calls within ``_DEBOUNCE_S`` seconds of the previous touch are skipped to
+    avoid unnecessary write chatter on tile-heavy workloads.
+
+    Errors are silently logged so that a read-only filesystem never breaks a
+    tile or zonal-stats request.
+    """
+    sentinel = Path(zarr_root) / group_path / _ACCESSED_SENTINEL
+    try:
+        if sentinel.exists() and time.time() - sentinel.stat().st_mtime < _DEBOUNCE_S:
+            return
+        sentinel.touch()
+    except OSError:
+        logger.debug("Could not update access sentinel for group '%s'", group_path)
 
 
 def store_size_mb(zarr_root: Path) -> float:

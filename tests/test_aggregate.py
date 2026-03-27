@@ -163,3 +163,23 @@ class TestApplyTemporalAggregation:
             agg="mean",
         )
         assert float(result.mean()) == pytest.approx(2020.5)
+
+    def test_non_monotonic_time_is_sorted(self):
+        """Non-monotonic time axis is sorted before slicing (line 107)."""
+        times = np.array(
+            [np.datetime64("2022-01-01"), np.datetime64("2020-01-01"), np.datetime64("2021-01-01")]
+        )
+        data = np.stack([np.full((4, 4), float(y), dtype="float32") for y in [2022, 2020, 2021]])
+        da = xr.DataArray(
+            data,
+            dims=("time", "y", "x"),
+            coords={"time": times, "y": np.arange(4), "x": np.arange(4)},
+        )
+        result = apply_temporal_aggregation(da, datetime_str="2020-01-01/2021-01-01", agg="mean")
+        assert float(result.mean()) == pytest.approx(2020.5)
+
+    def test_open_end_interval_uses_nearest(self):
+        """Open-end interval '2021-01-01/' → t0 set, t1=None → nearest match (line 124)."""
+        da = _make_da([2020, 2021, 2022])
+        result = apply_temporal_aggregation(da, datetime_str="2021-01-01/")
+        assert float(result.mean()) == pytest.approx(2021.0)

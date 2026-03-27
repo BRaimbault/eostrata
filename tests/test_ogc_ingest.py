@@ -7,6 +7,7 @@ from concurrent.futures import Future
 from contextlib import ExitStack
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
@@ -124,15 +125,15 @@ class TestInputValidation:
 
 
 class TestWorldPopExecution:
-    def test_returns_202_with_job_id(self, client, sync_executor):
+    def test_returns_201_with_job_id(self, client, sync_executor):
         with patch("eostrata.ingestion.run_worldpop_ingest"):
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "NGA"}},
             )
-        assert resp.status_code == 202
+        assert resp.status_code == 201
         data = resp.json()
-        assert "job_id" in data
+        assert "jobID" in data
         assert any("/processes/jobs/" in link["href"] for link in data["links"])
 
     def test_success_path(self, client, sync_executor):
@@ -141,13 +142,13 @@ class TestWorldPopExecution:
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "NGA", "years": [2022]}},
             )
-        job_id = resp.json()["job_id"]
+        job_id = resp.json()["jobID"]
         kw = mock_fn.call_args.kwargs
         assert kw["iso3"] == "NGA"
         assert kw["years"] == [2022]
 
         poll = client.get(f"/processes/jobs/{job_id}")
-        assert poll.json()["status"] == "succeeded"
+        assert poll.json()["status"] == "successful"
 
     def test_failure_path(self, client, sync_executor):
         with patch(
@@ -157,7 +158,7 @@ class TestWorldPopExecution:
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "NGA"}},
             )
-        poll = client.get(f"/processes/jobs/{resp.json()['job_id']}")
+        poll = client.get(f"/processes/jobs/{resp.json()['jobID']}")
         data = poll.json()
         assert data["status"] == "failed"
         assert "network error" in data["error"]
@@ -177,7 +178,7 @@ class TestWorldPopExecution:
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "nga"}},
             )
-        job = client.get(f"/processes/jobs/{resp.json()['job_id']}").json()
+        job = client.get(f"/processes/jobs/{resp.json()['jobID']}").json()
         assert job["params"]["iso3"] == "NGA"
 
 
@@ -185,10 +186,10 @@ class TestWorldPopExecution:
 
 
 class TestCHIRPSExecution:
-    def test_returns_202(self, client, sync_executor):
+    def test_returns_201(self, client, sync_executor):
         with patch("eostrata.ingestion.run_chirps_ingest"):
             resp = client.post("/processes/ingest/execution", json={"inputs": {"source": "chirps"}})
-        assert resp.status_code == 202
+        assert resp.status_code == 201
 
     def test_success_path(self, client, sync_executor):
         with patch("eostrata.ingestion.run_chirps_ingest") as mock_fn:
@@ -200,26 +201,26 @@ class TestCHIRPSExecution:
         assert kw["years"] == [2023]
         assert kw["months"] == [6]
         assert (
-            client.get(f"/processes/jobs/{resp.json()['job_id']}").json()["status"] == "succeeded"
+            client.get(f"/processes/jobs/{resp.json()['jobID']}").json()["status"] == "successful"
         )
 
     def test_failure_path(self, client, sync_executor):
         with patch("eostrata.ingestion.run_chirps_ingest", side_effect=OSError("disk full")):
             resp = client.post("/processes/ingest/execution", json={"inputs": {"source": "chirps"}})
-        assert client.get(f"/processes/jobs/{resp.json()['job_id']}").json()["status"] == "failed"
+        assert client.get(f"/processes/jobs/{resp.json()['jobID']}").json()["status"] == "failed"
 
 
 # ── CDS execution ─────────────────────────────────────────────────────────────
 
 
 class TestCDSExecution:
-    def test_returns_202(self, client, sync_executor):
+    def test_returns_201(self, client, sync_executor):
         with patch("eostrata.ingestion.run_cds_ingest"):
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "cds", "variable": "t2m"}},
             )
-        assert resp.status_code == 202
+        assert resp.status_code == 201
 
     def test_success_path(self, client, sync_executor):
         with patch("eostrata.ingestion.run_cds_ingest") as mock_fn:
@@ -234,13 +235,13 @@ class TestCDSExecution:
         assert kw["years"] == [2023]
         assert kw["months"] == [1, 2]
         assert (
-            client.get(f"/processes/jobs/{resp.json()['job_id']}").json()["status"] == "succeeded"
+            client.get(f"/processes/jobs/{resp.json()['jobID']}").json()["status"] == "successful"
         )
 
     def test_failure_path(self, client, sync_executor):
         with patch("eostrata.ingestion.run_cds_ingest", side_effect=RuntimeError("no credentials")):
             resp = client.post("/processes/ingest/execution", json={"inputs": {"source": "cds"}})
-        assert client.get(f"/processes/jobs/{resp.json()['job_id']}").json()["status"] == "failed"
+        assert client.get(f"/processes/jobs/{resp.json()['jobID']}").json()["status"] == "failed"
 
     def test_default_variable_is_t2m(self, client, sync_executor):
         with patch("eostrata.ingestion.run_cds_ingest") as mock_fn:
@@ -256,7 +257,9 @@ class TestJobPolling:
         assert client.get("/processes/jobs/doesnotexist").status_code == 404
 
     def test_list_jobs_empty(self, client):
-        assert client.get("/processes/jobs").json() == {"jobs": []}
+        data = client.get("/processes/jobs").json()
+        assert data["jobs"] == []
+        assert any(link["rel"] == "self" for link in data["links"])
 
     def test_list_jobs_after_submissions(self, client, sync_executor):
         with patch("eostrata.ingestion.run_worldpop_ingest"):
@@ -276,8 +279,8 @@ class TestJobPolling:
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "NGA"}},
             )
-        job = client.get(f"/processes/jobs/{resp.json()['job_id']}").json()
-        for key in ("job_id", "source", "params", "status", "created_at", "updated_at", "error"):
+        job = client.get(f"/processes/jobs/{resp.json()['jobID']}").json()
+        for key in ("jobID", "source", "params", "status", "created", "updated", "error"):
             assert key in job
 
     def test_params_stored_in_job(self, client, sync_executor):
@@ -286,7 +289,7 @@ class TestJobPolling:
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "ETH", "years": [2021]}},
             )
-        job = client.get(f"/processes/jobs/{resp.json()['job_id']}").json()
+        job = client.get(f"/processes/jobs/{resp.json()['jobID']}").json()
         assert job["params"]["iso3"] == "ETH"
         assert job["params"]["years"] == [2021]
 
@@ -303,7 +306,7 @@ class TestConcurrency:
                     "/processes/ingest/execution",
                     json={"inputs": {"source": "worldpop", "iso3": "NGA"}},
                 )
-                job_ids.append(resp.json()["job_id"])
+                job_ids.append(resp.json()["jobID"])
         assert len(set(job_ids)) == 10
 
 
@@ -499,3 +502,224 @@ class TestIngestionFunctions:
             )
 
         mock_save.assert_called_once()
+
+
+# ── Rebuild-catalog process description ───────────────────────────────────────
+
+
+class TestRebuildCatalogDescription:
+    def test_list_includes_rebuild_catalog(self, client):
+        data = client.get("/processes").json()
+        ids = {p["id"] for p in data["processes"]}
+        assert "rebuild-catalog" in ids
+
+    def test_describe_rebuild_catalog(self, client):
+        resp = client.get("/processes/rebuild-catalog")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["id"] == "rebuild-catalog"
+        assert "sync-execute" in data["jobControlOptions"]
+
+
+# ── rebuild_catalog_from_zarr unit tests ──────────────────────────────────────
+
+_TS_2022 = np.array(["2022-01-01"], dtype="datetime64[ns]")
+_TS_MONTHLY = np.array(["2023-01-01", "2023-02-01", "2023-03-01"], dtype="datetime64[ns]")
+
+
+def _mock_zarr_ds(times, x_range=(10.0, 20.0), y_range=(0.0, 10.0)):
+    """Return a lightweight mock xarray Dataset for rebuild-catalog tests."""
+    ds = MagicMock()
+    ds.time.values = times
+    ds.x.min.return_value = x_range[0]
+    ds.x.max.return_value = x_range[1]
+    ds.y.min.return_value = y_range[0]
+    ds.y.max.return_value = y_range[1]
+    return ds
+
+
+class TestRebuildCatalogFromZarr:
+    def test_missing_zarr_root_returns_empty(self, tmp_path):
+        from eostrata.ingestion import rebuild_catalog_from_zarr
+
+        results = rebuild_catalog_from_zarr(
+            zarr_root=tmp_path / "nonexistent",
+            catalog_path=tmp_path / "catalog.json",
+        )
+        assert results == {}
+
+    def test_worldpop_group_registered(self, tmp_path):
+        from eostrata.ingestion import rebuild_catalog_from_zarr
+
+        zarr_root = tmp_path / "zarr"
+        zarr_root.mkdir()
+        catalog_path = tmp_path / "catalog.json"
+        mock_ds = _mock_zarr_ds(_TS_2022)
+
+        with (
+            patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 10.0, 0.0)]),
+            patch("xarray.open_zarr", return_value=mock_ds),
+            patch("eostrata.catalog.save") as mock_save,
+        ):
+            results = rebuild_catalog_from_zarr(zarr_root=zarr_root, catalog_path=catalog_path)
+
+        assert results == {"worldpop/nga": 1}
+        mock_save.assert_called_once()
+
+    def test_chirps_group_registered(self, tmp_path):
+        from eostrata.ingestion import rebuild_catalog_from_zarr
+
+        zarr_root = tmp_path / "zarr"
+        zarr_root.mkdir()
+        catalog_path = tmp_path / "catalog.json"
+        mock_ds = _mock_zarr_ds(_TS_MONTHLY)
+
+        with (
+            patch("eostrata.cache.list_groups", return_value=[("chirps/global", 5.0, 0.0)]),
+            patch("xarray.open_zarr", return_value=mock_ds),
+            patch("eostrata.catalog.save"),
+        ):
+            results = rebuild_catalog_from_zarr(zarr_root=zarr_root, catalog_path=catalog_path)
+
+        assert results == {"chirps/global": 3}
+
+    def test_era5_group_registered(self, tmp_path):
+        from eostrata.ingestion import rebuild_catalog_from_zarr
+
+        zarr_root = tmp_path / "zarr"
+        zarr_root.mkdir()
+        catalog_path = tmp_path / "catalog.json"
+        mock_ds = _mock_zarr_ds(_TS_MONTHLY)
+
+        with (
+            patch("eostrata.cache.list_groups", return_value=[("era5/t2m", 8.0, 0.0)]),
+            patch("xarray.open_zarr", return_value=mock_ds),
+            patch("eostrata.catalog.save"),
+        ):
+            results = rebuild_catalog_from_zarr(zarr_root=zarr_root, catalog_path=catalog_path)
+
+        assert results == {"era5/t2m": 3}
+
+    def test_invalid_group_path_depth_skipped(self, tmp_path):
+        """Group paths with != 2 parts are skipped with a warning (lines 187-188)."""
+        from eostrata.ingestion import rebuild_catalog_from_zarr
+
+        zarr_root = tmp_path / "zarr"
+        zarr_root.mkdir()
+        catalog_path = tmp_path / "catalog.json"
+
+        with (
+            patch(
+                "eostrata.cache.list_groups",
+                return_value=[("singlepart", 5.0, 0.0), ("a/b/c", 3.0, 0.0)],
+            ),
+            patch("eostrata.catalog.save"),
+        ):
+            results = rebuild_catalog_from_zarr(zarr_root=zarr_root, catalog_path=catalog_path)
+
+        assert results == {}
+
+    def test_unknown_source_type_skipped(self, tmp_path):
+        from eostrata.ingestion import rebuild_catalog_from_zarr
+
+        zarr_root = tmp_path / "zarr"
+        zarr_root.mkdir()
+        catalog_path = tmp_path / "catalog.json"
+        mock_ds = _mock_zarr_ds(_TS_2022)
+
+        with (
+            patch(
+                "eostrata.cache.list_groups",
+                return_value=[("sentinel2/tile", 5.0, 0.0)],
+            ),
+            patch("xarray.open_zarr", return_value=mock_ds),
+            patch("eostrata.catalog.save"),
+        ):
+            results = rebuild_catalog_from_zarr(zarr_root=zarr_root, catalog_path=catalog_path)
+
+        assert results == {}
+
+    def test_multiple_groups_combined(self, tmp_path):
+        from eostrata.ingestion import rebuild_catalog_from_zarr
+
+        zarr_root = tmp_path / "zarr"
+        zarr_root.mkdir()
+        catalog_path = tmp_path / "catalog.json"
+
+        def _open_zarr(store, group, **kwargs):
+            if "worldpop" in group:
+                return _mock_zarr_ds(_TS_2022)
+            return _mock_zarr_ds(_TS_MONTHLY)
+
+        groups = [
+            ("worldpop/nga", 10.0, 0.0),
+            ("chirps/global", 5.0, 0.0),
+            ("era5/t2m", 8.0, 0.0),
+        ]
+        with (
+            patch("eostrata.cache.list_groups", return_value=groups),
+            patch("xarray.open_zarr", side_effect=_open_zarr),
+            patch("eostrata.catalog.save"),
+        ):
+            results = rebuild_catalog_from_zarr(zarr_root=zarr_root, catalog_path=catalog_path)
+
+        assert results == {"worldpop/nga": 1, "chirps/global": 3, "era5/t2m": 3}
+
+    def test_bad_group_coords_skipped(self, tmp_path):
+        from eostrata.ingestion import rebuild_catalog_from_zarr
+
+        zarr_root = tmp_path / "zarr"
+        zarr_root.mkdir()
+        catalog_path = tmp_path / "catalog.json"
+
+        bad_ds = MagicMock()
+        bad_ds.time.values = _TS_2022
+        bad_ds.x.min.side_effect = KeyError("x")
+
+        with (
+            patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 10.0, 0.0)]),
+            patch("xarray.open_zarr", return_value=bad_ds),
+            patch("eostrata.catalog.save"),
+        ):
+            results = rebuild_catalog_from_zarr(zarr_root=zarr_root, catalog_path=catalog_path)
+
+        assert results == {}
+
+    def test_zarr_open_error_skipped(self, tmp_path):
+        from eostrata.ingestion import rebuild_catalog_from_zarr
+
+        zarr_root = tmp_path / "zarr"
+        zarr_root.mkdir()
+        catalog_path = tmp_path / "catalog.json"
+
+        with (
+            patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 10.0, 0.0)]),
+            patch("xarray.open_zarr", side_effect=OSError("corrupt")),
+            patch("eostrata.catalog.save"),
+        ):
+            results = rebuild_catalog_from_zarr(zarr_root=zarr_root, catalog_path=catalog_path)
+
+        assert results == {}
+
+
+# ── Rebuild-catalog API endpoint ─────────────────────────────────────────────
+
+
+class TestRebuildCatalogAPI:
+    def test_post_rebuild_catalog_empty_store(self, client, tmp_path):
+        resp = client.post("/processes/rebuild-catalog/execution")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "succeeded"
+        assert data["groups"] == {}
+        assert data["total_timestamps"] == 0
+
+    def test_post_rebuild_catalog_with_groups(self, client):
+        mock_results = {"worldpop/nga": 2, "chirps/global": 6}
+        with patch("eostrata.ingestion.rebuild_catalog_from_zarr", return_value=mock_results):
+            resp = client.post("/processes/rebuild-catalog/execution")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "succeeded"
+        assert data["groups"] == mock_results
+        assert data["total_timestamps"] == 8

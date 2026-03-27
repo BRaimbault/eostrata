@@ -25,12 +25,14 @@ import logging
 from contextlib import asynccontextmanager
 
 import pystac
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from stac_fastapi.api.app import StacApi
 from stac_fastapi.types.config import ApiSettings
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from titiler.core.errors import DEFAULT_STATUS_CODES, add_exception_handlers
 from titiler.xarray.extensions import VariablesExtension
 from titiler.xarray.factory import TilerFactory
@@ -168,6 +170,60 @@ app.include_router(ingest_router)
 
 add_exception_handlers(app, DEFAULT_STATUS_CODES)
 
+# ── RFC 7807 Problem Details error handlers ───────────────────────────────────
+
+_HTTP_STATUS_TITLES = {
+    400: "Bad Request",
+    401: "Unauthorized",
+    403: "Forbidden",
+    404: "Not Found",
+    405: "Method Not Allowed",
+    409: "Conflict",
+    422: "Unprocessable Content",
+    500: "Internal Server Error",
+}
+
+
+@app.exception_handler(StarletteHTTPException)
+async def ogc_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "type": "about:blank",
+            "title": _HTTP_STATUS_TITLES.get(exc.status_code, "Error"),
+            "status": exc.status_code,
+            "detail": exc.detail,
+        },
+    )
+
+
+def _serialisable_errors(exc: RequestValidationError) -> list:
+    result = []
+    for err in exc.errors():
+        safe = {}
+        for k, v in err.items():
+            if k == "ctx":
+                safe[k] = {ck: str(cv) for ck, cv in v.items()}
+            else:
+                safe[k] = v
+        result.append(safe)
+    return result
+
+
+@app.exception_handler(RequestValidationError)
+async def ogc_validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=422,
+        content={
+            "type": "about:blank",
+            "title": "Unprocessable Content",
+            "status": 422,
+            "detail": "Request validation failed.",
+            "errors": _serialisable_errors(exc),
+        },
+    )
+
+
 # ── OGC Common ────────────────────────────────────────────────────────────────
 
 
@@ -230,7 +286,10 @@ def collections() -> dict:
                     ],
                 }
             )
-    return {"collections": result, "links": []}
+    return {
+        "collections": result,
+        "links": [{"rel": "self", "href": "/collections", "type": "application/json"}],
+    }
 
 
 @app.get(
@@ -333,6 +392,39 @@ def examples() -> dict:
     return {"items": items_out}
 
 
+@app.get("/store-usage", tags=["OGC Common"], summary="Zarr store disk usage")
+def store_usage() -> dict:
+    """Return current on-disk usage of the Zarr store, quota, and per-group breakdown.
+
+    ``groups`` is sorted oldest-first (i.e. eviction candidates first).
+    ``last_accessed`` is an ISO 8601 timestamp, or ``null`` if the group has
+    never been read via the tile or zonal-stats endpoints.
+    """
+    from datetime import UTC, datetime
+
+    from eostrata.cache import list_groups, store_size_mb
+
+    used_mb = store_size_mb(settings.zarr_root)
+    quota_mb = settings.store_quota_mb
+    groups = [
+        {
+            "group": g[0],
+            "size_mb": round(g[1], 2),
+            "last_accessed": datetime.fromtimestamp(g[2], tz=UTC).isoformat()
+            if g[2]
+            else None,
+        }
+        for g in list_groups(settings.zarr_root)
+    ]
+    return {
+        "used_mb": round(used_mb, 2),
+        "quota_mb": quota_mb,
+        "quota_unlimited": quota_mb <= 0,
+        "used_pct": round(used_mb / quota_mb * 100, 1) if quota_mb > 0 else None,
+        "groups": groups,
+    }
+
+
 # ── Map viewer ────────────────────────────────────────────────────────────────
 
 _MAP_HTML = """<!DOCTYPE html>
@@ -365,6 +457,25 @@ _MAP_HTML = """<!DOCTYPE html>
     #controls h3 {
       margin: 0 0 10px; font-size: 14px; font-weight: 600; color: #111827;
     }
+
+    /* Tab nav — proper tab appearance */
+    .tab-nav {
+      display: flex; gap: 3px; margin-bottom: 0;
+      border-bottom: 2px solid #2563eb;
+    }
+    .tab-nav button {
+      padding: 5px 12px; font-size: 12px; font-family: inherit;
+      color: #6b7280; border: 1px solid #d1d5db; border-bottom: none;
+      border-radius: 4px 4px 0 0; background: #f3f4f6;
+      cursor: pointer; transition: background 0.12s, color 0.12s;
+      margin-bottom: -2px; position: relative;
+    }
+    .tab-nav button.active {
+      background: #fff; color: #2563eb; font-weight: 600;
+      border-color: #d1d5db; border-bottom: 2px solid #fff;
+    }
+    .tab-nav button:not(.active):hover { background: #e5e7eb; color: #111827; }
+    .tab-panel { padding-top: 10px; }
 
     /* Labels — uppercase, xs size, secondary color */
     #controls label {
@@ -443,98 +554,353 @@ _MAP_HTML = """<!DOCTYPE html>
     .stat-label { color: #9ca3af; }
     .stat-value { font-weight: 600; color: #111827; }
     #stats-msg  { font-size: 11px; color: #9ca3af; margin-top: 4px; min-height: 14px; }
+
+    /* ── Ingest tab ─────────────────────────────────────────────────────── */
+    .btn {
+      display: block; width: 100%; margin-top: 8px; padding: 6px 10px;
+      font-size: 13px; font-family: inherit; font-weight: 500;
+      border: none; border-radius: 4px; cursor: pointer;
+      background: #2563eb; color: #fff; transition: background 0.12s;
+    }
+    .btn:hover:not(:disabled) { background: #1d4ed8; }
+    .btn:disabled { background: #93c5fd; cursor: not-allowed; }
+    .btn.secondary {
+      background: #f3f4f6; color: #374151; border: 1px solid #d1d5db;
+    }
+    .btn.secondary:hover:not(:disabled) { background: #e5e7eb; }
+
+    .ing-msg { font-size: 11px; margin-top: 6px; min-height: 14px; }
+    .ing-msg.ok  { color: #166534; }
+    .ing-msg.err { color: #991b1b; }
+    .ing-msg.dim { color: #9ca3af; }
+
+    /* Job list */
+    #jobs-list { margin-top: 6px; max-height: 200px; overflow-y: auto; }
+    .job-card {
+      border: 1px solid #e5e7eb; border-radius: 4px; padding: 6px 8px;
+      margin-bottom: 5px; font-size: 12px;
+    }
+    .job-card-header { display: flex; justify-content: space-between; align-items: center; }
+    .job-source { font-weight: 600; color: #111827; }
+    .job-id     { font-size: 10px; color: #9ca3af; margin-top: 2px;
+                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .job-time   { font-size: 10px; color: #9ca3af; margin-top: 1px; }
+    .job-error  { font-size: 10px; color: #991b1b; margin-top: 3px;
+                  white-space: pre-wrap; word-break: break-all; max-height: 60px;
+                  overflow-y: auto; }
+    .badge {
+      display: inline-block; padding: 1px 7px; border-radius: 9px;
+      font-size: 11px; font-weight: 500; white-space: nowrap;
+    }
+    .badge-running   { background: #dbeafe; color: #1e40af; }
+    .badge-succeeded { background: #dcfce7; color: #166534; }
+    .badge-failed    { background: #fee2e2; color: #991b1b; }
+
+    /* Ingest tab section headers */
+    .ing-section-hdr {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-top: 4px;
+    }
+    .ing-section-hdr span {
+      font-size: 11px; font-weight: 500; color: #6b7280;
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .ing-section-hdr button {
+      font-size: 11px; font-family: inherit; padding: 2px 8px;
+      border: 1px solid #d1d5db; border-radius: 4px; background: #f9fafb;
+      cursor: pointer; color: #374151;
+    }
+    .ing-section-hdr button:hover { background: #e5e7eb; }
+
+    /* ── Config tab ─────────────────────────────────────────────────────── */
+    .cfg-section { margin-bottom: 10px; }
+    .cfg-hdr {
+      font-size: 11px; font-weight: 500; color: #6b7280;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin-bottom: 5px;
+    }
+    .cfg-grid {
+      display: grid; grid-template-columns: auto 1fr; gap: 3px 10px;
+      font-size: 12px;
+    }
+    .cfg-key { color: #9ca3af; white-space: nowrap; }
+    .cfg-val { color: #111827; font-weight: 500; word-break: break-all; }
+    .cfg-path { font-family: monospace; font-size: 11px; font-weight: 400; }
+    #cfg-bbox-map {
+      width: 100%; height: 80px; margin-top: 6px; border-radius: 4px;
+      border: 1px solid #e5e7eb; background: #f9fafb;
+    }
   </style>
 </head>
 <body>
   <div id="map"></div>
   <div id="controls">
     <h3>eostrata viewer</h3>
-
-    <label>Collection</label>
-    <select id="sel-collection"><option value="">Loading…</option></select>
-
-    <label>Item</label>
-    <select id="sel-item"><option value="">—</option></select>
-
-    <label>Date mode</label>
-    <div class="date-mode-toggle">
-      <button id="btn-mode-single" class="active" onclick="setDateMode('single')">Single date</button>
-      <button id="btn-mode-interval" onclick="setDateMode('interval')">Interval</button>
+    <div class="tab-nav">
+      <button id="tab-btn-map" class="active" onclick="showTab('map')">Map</button>
+      <button id="tab-btn-ingest" onclick="showTab('ingest')">Ingest</button>
+      <button id="tab-btn-config" onclick="showTab('config')">Config</button>
     </div>
 
-    <div id="section-single">
-      <label>Date</label>
-      <select id="sel-datetime"><option value="">latest</option></select>
-    </div>
+    <!-- ── Map tab ──────────────────────────────────────────────────────── -->
+    <div id="tab-map-content" class="tab-panel">
+      <label>Collection</label>
+      <select id="sel-collection"><option value="">Loading…</option></select>
 
-    <div id="section-interval">
-      <div class="row-2">
-        <div>
-          <label>Start</label>
-          <input id="inp-start" type="date"/>
-        </div>
-        <div>
-          <label>End</label>
-          <input id="inp-end" type="date"/>
-        </div>
+      <label>Item</label>
+      <select id="sel-item"><option value="">—</option></select>
+
+      <label>Date mode</label>
+      <div class="date-mode-toggle">
+        <button id="btn-mode-single" class="active" onclick="setDateMode('single')">Single date</button>
+        <button id="btn-mode-interval" onclick="setDateMode('interval')">Interval</button>
       </div>
-      <label>Aggregation</label>
-      <select id="sel-agg">
-        <option value="mean">mean</option>
-        <option value="sum">sum</option>
-        <option value="min">min</option>
-        <option value="max">max</option>
-        <option value="anomaly">anomaly (deviation from baseline)</option>
-      </select>
-      <div id="section-baseline">
-        <hr class="section-divider"/>
+
+      <div id="section-single">
+        <label>Date</label>
+        <select id="sel-datetime"><option value="">latest</option></select>
+      </div>
+
+      <div id="section-interval">
         <div class="row-2">
           <div>
-            <label>Baseline start</label>
-            <input id="inp-baseline-start" type="date"/>
+            <label>Start</label>
+            <input id="inp-start" type="date"/>
           </div>
           <div>
-            <label>Baseline end</label>
-            <input id="inp-baseline-end" type="date"/>
+            <label>End</label>
+            <input id="inp-end" type="date"/>
+          </div>
+        </div>
+        <label>Aggregation</label>
+        <select id="sel-agg">
+          <option value="mean">mean</option>
+          <option value="sum">sum</option>
+          <option value="min">min</option>
+          <option value="max">max</option>
+          <option value="anomaly">anomaly (deviation from baseline)</option>
+        </select>
+        <div id="section-baseline">
+          <hr class="section-divider"/>
+          <div class="row-2">
+            <div>
+              <label>Baseline start</label>
+              <input id="inp-baseline-start" type="date"/>
+            </div>
+            <div>
+              <label>Baseline end</label>
+              <input id="inp-baseline-end" type="date"/>
+            </div>
           </div>
         </div>
       </div>
-    </div>
 
-    <hr class="section-divider"/>
-    <label>Colormap</label>
-    <select id="sel-colormap">
-      <option value="">default</option>
-      <option value="viridis">viridis</option>
-      <option value="plasma">plasma</option>
-      <option value="inferno">inferno</option>
-      <option value="magma">magma</option>
-      <option value="coolwarm">coolwarm</option>
-    </select>
-    <label>Rescale (min,max)</label>
-    <input id="inp-rescale" type="text" placeholder="e.g. 0,1000"/>
-    <label class="label-checkbox">
-      <input id="chk-autoscale" type="checkbox"/>
-      Auto-scale from stats
-    </label>
-
-    <div id="warning"></div>
-    <div id="status"></div>
-    <div id="stats-section">
       <hr class="section-divider"/>
-      <h4>Zonal stats — bbox</h4>
-      <div id="stats-grid"></div>
-      <div id="stats-msg"></div>
-    </div>
+      <label>Colormap</label>
+      <select id="sel-colormap">
+        <option value="">default</option>
+        <option value="viridis">viridis</option>
+        <option value="plasma">plasma</option>
+        <option value="inferno">inferno</option>
+        <option value="magma">magma</option>
+        <option value="coolwarm">coolwarm</option>
+      </select>
+      <label>Rescale (min,max)</label>
+      <input id="inp-rescale" type="text" placeholder="e.g. 0,1000"/>
+      <label class="label-checkbox">
+        <input id="chk-autoscale" type="checkbox"/>
+        Auto-scale from stats
+      </label>
+
+      <div id="warning"></div>
+      <div id="status"></div>
+      <div id="stats-section">
+        <hr class="section-divider"/>
+        <h4>Zonal stats — bbox</h4>
+        <div id="stats-grid"></div>
+        <div id="stats-msg"></div>
+      </div>
+    </div><!-- /tab-map-content -->
+
+    <!-- ── Ingest tab ────────────────────────────────────────────────────── -->
+    <div id="tab-ingest-content" class="tab-panel" style="display:none">
+
+      <!-- Start job form -->
+      <label>Source</label>
+      <select id="ing-source" onchange="onIngSourceChange()">
+        <option value="worldpop">worldpop — population rasters</option>
+        <option value="chirps">chirps — precipitation</option>
+        <option value="cds">cds — ERA5 reanalysis</option>
+      </select>
+
+      <div id="ing-iso3-row">
+        <label>ISO3 country code</label>
+        <input id="ing-iso3" type="text" placeholder="e.g. NGA" maxlength="3"
+               style="text-transform:uppercase"/>
+      </div>
+
+      <div id="ing-var-row" style="display:none">
+        <label>Variable</label>
+        <select id="ing-variable">
+          <option value="t2m">t2m — 2m temperature</option>
+          <option value="tp">tp — total precipitation</option>
+          <option value="u10">u10 — 10m u-wind</option>
+          <option value="v10">v10 — 10m v-wind</option>
+          <option value="sp">sp — surface pressure</option>
+        </select>
+      </div>
+
+      <label>Years (comma-separated, blank = latest)</label>
+      <input id="ing-years" type="text" placeholder="e.g. 2023,2024"/>
+
+      <div id="ing-months-row" style="display:none">
+        <label>Months (comma-separated, blank = latest)</label>
+        <input id="ing-months" type="text" placeholder="e.g. 1,2,3"/>
+      </div>
+
+      <button class="btn" id="btn-ingest" onclick="startIngest()">Start ingestion job</button>
+      <div id="ing-msg" class="ing-msg dim"></div>
+
+      <hr class="section-divider"/>
+
+      <!-- Jobs list -->
+      <div class="ing-section-hdr">
+        <span>Jobs</span>
+        <button onclick="loadJobs()">Refresh</button>
+      </div>
+      <div id="jobs-list"><span style="font-size:12px;color:#9ca3af">No jobs yet.</span></div>
+
+      <hr class="section-divider"/>
+
+      <!-- Catalogue tools -->
+      <div class="ing-section-hdr" style="margin-top:6px">
+        <span>Catalogue</span>
+      </div>
+      <button class="btn secondary" id="btn-rebuild" onclick="rebuildCatalog()">
+        Rebuild catalog from Zarr
+      </button>
+      <div id="rebuild-msg" class="ing-msg dim"></div>
+
+    </div><!-- /tab-ingest-content -->
+
+    <!-- ── Config tab ───────────────────────────────────────────────────── -->
+    <div id="tab-config-content" class="tab-panel" style="display:none">
+
+      <div class="cfg-section">
+        <div class="cfg-hdr">Bounding box</div>
+        <div class="cfg-grid">
+          <span class="cfg-key">West</span><span id="cfg-bbox-w" class="cfg-val"></span>
+          <span class="cfg-key">South</span><span id="cfg-bbox-s" class="cfg-val"></span>
+          <span class="cfg-key">East</span><span id="cfg-bbox-e" class="cfg-val"></span>
+          <span class="cfg-key">North</span><span id="cfg-bbox-n" class="cfg-val"></span>
+        </div>
+      </div>
+
+      <div class="cfg-section">
+        <div class="cfg-hdr">Storage</div>
+        <div class="cfg-grid">
+          <span class="cfg-key">Zarr root</span><span id="cfg-zarr-root" class="cfg-val cfg-path"></span>
+          <span class="cfg-key">Raw dir</span><span id="cfg-raw-dir" class="cfg-val cfg-path"></span>
+          <span class="cfg-key">Catalog</span><span id="cfg-catalog" class="cfg-val cfg-path"></span>
+        </div>
+      </div>
+
+      <div class="cfg-section">
+        <div class="cfg-hdr">Cache</div>
+        <div class="cfg-grid">
+          <span class="cfg-key">Used</span><span id="cfg-used" class="cfg-val"></span>
+          <span class="cfg-key">Quota</span><span id="cfg-quota" class="cfg-val"></span>
+        </div>
+        <div id="cfg-quota-bar-wrap" style="display:none;margin-top:8px">
+          <div style="background:#e5e7eb;border-radius:4px;height:10px;overflow:hidden">
+            <div id="cfg-quota-bar" style="height:100%;background:#2563eb;width:0%;transition:width .4s"></div>
+          </div>
+          <div id="cfg-quota-pct" style="font-size:11px;color:#6b7280;margin-top:3px;text-align:right"></div>
+        </div>
+        <div id="cfg-groups-wrap" style="display:none;margin-top:12px">
+          <table style="width:100%;border-collapse:collapse;font-size:12px">
+            <thead>
+              <tr style="color:#6b7280;text-align:left;border-bottom:1px solid #e5e7eb">
+                <th style="padding:4px 6px;font-weight:600">Group</th>
+                <th style="padding:4px 6px;font-weight:600;text-align:right">Size</th>
+                <th style="padding:4px 6px;font-weight:600;text-align:right">Last accessed</th>
+              </tr>
+            </thead>
+            <tbody id="cfg-groups-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- /tab-config-content -->
   </div>
   <script>
     const PRESELECT = __PRESELECT__;
+    const CONFIG    = __CONFIG__;
 
     const map = L.map('map').setView([5, 20], 4);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '\\u00a9 <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       opacity: 0.5
     }).addTo(map);
+
+    // Draw the configured bounding box on the map
+    (function drawBbox() {
+      const [w, s, e, n] = CONFIG.bbox;
+      const isWorld = w === -180 && s === -90 && e === 180 && n === 90;
+      if (isWorld) return; // skip trivial world bbox
+      L.rectangle([[s, w], [n, e]], {
+        color: '#2563eb', weight: 2, dashArray: '6 4', fill: false,
+      }).addTo(map).bindTooltip('Config bbox', {permanent: false});
+      map.fitBounds([[s, w], [n, e]], {padding: [20, 20]});
+    })();
+
+    // Populate config tab values
+    (function populateConfig() {
+      const [w, s, e, n] = CONFIG.bbox;
+      document.getElementById('cfg-bbox-w').textContent = w.toFixed(4) + '°';
+      document.getElementById('cfg-bbox-s').textContent = s.toFixed(4) + '°';
+      document.getElementById('cfg-bbox-e').textContent = e.toFixed(4) + '°';
+      document.getElementById('cfg-bbox-n').textContent = n.toFixed(4) + '°';
+      document.getElementById('cfg-zarr-root').textContent = CONFIG.zarr_root;
+      document.getElementById('cfg-raw-dir').textContent   = CONFIG.raw_dir;
+      document.getElementById('cfg-catalog').textContent   = CONFIG.catalog_path;
+      document.getElementById('cfg-quota').textContent =
+        CONFIG.quota_mb > 0 ? CONFIG.quota_mb.toLocaleString() + ' MB' : 'Unlimited';
+
+      fetch('/store-usage').then(r => r.json()).then(u => {
+        const fmtMb = mb => mb >= 1024
+          ? (mb / 1024).toFixed(2) + ' GB'
+          : mb.toFixed(1) + ' MB';
+        const fmtTs = iso => iso
+          ? new Date(iso).toLocaleString(undefined, {dateStyle:'short', timeStyle:'short'})
+          : '—';
+        document.getElementById('cfg-used').textContent = fmtMb(u.used_mb);
+        if (!u.quota_unlimited && u.used_pct !== null) {
+          const pct = Math.min(u.used_pct, 100);
+          const bar = document.getElementById('cfg-quota-bar');
+          bar.style.width = pct + '%';
+          bar.style.background = pct >= 90 ? '#dc2626' : pct >= 70 ? '#f59e0b' : '#2563eb';
+          document.getElementById('cfg-quota-pct').textContent = u.used_pct + '% of quota used';
+          document.getElementById('cfg-quota-bar-wrap').style.display = 'block';
+        }
+        if (u.groups && u.groups.length) {
+          const tbody = document.getElementById('cfg-groups-tbody');
+          tbody.innerHTML = '';
+          u.groups.forEach((g, i) => {
+            const evictRisk = !u.quota_unlimited && i === 0 && u.used_pct > 80;
+            const tr = document.createElement('tr');
+            tr.style.borderBottom = '1px solid #f3f4f6';
+            if (evictRisk) tr.style.color = '#dc2626';
+            tr.innerHTML =
+              '<td style="padding:4px 6px;font-family:monospace">' + g.group + '</td>' +
+              '<td style="padding:4px 6px;text-align:right">' + fmtMb(g.size_mb) + '</td>' +
+              '<td style="padding:4px 6px;text-align:right">' + fmtTs(g.last_accessed) + '</td>';
+            tbody.appendChild(tr);
+          });
+          document.getElementById('cfg-groups-wrap').style.display = 'block';
+        }
+      }).catch(() => {});
+    })();
 
     let dataLayer = null;
     const catalog = {};
@@ -881,6 +1247,162 @@ _MAP_HTML = """<!DOCTYPE html>
     }
 
     loadCatalog();
+
+    // ── Tab switching ────────────────────────────────────────────────────────
+
+    function showTab(tab) {
+      ['map', 'ingest', 'config'].forEach(function(t) {
+        document.getElementById('tab-' + t + '-content').style.display = t === tab ? '' : 'none';
+        document.getElementById('tab-btn-' + t).classList.toggle('active', t === tab);
+      });
+      if (tab === 'ingest') loadJobs();
+    }
+
+    // ── Ingest tab ───────────────────────────────────────────────────────────
+
+    function onIngSourceChange() {
+      const src = document.getElementById('ing-source').value;
+      document.getElementById('ing-iso3-row').style.display    = src === 'worldpop' ? '' : 'none';
+      document.getElementById('ing-var-row').style.display     = src === 'cds'      ? '' : 'none';
+      document.getElementById('ing-months-row').style.display  = src !== 'worldpop' ? '' : 'none';
+    }
+
+    function _parseInts(str) {
+      return str.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+    }
+
+    async function startIngest() {
+      const src    = document.getElementById('ing-source').value;
+      const years  = document.getElementById('ing-years').value.trim();
+      const months = document.getElementById('ing-months').value.trim();
+      const iso3   = document.getElementById('ing-iso3').value.trim().toUpperCase();
+      const varbl  = document.getElementById('ing-variable').value;
+
+      const inputs = { source: src };
+      if (src === 'worldpop') {
+        if (!iso3 || iso3.length !== 3) {
+          setIngMsg('ISO3 must be 3 characters.', 'err'); return;
+        }
+        inputs.iso3 = iso3;
+      }
+      if (src === 'cds') inputs.variable = varbl;
+      if (years)  inputs.years  = _parseInts(years);
+      if (months) inputs.months = _parseInts(months);
+
+      const btn = document.getElementById('btn-ingest');
+      btn.disabled = true;
+      setIngMsg('Submitting…', 'dim');
+      try {
+        const resp = await fetch('/processes/ingest/execution', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ inputs }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          setIngMsg('Error: ' + (data.detail || resp.statusText), 'err');
+        } else {
+          setIngMsg('Job started: ' + data.jobID.slice(0, 8) + '…', 'ok');
+          loadJobs();
+          startJobPoller();
+        }
+      } catch (e) {
+        setIngMsg('Request failed.', 'err');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function setIngMsg(msg, cls) {
+      const el = document.getElementById('ing-msg');
+      el.textContent = msg;
+      el.className = 'ing-msg ' + (cls || 'dim');
+    }
+
+    // ── Jobs list ────────────────────────────────────────────────────────────
+
+    let _jobPoller = null;
+
+    function startJobPoller() {
+      if (_jobPoller) return; // already polling
+      _jobPoller = setInterval(async () => {
+        await loadJobs();
+        // Stop polling when no jobs are running
+        const cards = document.querySelectorAll('.badge-running');
+        if (cards.length === 0) { clearInterval(_jobPoller); _jobPoller = null; }
+      }, 3000);
+    }
+
+    async function loadJobs() {
+      let data;
+      try {
+        const resp = await fetch('/processes/jobs');
+        data = await resp.json();
+      } catch (e) { return; }
+
+      const jobs = (data.jobs || []).slice().reverse(); // newest first
+      const el   = document.getElementById('jobs-list');
+      if (!jobs.length) {
+        el.innerHTML = '<span style="font-size:12px;color:#9ca3af">No jobs yet.</span>';
+        return;
+      }
+
+      el.innerHTML = jobs.map(j => {
+        const badgeCls = j.status === 'running'   ? 'badge-running'
+                       : j.status === 'successful' ? 'badge-succeeded'
+                       :                            'badge-failed';
+        const params = Object.entries(j.params || {})
+          .map(([k, v]) => k + '=' + (Array.isArray(v) ? v.join(',') : v))
+          .join(' ');
+        const created = j.created ? new Date(j.created).toLocaleTimeString() : '';
+        const errHtml = j.error
+          ? '<div class="job-error">' + j.error.split('\\n').slice(-3).join('\\n') + '</div>'
+          : '';
+        return (
+          '<div class="job-card">' +
+            '<div class="job-card-header">' +
+              '<span class="job-source">' + j.source + '</span>' +
+              '<span class="badge ' + badgeCls + '">' + j.status + '</span>' +
+            '</div>' +
+            '<div class="job-id">' + j.jobID + '</div>' +
+            (params ? '<div class="job-time">' + params + '</div>' : '') +
+            '<div class="job-time">' + created + '</div>' +
+            errHtml +
+          '</div>'
+        );
+      }).join('');
+
+      // Auto-start poller if any job is still running
+      if (jobs.some(j => j.status === 'running')) startJobPoller();
+    }
+
+    // ── Rebuild catalog ──────────────────────────────────────────────────────
+
+    async function rebuildCatalog() {
+      const btn = document.getElementById('btn-rebuild');
+      const msg = document.getElementById('rebuild-msg');
+      btn.disabled = true;
+      msg.textContent = 'Rebuilding…';
+      msg.className = 'ing-msg dim';
+      try {
+        const resp = await fetch('/processes/rebuild-catalog/execution', { method: 'POST' });
+        const data = await resp.json();
+        if (!resp.ok) {
+          msg.textContent = 'Error: ' + (data.detail || resp.statusText);
+          msg.className = 'ing-msg err';
+        } else {
+          const n = data.total_timestamps || 0;
+          const g = Object.keys(data.groups || {}).length;
+          msg.textContent = 'Done — ' + g + ' groups, ' + n + ' timestamps.';
+          msg.className = 'ing-msg ok';
+        }
+      } catch (e) {
+        msg.textContent = 'Request failed.';
+        msg.className = 'ing-msg err';
+      } finally {
+        btn.disabled = false;
+      }
+    }
   </script>
 </body>
 </html>"""
@@ -923,7 +1445,16 @@ def map_viewer(
             "rescale": rescale or "",
         }
     )
-    html = _MAP_HTML.replace("__PRESELECT__", preselect)
+    config_data = json.dumps(
+        {
+            "bbox": list(settings.bbox),
+            "quota_mb": settings.store_quota_mb,
+            "zarr_root": str(settings.zarr_root),
+            "raw_dir": str(settings.raw_dir),
+            "catalog_path": str(settings.catalog_path),
+        }
+    )
+    html = _MAP_HTML.replace("__PRESELECT__", preselect).replace("__CONFIG__", config_data)
     return HTMLResponse(content=html)
 
 

@@ -60,6 +60,11 @@ def _make_catalog() -> pystac.Catalog:
     return catalog
 
 
+def create_empty() -> pystac.Catalog:
+    """Create a fresh catalog with the three default collections and no items."""
+    return _make_catalog()
+
+
 def load_or_create(catalog_path: Path) -> pystac.Catalog:
     """Load an existing catalog.json or create a new one."""
     catalog_path = Path(catalog_path)

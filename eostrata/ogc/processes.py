@@ -173,8 +173,13 @@ def _load_array(
 
     Applies temporal aggregation when the array has a ``time`` dimension.
     """
+    from pathlib import Path
+
+    from eostrata.cache import record_access
+
     store_path = url or str(settings.zarr_root)
     ds = xr.open_zarr(store_path, group=group, consolidated=True)
+    record_access(Path(store_path), group)
     if variable not in ds:
         available = [v for v in ds.data_vars if v != "crs"]
         raise HTTPException(
@@ -249,7 +254,7 @@ def list_processes() -> dict:
 
     return {
         "processes": [{"id": "zonalstats", "version": "0.1.0"}, *INGEST_PROCESS_IDS],
-        "links": [],
+        "links": [{"href": "/processes", "rel": "self", "type": "application/json"}],
     }
 
 

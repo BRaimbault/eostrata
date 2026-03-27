@@ -61,7 +61,7 @@ EOSTRATA_RAW_DIR=data/raw
 EOSTRATA_CATALOG_PATH=data/catalog.json
 
 # Store quota — maximum size of the Zarr store in MB. 0 = unlimited (default).
-# When a download would exceed this limit, the oldest groups are evicted first.
+# When a download would exceed this limit, the least-recently-used groups are evicted first.
 # EOSTRATA_STORE_QUOTA_MB=0
 
 # Bounding box (west, south, east, north) in EPSG:4326
@@ -73,6 +73,19 @@ EOSTRATA_BBOX_NORTH=14.0
 ```
 
 > **Tip** — keep the bounding box as small as your use case allows. Clipping to your area of interest significantly reduces storage and processing time.
+
+### Storage model and cache eviction
+
+Each dataset is stored as a single Zarr group containing **all its timestamps in one array** (e.g. `worldpop/nga` holds every ingested year as a time step). This layout is deliberately chosen to make temporal aggregation fast: computing a mean, anomaly, or any other reduction over a date range is a single array operation with no cross-file joins.
+
+The trade-off is that **cache eviction works at group granularity**: when the store exceeds the configured quota before a new download, eostrata removes the entire least-recently-used group — all timestamps for that dataset at once. There is no sub-group eviction of individual time steps, because surgically removing a time step from the middle of a chunked Zarr array would require rewriting the entire array.
+
+**Last-access tracking** — filesystem `atime` is unreliable on most Linux mounts (`relatime`, `noatime`). eostrata instead maintains a small sentinel file (`.eostrata_accessed`) inside each group directory. It is touched once per minute (debounced) whenever the group is opened for tile serving or zonal statistics. The sentinel's modification time is what determines eviction order.
+
+Practically this means:
+- A group that was ingested but never served via tiles or zonal stats shows **"never read"** in `eostrata list` — it is the first candidate for eviction.
+- A group that is being actively served will not be evicted as long as it continues to receive requests within the debounce window.
+- You can inspect last-access times and group sizes at any time via `eostrata list` or `GET /store-usage`.
 
 ---
 
@@ -91,17 +104,19 @@ Raw files are cached in `data/raw/` and reused on subsequent runs. Check what is
 uv run eostrata list
 ```
 
-This shows each Zarr group with its size, total store usage, and quota if one is configured:
+This shows each Zarr group with its size, last-access time, total store usage, and quota if one is configured:
 
 ```
 Zarr store: data/zarr  [142.3 MB / 10000 MB (1%)]
-┌───────────────┬──────────┐
-│ Group         │ Size     │
-├───────────────┼──────────┤
-│ chirps/global │  89.4 MB │
-│ worldpop/nga  │  52.9 MB │
-└───────────────┴──────────┘
+┌───────────────┬──────────┬──────────────────────┐
+│ Group         │ Size     │ Last accessed        │
+├───────────────┼──────────┼──────────────────────┤
+│ chirps/global │  89.4 MB │ 2026-03-27 09:12 UTC │
+│ worldpop/nga  │  52.9 MB │ never read           │
+└───────────────┴──────────┴──────────────────────┘
 ```
+
+"Never read" means the group was ingested but has never been opened for tile serving or zonal statistics — it is the first eviction candidate if quota is exceeded.
 
 ---
 

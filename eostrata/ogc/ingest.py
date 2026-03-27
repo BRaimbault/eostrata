@@ -15,7 +15,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, HTTPException, Path, Response
 from pydantic import BaseModel, Field, model_validator
 
 from eostrata import ingestion, jobs
@@ -29,7 +29,10 @@ _executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ingest")
 
 # ── Process IDs (imported by processes.py for the unified list) ───────────────
 
-INGEST_PROCESS_IDS = [{"id": "ingest", "version": "0.1.0"}]
+INGEST_PROCESS_IDS = [
+    {"id": "ingest", "version": "0.1.0"},
+    {"id": "rebuild-catalog", "version": "0.1.0"},
+]
 
 # ── Process description ───────────────────────────────────────────────────────
 
@@ -124,12 +127,38 @@ def _run_job(job_id: str, fn, **kwargs) -> None:
 
 
 def _job_response(job: jobs.Job) -> dict:
-    return {
-        "job_id": job.job_id,
-        "status": job.status,
-        "links": [{"href": f"/processes/jobs/{job.job_id}", "rel": "monitor"}],
-    }
+    d = job.to_dict()
+    d["links"] = [
+        {"href": f"/processes/jobs/{job.job_id}", "rel": "monitor", "type": "application/json"}
+    ]
+    return d
 
+
+# ── Rebuild-catalog process description ──────────────────────────────────────
+
+_REBUILD_CATALOG_DESCRIPTION = {
+    "id": "rebuild-catalog",
+    "title": "Rebuild STAC catalogue",
+    "description": (
+        "Scan all Zarr groups in the store and reconstruct the STAC catalogue from scratch. "
+        "Reads time coordinates and spatial extent directly from the data. "
+        "Useful when the catalogue is missing or out of sync with the stored data."
+    ),
+    "version": "0.1.0",
+    "jobControlOptions": ["sync-execute"],
+    "inputs": {},
+    "outputs": {
+        "groups": {
+            "title": "Rebuilt groups",
+            "description": "Map of group path to number of timestamps registered.",
+            "schema": {"type": "object", "additionalProperties": {"type": "integer"}},
+        },
+        "total_timestamps": {
+            "title": "Total timestamps",
+            "schema": {"type": "integer"},
+        },
+    },
+}
 
 # ── Process description endpoint ──────────────────────────────────────────────
 
@@ -142,8 +171,8 @@ def describe_ingest() -> dict:
 # ── Execution endpoint ────────────────────────────────────────────────────────
 
 
-@router.post("/ingest/execution", status_code=202, summary="Start an ingestion job")
-def execute_ingest(body: IngestExecutionRequest) -> dict:
+@router.post("/ingest/execution", status_code=201, summary="Start an ingestion job")
+def execute_ingest(body: IngestExecutionRequest, response: Response) -> dict:
     """
     Start a data ingestion job for WorldPop, CHIRPS, or CDS/ERA5.
 
@@ -172,6 +201,7 @@ def execute_ingest(body: IngestExecutionRequest) -> dict:
             raw_dir=settings.raw_dir,
             catalog_path=settings.catalog_path,
             bbox=settings.bbox,
+            quota_mb=settings.store_quota_mb,
         )
 
     elif inp.source == "chirps":
@@ -191,6 +221,7 @@ def execute_ingest(body: IngestExecutionRequest) -> dict:
             raw_dir=settings.raw_dir,
             catalog_path=settings.catalog_path,
             bbox=settings.bbox,
+            quota_mb=settings.store_quota_mb,
         )
 
     else:  # cds
@@ -212,9 +243,37 @@ def execute_ingest(body: IngestExecutionRequest) -> dict:
             raw_dir=settings.raw_dir,
             catalog_path=settings.catalog_path,
             bbox=settings.bbox,
+            quota_mb=settings.store_quota_mb,
         )
 
+    response.headers["Location"] = f"/processes/jobs/{job.job_id}"
     return _job_response(job)
+
+
+# ── Rebuild-catalog endpoints ─────────────────────────────────────────────────
+
+
+@router.get("/rebuild-catalog", summary="Rebuild-catalog process description")
+def describe_rebuild_catalog() -> dict:
+    return _REBUILD_CATALOG_DESCRIPTION
+
+
+@router.post("/rebuild-catalog/execution", summary="Rebuild STAC catalogue from Zarr store")
+def execute_rebuild_catalog() -> dict:
+    """
+    Scan all Zarr groups and rebuild the STAC catalogue from scratch.
+
+    Runs synchronously and returns the rebuilt groups with their timestamp counts.
+    """
+    results = ingestion.rebuild_catalog_from_zarr(
+        zarr_root=settings.zarr_root,
+        catalog_path=settings.catalog_path,
+    )
+    return {
+        "status": "succeeded",
+        "groups": results,
+        "total_timestamps": sum(results.values()),
+    }
 
 
 # ── Job polling endpoints ─────────────────────────────────────────────────────
@@ -222,7 +281,10 @@ def execute_ingest(body: IngestExecutionRequest) -> dict:
 
 @router.get("/jobs", summary="List all ingestion jobs")
 def list_jobs() -> dict:
-    return {"jobs": [j.to_dict() for j in jobs.list_jobs()]}
+    return {
+        "jobs": [j.to_dict() for j in jobs.list_jobs()],
+        "links": [{"href": "/processes/jobs", "rel": "self", "type": "application/json"}],
+    }
 
 
 @router.get("/jobs/{job_id}", summary="Poll a single ingestion job")

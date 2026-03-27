@@ -176,7 +176,11 @@ class AggregatingReader(Reader):
 
     def __attrs_post_init__(self) -> None:
         """Open dataset, normalise coords, run get_variable, then collapse time."""
+        from pathlib import Path
+
         from rio_tiler.io.xarray import XarrayReader as _XarrayReader
+
+        from eostrata.cache import record_access
 
         # Open the dataset (mirrors Reader.__attrs_post_init__)
         self.ds = self.opener(
@@ -184,6 +188,10 @@ class AggregatingReader(Reader):
             group=self.group,
             decode_times=self.decode_times,
         )
+
+        # Update last-access sentinel so LRU eviction orders groups correctly.
+        if self.group:
+            record_access(Path(self.src_path), self.group)
 
         # Normalise ERA5 time coordinate: valid_time → time
         if "valid_time" in self.ds.coords and "time" not in self.ds.coords:

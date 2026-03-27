@@ -226,6 +226,16 @@ class TestTileRoutes:
         assert "datetime" in tile_url
         assert "agg" in tile_url
 
+    def test_tilejson_with_baseline(self, app_client):
+        """baseline param is included in tile URL (line 162)."""
+        resp = app_client.get(
+            "/collections/worldpop/tiles/WebMercatorQuad/tilejson.json"
+            "?item=worldpop_nga&agg=anomaly&baseline=2019-01-01/2019-12-31"
+        )
+        assert resp.status_code == 200
+        tile_url = resp.json()["tiles"][0]
+        assert "baseline" in tile_url
+
     def test_tilejson_unknown_collection_404(self, app_client):
         resp = app_client.get("/collections/unknown/tiles/WebMercatorQuad/tilejson.json")
         assert resp.status_code == 404
@@ -245,9 +255,28 @@ class TestTileRoutes:
         )
         assert resp.status_code == 200
 
+    def test_map_html_with_datetime_agg_baseline(self, app_client):
+        """datetime, agg, baseline are forwarded to /map URL (lines 118, 120, 122)."""
+        resp = app_client.get(
+            "/collections/worldpop/tiles/WebMercatorQuad/map.html"
+            "?item=worldpop_nga&datetime=2020-01-01/2021-12-31"
+            "&agg=anomaly&baseline=2019-01-01/2019-12-31",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 200
+        assert "datetime" in resp.text
+        assert "agg" in resp.text
+        assert "baseline" in resp.text
+
     def test_map_html_unknown_collection_404(self, app_client):
         resp = app_client.get("/collections/missing/tiles/WebMercatorQuad/map.html")
         assert resp.status_code == 404
+
+    def test_info_endpoint_real_delegate(self, app_client):
+        """_delegate body is exercised (lines 81-86) via info endpoint without mocking."""
+        resp = app_client.get("/collections/worldpop/info?item=worldpop_nga")
+        # TiTiler processes the real zarr — any non-server-error response is acceptable
+        assert resp.status_code != 500
 
     def test_info_endpoint_calls_delegate(self, setup):
         """Collection info delegates to TiTiler — verify _delegate is invoked."""

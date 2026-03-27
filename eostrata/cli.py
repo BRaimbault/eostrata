@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
@@ -22,15 +21,6 @@ console = Console()
 
 download_app = typer.Typer(help="Download data from a source.", no_args_is_help=True)
 app.add_typer(download_app, name="download")
-
-
-def _maybe_evict(zarr_root: Path, required_mb: float = 0.0) -> None:
-    """Run cache eviction if a quota is configured."""
-    from eostrata.cache import check_and_evict
-    from eostrata.config import settings
-
-    if settings.store_quota_mb > 0:
-        check_and_evict(zarr_root, quota_mb=settings.store_quota_mb, required_mb=required_mb)
 
 
 def _parse_int_list(single: int | None, multi: str | None, default: int) -> list[int]:
@@ -69,59 +59,35 @@ def download_worldpop(
     """
     _setup_logging(verbose)
 
-    from eostrata import catalog as cat
     from eostrata.config import settings
+    from eostrata.ingestion import run_worldpop_ingest
     from eostrata.sources import WorldPopSource
-
-    source = WorldPopSource()
 
     _zarr_root = zarr_root or settings.zarr_root
     _raw_dir = raw_dir or settings.raw_dir
     _catalog_path = catalog_path or settings.catalog_path
-    _bbox = settings.bbox
 
-    latest_year = source.latest_available().year
-    _years = _parse_int_list(year, years, latest_year)
+    _years = _parse_int_list(year, years, WorldPopSource().latest_available().year)
 
     console.print(
         f"[bold]Downloading WorldPop[/bold] iso3=[cyan]{iso3.upper()}[/cyan] "
-        f"years=[cyan]{_years}[/cyan] bbox=[cyan]{_bbox}[/cyan]"
+        f"years=[cyan]{_years}[/cyan] bbox=[cyan]{settings.bbox}[/cyan]"
     )
 
-    _maybe_evict(_zarr_root)
-
-    catalogue = cat.load_or_create(_catalog_path)
-    zarr_group = source.zarr_group(iso3=iso3)
-
-    for _year in _years:
-        console.print(f"  [dim]year {_year}[/dim]")
-        paths = source.download(_raw_dir, _bbox, iso3=iso3, year=_year)
-        tif_path = paths[0]
-        console.print(f"  [green]Downloaded[/green] {tif_path}")
-
-        ds = source.to_zarr(tif_path, _zarr_root, _bbox, iso3=iso3, year=_year)
-        console.print(f"  [green]Zarr written[/green] {_zarr_root}/{zarr_group}")
-
-        item_bbox = (
-            float(ds.x.min()),
-            float(ds.y.min()),
-            float(ds.x.max()),
-            float(ds.y.max()),
-        )
-        cat.register_item(
-            catalogue,
-            collection_id=source.collection_id,
-            item_id=source.stac_item_id(iso3=iso3),
-            bbox=item_bbox,
-            datetime_=datetime(_year, 1, 1, tzinfo=UTC),
+    try:
+        run_worldpop_ingest(
+            iso3=iso3,
+            years=_years,
             zarr_root=_zarr_root,
-            zarr_group=zarr_group,
-            variable=source.VARIABLE,
-            extra_properties=source.stac_properties(iso3=iso3, year=_year),
+            raw_dir=_raw_dir,
+            catalog_path=_catalog_path,
+            bbox=settings.bbox,
+            quota_mb=settings.store_quota_mb,
         )
+    except Exception as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from None
 
-    cat.save(catalogue, _catalog_path)
-    console.print(f"[green]STAC item registered[/green] {_catalog_path}")
     console.print("[bold green]Done.[/bold green]")
 
 
@@ -154,9 +120,21 @@ def list_datasets(
         else:
             size_summary = f"{total_mb:.1f} MB (no quota)"
 
-        table = Table("Group", "Size", title=f"Zarr store: {_zarr_root}  [{size_summary}]")
+        from datetime import UTC, datetime
+
+        from eostrata.cache import _ACCESSED_SENTINEL
+
+        table = Table(
+            "Group", "Size", "Last accessed", title=f"Zarr store: {_zarr_root}  [{size_summary}]"
+        )
         for group_path, size_mb, _ in sorted(groups, key=lambda t: t[0]):
-            table.add_row(group_path, f"{size_mb:.1f} MB")
+            sentinel = Path(_zarr_root) / group_path / _ACCESSED_SENTINEL
+            if sentinel.exists():
+                ts = datetime.fromtimestamp(sentinel.stat().st_mtime, tz=UTC)
+                last_read = ts.strftime("%Y-%m-%d %H:%M UTC")
+            else:
+                last_read = "[dim]never read[/dim]"
+            table.add_row(group_path, f"{size_mb:.1f} MB", last_read)
         console.print(table)
     else:
         console.print(f"[yellow]No Zarr store found at {_zarr_root}[/yellow]")
@@ -248,6 +226,7 @@ def serve(
         f"  [dim]Tiles:     http://{host}:{port}/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}[/dim]"
     )
     console.print(f"  [dim]Processes: http://{host}:{port}/processes[/dim]")
+    console.print(f"  [dim]Viewer:    http://{host}:{port}/map[/dim]")
     uvicorn.run(
         "eostrata.server:app",
         host=host,
@@ -324,68 +303,37 @@ def download_chirps(
     """
     _setup_logging(verbose)
 
-    from eostrata import catalog as cat
     from eostrata.config import settings
+    from eostrata.ingestion import run_chirps_ingest
     from eostrata.sources.chirps import CHIRPSSource
-
-    source = CHIRPSSource()
 
     _zarr_root = zarr_root or settings.zarr_root
     _raw_dir = raw_dir or settings.raw_dir
     _catalog_path = catalog_path or settings.catalog_path
-    _bbox = settings.bbox
 
-    latest = source.latest_available()
+    latest = CHIRPSSource().latest_available()
     _years = _parse_int_list(year, years, latest.year)
     _months = _parse_int_list(month, months, latest.month)
 
     console.print(
         f"[bold]Downloading CHIRPS[/bold] years=[cyan]{_years}[/cyan] "
-        f"months=[cyan]{_months}[/cyan] bbox=[cyan]{_bbox}[/cyan]"
+        f"months=[cyan]{_months}[/cyan] bbox=[cyan]{settings.bbox}[/cyan]"
     )
 
-    _maybe_evict(_zarr_root)
+    try:
+        run_chirps_ingest(
+            years=_years,
+            months=_months,
+            zarr_root=_zarr_root,
+            raw_dir=_raw_dir,
+            catalog_path=_catalog_path,
+            bbox=settings.bbox,
+            quota_mb=settings.store_quota_mb,
+        )
+    except Exception as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from None
 
-    catalogue = cat.load_or_create(_catalog_path)
-    zarr_group = source.zarr_group()
-
-    success_count = 0
-    for _year in _years:
-        for _month in _months:
-            try:
-                console.print(f"  [dim]year {_year} month {_month:02d}[/dim]")
-                paths = source.download(_raw_dir, _bbox, year=_year, month=_month)
-                tif_path = paths[0]
-                console.print(f"  [green]Downloaded[/green] {tif_path}")
-
-                ds = source.to_zarr(tif_path, _zarr_root, _bbox, year=_year, month=_month)
-                console.print(f"  [green]Zarr written[/green] {_zarr_root}/{zarr_group}")
-
-                item_bbox = (
-                    float(ds.x.min()),
-                    float(ds.y.min()),
-                    float(ds.x.max()),
-                    float(ds.y.max()),
-                )
-                cat.register_item(
-                    catalogue,
-                    collection_id=source.collection_id,
-                    item_id=source.stac_item_id(),
-                    bbox=item_bbox,
-                    datetime_=datetime(_year, _month, 1, tzinfo=UTC),
-                    zarr_root=_zarr_root,
-                    zarr_group=zarr_group,
-                    variable=source.VARIABLE,
-                    extra_properties=source.stac_properties(year=_year, month=_month),
-                )
-                success_count += 1
-            except Exception as exc:
-                console.print(f"  [red]Failed year {_year} month {_month:02d}: {exc}[/red]")
-                logger.exception("CHIRPS download failed for year %d month %d", _year, _month)
-
-    if success_count > 0:
-        cat.save(catalogue, _catalog_path)
-        console.print(f"[green]STAC item registered[/green] {_catalog_path}")
     console.print("[bold green]Done.[/bold green]")
 
 
@@ -415,72 +363,78 @@ def download_cds(
     """
     _setup_logging(verbose)
 
-    from eostrata import catalog as cat
     from eostrata.config import settings
+    from eostrata.ingestion import run_cds_ingest
     from eostrata.sources.cds import CDSSource
-
-    source = CDSSource()
 
     _zarr_root = zarr_root or settings.zarr_root
     _raw_dir = raw_dir or settings.raw_dir
     _catalog_path = catalog_path or settings.catalog_path
-    _bbox = settings.bbox
 
-    latest = source.latest_available()
+    latest = CDSSource().latest_available()
     _years = _parse_int_list(year, years, latest.year)
     _months = _parse_int_list(month, months, latest.month)
 
     console.print(
         f"[bold]Downloading ERA5[/bold] variable=[cyan]{variable}[/cyan] "
-        f"years=[cyan]{_years}[/cyan] months=[cyan]{_months}[/cyan] bbox=[cyan]{_bbox}[/cyan]"
+        f"years=[cyan]{_years}[/cyan] months=[cyan]{_months}[/cyan] bbox=[cyan]{settings.bbox}[/cyan]"
     )
 
-    _maybe_evict(_zarr_root)
+    try:
+        run_cds_ingest(
+            variable=variable,
+            years=_years,
+            months=_months,
+            zarr_root=_zarr_root,
+            raw_dir=_raw_dir,
+            catalog_path=_catalog_path,
+            bbox=settings.bbox,
+            quota_mb=settings.store_quota_mb,
+        )
+    except Exception as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from None
 
-    catalogue = cat.load_or_create(_catalog_path)
-    zarr_group = source.zarr_group(variable=variable)
-
-    success_count = 0
-    for _year in _years:
-        try:
-            console.print(f"  [dim]year {_year}[/dim]")
-            paths = source.download(_raw_dir, _bbox, variable=variable, year=_year, months=_months)
-            nc_path = paths[0]
-            console.print(f"  [green]Downloaded[/green] {nc_path}")
-
-            ds = source.to_zarr(nc_path, _zarr_root, _bbox, variable=variable, year=_year)
-            console.print(f"  [green]Zarr written[/green] {_zarr_root}/{zarr_group}")
-
-            x_dim = "x" if "x" in ds.coords else "longitude"
-            y_dim = "y" if "y" in ds.coords else "latitude"
-            item_bbox = (
-                float(ds[x_dim].min()),
-                float(ds[y_dim].min()),
-                float(ds[x_dim].max()),
-                float(ds[y_dim].max()),
-            )
-            for _month in _months:
-                cat.register_item(
-                    catalogue,
-                    collection_id=source.collection_id,
-                    item_id=source.stac_item_id(variable=variable),
-                    bbox=item_bbox,
-                    datetime_=datetime(_year, _month, 1, tzinfo=UTC),
-                    zarr_root=_zarr_root,
-                    zarr_group=zarr_group,
-                    variable=variable,
-                    extra_properties=source.stac_properties(variable=variable, year=_year),
-                )
-            success_count += 1
-        except Exception as exc:
-            console.print(f"  [red]Failed year {_year}: {exc}[/red]")
-            logger.exception("CDS download failed for year %d", _year)
-
-    if success_count > 0:
-        cat.save(catalogue, _catalog_path)
-        console.print(f"[green]STAC item registered[/green] {_catalog_path}")
     console.print("[bold green]Done.[/bold green]")
 
 
-if __name__ == "__main__":
+# ── rebuild-catalog ───────────────────────────────────────────────────────────
+
+
+@app.command("rebuild-catalog")
+def rebuild_catalog(
+    zarr_root: Path | None = typer.Option(None, help="Zarr store root"),
+    catalog_path: Path | None = typer.Option(None, help="Path to catalog.json"),
+    verbose: bool = typer.Option(False, "-v", "--verbose"),
+) -> None:
+    """Rebuild the STAC catalogue from scratch by scanning the Zarr store.
+
+    Reads time coordinates and spatial extent directly from each Zarr group.
+    Useful when the catalogue is missing or out of sync with the stored data.
+    """
+    _setup_logging(verbose)
+
+    from eostrata.config import settings
+    from eostrata.ingestion import rebuild_catalog_from_zarr
+
+    _zarr_root = zarr_root or settings.zarr_root
+    _catalog_path = catalog_path or settings.catalog_path
+
+    console.print(f"[bold]Rebuilding catalogue[/bold] from [cyan]{_zarr_root}[/cyan]")
+
+    results = rebuild_catalog_from_zarr(zarr_root=_zarr_root, catalog_path=_catalog_path)
+
+    if not results:
+        console.print("[yellow]No Zarr groups found — catalogue is empty.[/yellow]")
+    else:
+        table = Table("Group", "Timestamps", title="Rebuilt STAC catalogue")
+        for group_path, n_ts in sorted(results.items()):
+            table.add_row(group_path, str(n_ts))
+        console.print(table)
+        console.print(f"[green]Catalogue saved to[/green] {_catalog_path}")
+
+    console.print("[bold green]Done.[/bold green]")
+
+
+if __name__ == "__main__":  # pragma: no cover
     app()

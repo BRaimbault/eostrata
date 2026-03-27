@@ -108,13 +108,16 @@ class TestDownloadWorldpop:
         """--years 2020,2021 downloads both years in one call."""
         tif = tmp_path / "raw" / "worldpop" / "nga_pop_2020_CN_1km_R2025A_UA_v1.tif"
         tif.parent.mkdir(parents=True)
-        _make_tif(tif)
+
+        def _recreate_tif(*args, **kwargs):
+            _make_tif(tif)
+            return [tif]
 
         mock_settings = _make_settings_mock(tmp_path)
 
         with (
             patch("eostrata.config.settings", mock_settings),
-            patch("eostrata.sources.worldpop.WorldPopSource.download", return_value=[tif]),
+            patch("eostrata.sources.worldpop.WorldPopSource.download", side_effect=_recreate_tif),
             patch("eostrata.cache.check_and_evict"),
         ):
             result = runner.invoke(
@@ -136,6 +139,38 @@ class TestDownloadWorldpop:
 
         assert result.exit_code == 0, result.output
         assert "Done" in result.output
+
+    def test_download_worldpop_error_exits_nonzero(self, tmp_path):
+        """A download failure aborts the command with a non-zero exit code."""
+        mock_settings = _make_settings_mock(tmp_path)
+
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch(
+                "eostrata.sources.worldpop.WorldPopSource.download",
+                side_effect=RuntimeError("network error"),
+            ),
+            patch("eostrata.cache.check_and_evict"),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "download",
+                    "worldpop",
+                    "NGA",
+                    "--year",
+                    "2020",
+                    "--zarr-root",
+                    str(tmp_path / "zarr"),
+                    "--raw-dir",
+                    str(tmp_path / "raw"),
+                    "--catalog-path",
+                    str(tmp_path / "catalog.json"),
+                ],
+            )
+
+        assert result.exit_code == 1
+        assert "Error" in result.output
 
     def test_download_worldpop_auto_year(self, tmp_path):
         """When --year is omitted, CLI resolves latest available."""
@@ -206,13 +241,13 @@ class TestDownloadChirps:
         """--years 2023,2024 --months 1,2 downloads all (year, month) combinations."""
         tif = tmp_path / "raw" / "chirps" / "chirps-v2.0.2023.01.tif"
         tif.parent.mkdir(parents=True)
-        _make_tif(tif)
 
         mock_settings = _make_settings_mock(tmp_path)
         download_calls = []
 
         def _fake_download(*args, **kwargs):
             download_calls.append((kwargs.get("year"), kwargs.get("month")))
+            _make_tif(tif)
             return [tif]
 
         with (
@@ -245,8 +280,8 @@ class TestDownloadChirps:
         assert (2024, 1) in download_calls
         assert (2024, 2) in download_calls
 
-    def test_download_chirps_error_continues(self, tmp_path):
-        """A failed year/month is logged but does not abort the whole command."""
+    def test_download_chirps_error_exits_nonzero(self, tmp_path):
+        """A download failure aborts the command with a non-zero exit code."""
         mock_settings = _make_settings_mock(tmp_path)
 
         with (
@@ -275,8 +310,8 @@ class TestDownloadChirps:
                 ],
             )
 
-        assert result.exit_code == 0
-        assert "Failed" in result.output
+        assert result.exit_code == 1
+        assert "Error" in result.output
 
     def test_download_chirps_auto_period(self, tmp_path):
         """Omitting --year/--month uses latest_available()."""
@@ -355,8 +390,8 @@ class TestDownloadCds:
 
 
 class TestDownloadCdsErrorHandling:
-    def test_download_cds_error_continues(self, tmp_path):
-        """A failed year is logged but does not abort the whole command."""
+    def test_download_cds_error_exits_nonzero(self, tmp_path):
+        """A download failure aborts the command with a non-zero exit code."""
         mock_settings = _make_settings_mock(tmp_path)
 
         with (
@@ -385,8 +420,8 @@ class TestDownloadCdsErrorHandling:
                 ],
             )
 
-        assert result.exit_code == 0
-        assert "Failed" in result.output
+        assert result.exit_code == 1
+        assert "Error" in result.output
 
 
 class TestDownloadCdsMultiYear:
@@ -406,6 +441,7 @@ class TestDownloadCdsMultiYear:
 
         def _fake_download(*args, **kwargs):
             download_calls.append(kwargs.get("year"))
+            ds.to_netcdf(str(nc))
             return [nc]
 
         with (
@@ -485,6 +521,67 @@ class TestList:
         assert "worldpop_nga" in result.output
         assert "2020" in result.output
 
+    def test_list_item_with_datetime_no_eostrata_datetimes(self, tmp_path):
+        """list uses item.datetime when eostrata:datetimes is absent (lines 175-176)."""
+        from datetime import UTC, datetime
+
+        import pystac
+
+        from eostrata.catalog import _make_catalog, save
+
+        catalog_path = tmp_path / "catalog.json"
+        cat_ = _make_catalog()
+        coll = cat_.get_child("worldpop")
+        item = pystac.Item(
+            id="worldpop_nga",
+            geometry=None,
+            bbox=[2.0, 4.0, 6.0, 8.0],
+            datetime=datetime(2020, 6, 1, tzinfo=UTC),
+            properties={"eostrata:variable": "population", "eostrata:zarr_group": "worldpop/nga"},
+        )
+        coll.add_item(item)
+        save(cat_, catalog_path)
+
+        result = runner.invoke(
+            app,
+            ["list", "--zarr-root", str(tmp_path / "zarr"), "--catalog-path", str(catalog_path)],
+        )
+        assert result.exit_code == 0
+        assert "2020-06-01" in result.output
+
+    def test_list_item_with_start_end_datetime_only(self, tmp_path):
+        """list falls back to start/end_datetime when datetime is None (lines 178-180)."""
+
+        import pystac
+
+        from eostrata.catalog import _make_catalog, save
+
+        catalog_path = tmp_path / "catalog.json"
+        cat_ = _make_catalog()
+        coll = cat_.get_child("worldpop")
+        item = pystac.Item(
+            id="worldpop_nga",
+            geometry=None,
+            bbox=[2.0, 4.0, 6.0, 8.0],
+            datetime=None,
+            properties={
+                "start_datetime": "2020-01-01T00:00:00+00:00",
+                "end_datetime": "2020-12-31T00:00:00+00:00",
+                "datetime": None,
+                "eostrata:variable": "population",
+                "eostrata:zarr_group": "worldpop/nga",
+            },
+        )
+        coll.add_item(item)
+        save(cat_, catalog_path)
+
+        result = runner.invoke(
+            app,
+            ["list", "--zarr-root", str(tmp_path / "zarr"), "--catalog-path", str(catalog_path)],
+        )
+        assert result.exit_code == 0
+        assert "2020-01-01" in result.output
+
     def test_list_with_zarr_store(self, tmp_path):
         zarr_root = tmp_path / "zarr"
         # Write a minimal zarr group
@@ -504,6 +601,33 @@ class TestList:
         assert result.exit_code == 0
         assert "worldpop/nga" in result.output
         assert "MB" in result.output
+
+    def test_list_no_quota(self, tmp_path):
+        """When no quota is configured, list shows size without percentage."""
+        zarr_root = tmp_path / "zarr"
+        ds = xr.Dataset({"v": (("y", "x"), np.ones((4, 4)))})
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
+
+        mock_settings = _make_settings_mock(tmp_path)
+        mock_settings.zarr_root = zarr_root
+        mock_settings.store_quota_mb = 0.0
+
+        with patch("eostrata.config.settings", mock_settings):
+            result = runner.invoke(
+                app,
+                [
+                    "list",
+                    "--zarr-root",
+                    str(zarr_root),
+                    "--catalog-path",
+                    str(tmp_path / "catalog.json"),
+                ],
+            )
+
+        assert result.exit_code == 0
+        # Rich may wrap "no quota" across lines; check words are present without %
+        assert "no" in result.output and "quota" in result.output
+        assert "%" not in result.output
 
     def test_list_shows_quota(self, tmp_path, monkeypatch):
         """When a quota is configured, list shows usage percentage."""
@@ -530,37 +654,6 @@ class TestList:
         assert result.exit_code == 0
         assert "10000" in result.output
         assert "%" in result.output
-
-
-class TestMaybeEvict:
-    def test_eviction_called_when_quota_set(self, tmp_path):
-        """_maybe_evict calls check_and_evict only when store_quota_mb > 0."""
-        from eostrata.cli import _maybe_evict
-
-        mock_settings = _make_settings_mock(tmp_path)
-        mock_settings.store_quota_mb = 5000.0
-
-        with (
-            patch("eostrata.config.settings", mock_settings),
-            patch("eostrata.cache.check_and_evict") as mock_evict,
-        ):
-            _maybe_evict(tmp_path / "zarr")
-
-        mock_evict.assert_called_once_with(tmp_path / "zarr", quota_mb=5000.0, required_mb=0.0)
-
-    def test_eviction_skipped_when_quota_zero(self, tmp_path):
-        from eostrata.cli import _maybe_evict
-
-        mock_settings = _make_settings_mock(tmp_path)
-        mock_settings.store_quota_mb = 0.0
-
-        with (
-            patch("eostrata.config.settings", mock_settings),
-            patch("eostrata.cache.check_and_evict") as mock_evict,
-        ):
-            _maybe_evict(tmp_path / "zarr")
-
-        mock_evict.assert_not_called()
 
 
 class TestServe:
@@ -685,3 +778,63 @@ class TestCleanup:
         )
         # Answered "n" — should abort
         assert result.exit_code != 0 or not zarr_root.exists() or zarr_root.exists()
+
+
+class TestRebuildCatalog:
+    def test_rebuild_catalog_empty_store(self, tmp_path):
+        """rebuild-catalog with no zarr groups reports empty catalogue."""
+        zarr_root = tmp_path / "zarr"
+        zarr_root.mkdir()
+        catalog_path = tmp_path / "catalog.json"
+
+        with patch("eostrata.ingestion.rebuild_catalog_from_zarr", return_value={}) as mock_rebuild:
+            result = runner.invoke(
+                app,
+                [
+                    "rebuild-catalog",
+                    "--zarr-root",
+                    str(zarr_root),
+                    "--catalog-path",
+                    str(catalog_path),
+                ],
+            )
+        assert result.exit_code == 0
+        assert "No Zarr groups found" in result.output
+        mock_rebuild.assert_called_once_with(zarr_root=zarr_root, catalog_path=catalog_path)
+
+    def test_rebuild_catalog_with_groups(self, tmp_path):
+        """rebuild-catalog displays a table with rebuilt groups."""
+        zarr_root = tmp_path / "zarr"
+        zarr_root.mkdir()
+        catalog_path = tmp_path / "catalog.json"
+
+        with patch(
+            "eostrata.ingestion.rebuild_catalog_from_zarr",
+            return_value={"worldpop/nga": 3, "chirps/global": 12},
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "rebuild-catalog",
+                    "--zarr-root",
+                    str(zarr_root),
+                    "--catalog-path",
+                    str(catalog_path),
+                ],
+            )
+        assert result.exit_code == 0
+        assert "worldpop/nga" in result.output
+        assert "chirps/global" in result.output
+
+    def test_rebuild_catalog_uses_settings_defaults(self, tmp_path):
+        """rebuild-catalog falls back to settings when paths are not specified."""
+        mock_settings = _make_settings_mock(tmp_path)
+        mock_settings.zarr_root.mkdir(parents=True, exist_ok=True)
+
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch("eostrata.ingestion.rebuild_catalog_from_zarr", return_value={}) as mock_rebuild,
+        ):
+            result = runner.invoke(app, ["rebuild-catalog"])
+        assert result.exit_code == 0
+        mock_rebuild.assert_called_once()

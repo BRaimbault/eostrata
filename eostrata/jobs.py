@@ -11,7 +11,7 @@ from enum import StrEnum
 
 class JobStatus(StrEnum):
     RUNNING = "running"
-    SUCCEEDED = "succeeded"
+    SUCCEEDED = "successful"
     FAILED = "failed"
 
 
@@ -28,13 +28,18 @@ class Job:
 
     def to_dict(self) -> dict:
         return {
-            "job_id": self.job_id,
+            # OGC API - Processes required fields
+            "jobID": self.job_id,
+            "type": "process",
+            "processID": "ingest",
+            "status": self.status,
+            # OGC optional timing fields
+            "created": self.created_at.isoformat(),
+            "updated": self.updated_at.isoformat(),
+            "message": self.message,
+            # eostrata-specific fields (used by the viewer)
             "source": self.source,
             "params": self.params,
-            "status": self.status,
-            "created_at": self.created_at.isoformat(),
-            "updated_at": self.updated_at.isoformat(),
-            "message": self.message,
             "error": self.error,
         }
 

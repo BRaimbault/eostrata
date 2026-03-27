@@ -108,6 +108,51 @@ class TestNetcdfToZarr:
         # Second call should append — group still exists
         assert (zarr_root / "era5" / "t2m").exists()
 
+    def test_valid_time_renamed_to_time(self, tmp_path):
+        """valid_time dimension is renamed to time (line 138)."""
+        from eostrata.sources.cds import _netcdf_to_zarr
+
+        nc = tmp_path / "era5_valid_time.nc"
+        times = np.array([np.datetime64("2023-01-01", "ns")])
+        y = np.linspace(14.0, 4.0, 5)
+        x = np.linspace(2.0, 15.0, 5)
+        data = np.full((1, 5, 5), 280.0, dtype="float32")
+        ds = xr.Dataset(
+            {"t2m": (("valid_time", "y", "x"), data)},
+            coords={"valid_time": times, "y": y, "x": x},
+        )
+        ds.to_netcdf(str(nc))
+
+        zarr_root = tmp_path / "zarr"
+        _netcdf_to_zarr(nc, zarr_root, "era5/t2m", variable="t2m", bbox=(2.0, 4.0, 15.0, 14.0))
+        ds_out = xr.open_zarr(str(zarr_root), group="era5/t2m", consolidated=True)
+        assert "time" in ds_out.dims
+
+    def test_expver_and_time_bnds_dropped(self, tmp_path):
+        """expver and time_bnds variables are dropped before writing (line 149)."""
+        from eostrata.sources.cds import _netcdf_to_zarr
+
+        nc = tmp_path / "era5_extra_vars.nc"
+        times = np.array(
+            [np.datetime64("2023-01-01"), np.datetime64("2023-02-01")], dtype="datetime64[ns]"
+        )
+        y = np.linspace(14.0, 4.0, 5)
+        x = np.linspace(2.0, 15.0, 5)
+        data = np.full((2, 5, 5), 280.0, dtype="float32")
+        ds = xr.Dataset(
+            {
+                "t2m": (("time", "y", "x"), data),
+                "expver": (("time",), np.array([1, 1])),
+            },
+            coords={"time": times, "y": y, "x": x},
+        )
+        ds.to_netcdf(str(nc))
+
+        zarr_root = tmp_path / "zarr"
+        _netcdf_to_zarr(nc, zarr_root, "era5/t2m", variable="t2m", bbox=(2.0, 4.0, 15.0, 14.0))
+        ds_out = xr.open_zarr(str(zarr_root), group="era5/t2m", consolidated=True)
+        assert "expver" not in ds_out
+
 
 class TestCDSSourceToZarr:
     def test_to_zarr_default_variable(self, tmp_path):

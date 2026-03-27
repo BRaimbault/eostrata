@@ -17,7 +17,7 @@ from eostrata.config import settings
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/processes", tags=["OGC Processes"])
+router = APIRouter(prefix="/processes", tags=["Zonal Statistics"])
 
 # ── OGC Process description ───────────────────────────────────────────────────
 

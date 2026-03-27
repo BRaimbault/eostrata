@@ -189,6 +189,24 @@ class TestApplyTemporalAggregation:
         result = apply_temporal_aggregation(da, datetime_str="2021-01-01/")
         assert float(result.mean()) == pytest.approx(2021.0)
 
+    def test_duplicate_timestamps_deduplicated(self):
+        """Duplicate timestamps are deduplicated before aggregation to avoid InvalidIndexError."""
+        times = np.array(
+            [np.datetime64("2021-01-01"), np.datetime64("2021-01-01"), np.datetime64("2022-01-01")]
+        )
+        data = np.stack(
+            [np.full((4, 4), 2021.0), np.full((4, 4), 2021.0), np.full((4, 4), 2022.0)]
+        ).astype("float32")
+        da = xr.DataArray(
+            data,
+            dims=("time", "y", "x"),
+            coords={"time": times, "y": np.arange(4), "x": np.arange(4)},
+        )
+        # Should not raise InvalidIndexError despite duplicate timestamps
+        result = apply_temporal_aggregation(da, agg="mean")
+        assert result.dims == ("y", "x")
+        assert float(result.mean()) == pytest.approx((2021.0 + 2022.0) / 2)
+
 
 class TestResolveAccessedTimes:
     def _make_ds(self, years: list[int]) -> xr.Dataset:

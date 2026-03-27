@@ -35,7 +35,7 @@ from eostrata.config import settings
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["OGC Tiles"])
+router = APIRouter(tags=["Tiles"])
 
 # Internal TiTiler factory and app — built once at import time, reused per request
 _tiler = TilerFactory(

@@ -382,7 +382,7 @@ class TestExamplesEdgeCases:
 
         with (
             patch("eostrata.server.settings", mock_settings),
-            patch("eostrata.catalog.load_or_create", return_value=catalog),
+            patch("eostrata.server.load_or_create", return_value=catalog),
             TestClient(app) as c,
         ):
             resp = c.get("/examples")
@@ -400,7 +400,7 @@ class TestExamplesEdgeCases:
 
         with (
             patch("eostrata.server.settings", mock_settings),
-            patch("eostrata.catalog.load_or_create", return_value=catalog),
+            patch("eostrata.server.load_or_create", return_value=catalog),
             TestClient(app) as c,
         ):
             resp = c.get("/examples")

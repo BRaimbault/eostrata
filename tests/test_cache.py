@@ -236,6 +236,28 @@ class TestEvictTimestamp:
         assert not any("2020" in n for n in names)
         assert any("2021" in n for n in names)
 
+    def test_consolidate_metadata_exception_is_silenced(self, tmp_path):
+        """If zarr.consolidate_metadata raises during eviction, the eviction still succeeds."""
+        import zarr as _zarr
+
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021])
+        _original = _zarr.consolidate_metadata
+
+        def _raise_for_our_call(path, **kwargs):
+            # cache.py calls consolidate_metadata(str(zarr_root)) — string path
+            # xarray calls it with a Store object during to_zarr; let those through
+            if isinstance(path, str):
+                raise Exception("no meta")
+            return _original(path, **kwargs)
+
+        with patch("eostrata.cache.zarr.consolidate_metadata", side_effect=_raise_for_our_call):
+            freed = evict_timestamp(tmp_path, "worldpop/nga", "2020-01-01T00:00:00")
+        assert freed > 0
+        ds = xr.open_zarr(str(tmp_path), group="worldpop/nga", consolidated=False)
+        years = [t.astype("datetime64[Y]").item().year for t in ds["time"].values]
+        assert 2020 not in years
+        assert 2021 in years
+
     def test_updates_catalog(self, tmp_path):
         from datetime import UTC, datetime
 

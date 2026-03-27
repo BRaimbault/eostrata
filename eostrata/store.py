@@ -25,6 +25,7 @@ def geotiff_to_zarr(
     time_coord: np.datetime64 | None = None,
     chunks: dict[str, int] | None = None,
     variable_name: str | None = None,
+    nodata_override: float | None = None,
 ) -> xr.Dataset:
     """
     Clip a GeoTIFF to bbox, convert to a CF-compliant xarray Dataset
@@ -72,9 +73,9 @@ def geotiff_to_zarr(
             crs = src.crs or CRS.from_epsg(4326)
             nodata = src.nodata
 
-    # Replace nodata with NaN
-    if nodata is not None:
-        data[data == nodata] = float("nan")
+    effective_nodata = nodata_override if nodata_override is not None else nodata
+    if effective_nodata is not None:
+        data[data == effective_nodata] = float("nan")
 
     height, width = data.shape
     west_out, south_out, east_out, north_out = array_bounds(height, width, transform)

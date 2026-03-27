@@ -108,6 +108,82 @@ class TestNetcdfToZarr:
         # Second call should append — group still exists
         assert (zarr_root / "era5" / "t2m").exists()
 
+    def test_all_timestamps_already_present_skips_append(self, tmp_path):
+        """If all incoming timestamps already exist, _netcdf_to_zarr skips the append."""
+        from eostrata.sources.cds import _netcdf_to_zarr
+
+        nc = tmp_path / "era5_t2m.nc"
+        _write_era5_nc(nc, variable="t2m")  # writes 2023-01 and 2023-02
+        zarr_root = tmp_path / "zarr"
+        bbox = (2.0, 4.0, 15.0, 14.0)
+
+        _netcdf_to_zarr(nc, zarr_root, "era5/t2m", variable="2m_temperature", bbox=bbox)
+        # Second call with the exact same data — all timestamps already present
+        _netcdf_to_zarr(nc, zarr_root, "era5/t2m", variable="2m_temperature", bbox=bbox)
+
+        ds_out = xr.open_zarr(str(zarr_root), group="era5/t2m", consolidated=False)
+        # Should still have exactly 2 timestamps, not 4 (no duplicates appended)
+        assert len(ds_out["time"]) == 2
+
+    def test_partial_duplicate_timestamps_filtered(self, tmp_path):
+        """New timestamps that partially overlap with existing ones are partially skipped."""
+        from eostrata.sources.cds import _netcdf_to_zarr
+
+        zarr_root = tmp_path / "zarr"
+        bbox = (2.0, 4.0, 15.0, 14.0)
+
+        # First write: 2023-01, 2023-02
+        nc1 = tmp_path / "era5_t2m_first.nc"
+        _write_era5_nc(nc1, variable="t2m")  # 2023-01, 2023-02
+        _netcdf_to_zarr(nc1, zarr_root, "era5/t2m", variable="2m_temperature", bbox=bbox)
+
+        # Second write: a dataset with 2023-02 (existing) + 2023-03 (new)
+        nc2 = tmp_path / "era5_t2m_second.nc"
+        times = [np.datetime64("2023-02-01"), np.datetime64("2023-03-01")]
+        y = np.linspace(14.0, 4.0, 5)
+        x = np.linspace(2.0, 15.0, 5)
+        data = np.full((2, 5, 5), 280.0, dtype="float32")
+        ds2 = xr.Dataset(
+            {"t2m": (("time", "y", "x"), data)}, coords={"time": times, "y": y, "x": x}
+        )
+        ds2.to_netcdf(str(nc2))
+        _netcdf_to_zarr(nc2, zarr_root, "era5/t2m", variable="2m_temperature", bbox=bbox)
+
+        ds_out = xr.open_zarr(str(zarr_root), group="era5/t2m", consolidated=False)
+        # Should have 3 unique timestamps: 2023-01, 2023-02, 2023-03
+        assert len(ds_out["time"]) == 3
+
+    def test_exception_in_duplicate_check_appends_anyway(self, tmp_path):
+        """If the existing-timestamp check raises, the data is appended anyway."""
+        from unittest.mock import patch
+
+        from eostrata.sources.cds import _netcdf_to_zarr
+
+        nc = tmp_path / "era5_t2m.nc"
+        _write_era5_nc(nc, variable="t2m")
+        zarr_root = tmp_path / "zarr"
+        bbox = (2.0, 4.0, 15.0, 14.0)
+
+        # First write to create the group
+        _netcdf_to_zarr(nc, zarr_root, "era5/t2m", variable="2m_temperature", bbox=bbox)
+
+        # Second call: make xr.open_zarr raise so the duplicate check is skipped
+        original_open_zarr = xr.open_zarr
+        call_count = 0
+
+        def _patched_open_zarr(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise OSError("simulated read error")
+            return original_open_zarr(*args, **kwargs)
+
+        with patch("eostrata.sources.cds.xr.open_zarr", side_effect=_patched_open_zarr):
+            _netcdf_to_zarr(nc, zarr_root, "era5/t2m", variable="2m_temperature", bbox=bbox)
+
+        # Group still exists — data was appended despite the check failure
+        assert (zarr_root / "era5" / "t2m").exists()
+
     def test_valid_time_renamed_to_time(self, tmp_path):
         """valid_time dimension is renamed to time (line 138)."""
         from eostrata.sources.cds import _netcdf_to_zarr

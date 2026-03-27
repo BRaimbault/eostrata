@@ -294,8 +294,8 @@ class TestStoreUsage:
 
     def test_group_without_time_dimension_excluded(self, tmp_path):
         """A Zarr group with no time dimension should be skipped in the response."""
-        import xarray as xr
         import numpy as np
+        import xarray as xr
 
         zarr_root = tmp_path / "zarr"
         # Write a group with no time dimension

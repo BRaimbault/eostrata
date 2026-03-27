@@ -215,6 +215,7 @@ class TestEvictTimestamp:
 
     def test_empty_time_array_returns_zero(self, tmp_path):
         import xarray as xr
+
         ds = xr.Dataset(
             {"v": (("time", "y", "x"), np.zeros((0, 4, 4)))},
             coords={"time": np.array([], dtype="datetime64[ns]")},
@@ -226,7 +227,9 @@ class TestEvictTimestamp:
         """When the evicted timestamp has its own sentinel, that sentinel is removed."""
         _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021])
         # Record access for both timestamps so both sentinels exist
-        record_access(tmp_path, "worldpop/nga", [np.datetime64("2020-01-01"), np.datetime64("2021-01-01")])
+        record_access(
+            tmp_path, "worldpop/nga", [np.datetime64("2020-01-01"), np.datetime64("2021-01-01")]
+        )
         evict_timestamp(tmp_path, "worldpop/nga", "2020-01-01T00:00:00")
         access_dir = tmp_path / "worldpop" / "nga" / _ACCESS_DIR
         names = [f.name for f in access_dir.iterdir()]
@@ -374,6 +377,7 @@ class TestListTimestampsEdgeCases:
     def test_time_values_raises_returns_empty(self, tmp_path):
         """ds['time'].values raising an exception → return []."""
         import xarray as xr
+
         mock_ds = MagicMock(spec=xr.Dataset)
         mock_ds.__contains__ = lambda self, key: key == "time"
         mock_ds.__getitem__ = MagicMock(side_effect=KeyError("time"))
@@ -382,6 +386,7 @@ class TestListTimestampsEdgeCases:
 
     def test_empty_time_array_returns_empty(self, tmp_path):
         import xarray as xr
+
         ds = xr.Dataset(
             {"v": (("time", "y", "x"), np.zeros((0, 4, 4)))},
             coords={"time": np.array([], dtype="datetime64[ns]")},
@@ -397,6 +402,7 @@ class TestListTimestampsEdgeCases:
         for f in group_dir.rglob("*"):
             if f.is_file():
                 import os
+
                 os.utime(f, (0, 0))
         ts_list = list_timestamps(tmp_path, "worldpop/nga")
         assert len(ts_list) == 2

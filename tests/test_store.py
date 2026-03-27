@@ -142,6 +142,7 @@ class TestGeotiffToZarr:
     def test_appends_when_existing_zarr_unreadable(self, tmp_path):
         """If the existing group can't be opened, proceed with append (don't crash)."""
         from unittest.mock import patch
+
         tif = tmp_path / "test.tif"
         _write_tif(tif, (0.0, 0.0, 5.0, 5.0))
         zarr_root = tmp_path / "zarr"

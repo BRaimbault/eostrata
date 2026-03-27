@@ -616,6 +616,7 @@ class TestList:
 
     def test_list_shows_last_accessed_when_sentinel_exists(self, tmp_path):
         from eostrata.cache import _ACCESS_DIR
+
         zarr_root = tmp_path / "zarr"
         ds = xr.Dataset({"v": (("y", "x"), np.ones((4, 4)))})
         ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
@@ -628,8 +629,10 @@ class TestList:
             app,
             [
                 "list",
-                "--zarr-root", str(zarr_root),
-                "--catalog-path", str(tmp_path / "catalog.json"),
+                "--zarr-root",
+                str(zarr_root),
+                "--catalog-path",
+                str(tmp_path / "catalog.json"),
             ],
         )
         assert result.exit_code == 0

@@ -306,14 +306,24 @@ class TestRemoveTimestamp:
         cat = _make_catalog()
         register_item(
             cat,
-            collection_id="worldpop", item_id="worldpop_nga", bbox=_BBOX, datetime_=_DT,
-            zarr_root=tmp_path / "zarr", zarr_group="worldpop/nga", variable="population",
+            collection_id="worldpop",
+            item_id="worldpop_nga",
+            bbox=_BBOX,
+            datetime_=_DT,
+            zarr_root=tmp_path / "zarr",
+            zarr_group="worldpop/nga",
+            variable="population",
         )
         dt2 = datetime(2021, 1, 1, tzinfo=UTC)
         register_item(
             cat,
-            collection_id="worldpop", item_id="worldpop_nga", bbox=_BBOX, datetime_=dt2,
-            zarr_root=tmp_path / "zarr", zarr_group="worldpop/nga", variable="population",
+            collection_id="worldpop",
+            item_id="worldpop_nga",
+            bbox=_BBOX,
+            datetime_=dt2,
+            zarr_root=tmp_path / "zarr",
+            zarr_group="worldpop/nga",
+            variable="population",
         )
         return cat
 
@@ -359,8 +369,13 @@ class TestRemoveTimestamp:
         cat.add_child(collection)
         register_item(
             cat,
-            collection_id="worldpop", item_id="worldpop_nga", bbox=_BBOX, datetime_=_DT,
-            zarr_root=tmp_path / "zarr", zarr_group="worldpop/nga", variable="population",
+            collection_id="worldpop",
+            item_id="worldpop_nga",
+            bbox=_BBOX,
+            datetime_=_DT,
+            zarr_root=tmp_path / "zarr",
+            zarr_group="worldpop/nga",
+            variable="population",
         )
         changed = remove_timestamp(cat, "worldpop/nga", "2020-01-01T00:00:00+00:00")
         assert changed

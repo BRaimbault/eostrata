@@ -13,6 +13,7 @@ def _run_setup_logging(**kwargs):
     mock_root.handlers = []  # empty → won't return early
     with patch("eostrata.log.logging.getLogger", return_value=mock_root):
         from eostrata.log import setup_logging
+
         setup_logging(**kwargs)
     return mock_root
 
@@ -32,6 +33,7 @@ class TestSetupLogging:
         mock_root.handlers = [MagicMock()]  # non-empty → early return
         with patch("eostrata.log.logging.getLogger", return_value=mock_root):
             from eostrata.log import setup_logging
+
             setup_logging(log_file="", rich_console=False)
         mock_root.addHandler.assert_not_called()
 

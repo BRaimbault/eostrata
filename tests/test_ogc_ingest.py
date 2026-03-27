@@ -523,6 +523,7 @@ class TestIngestionFunctions:
             src.download.side_effect = server_error
 
             import pytest
+
             with pytest.raises(httpx.HTTPStatusError):
                 ingestion.run_chirps_ingest(
                     years=[2023],

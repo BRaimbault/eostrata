@@ -206,9 +206,11 @@ class TestResolveAccessedTimes:
     def test_time_values_access_error_returns_empty(self):
         """Dataset with time coord but values raises AttributeError → []."""
         import unittest.mock as mock
+
         ds = self._make_ds([2020])
-        with mock.patch.object(type(ds["time"]), "values", new_callable=mock.PropertyMock,
-                               side_effect=AttributeError):
+        with mock.patch.object(
+            type(ds["time"]), "values", new_callable=mock.PropertyMock, side_effect=AttributeError
+        ):
             result = resolve_accessed_times(ds, None)
         assert result == []
 
@@ -252,5 +254,7 @@ class TestResolveAccessedTimes:
     def test_anomaly_no_duplicate_when_overlap(self):
         """A timestamp in both period and baseline should appear only once."""
         ds = self._make_ds([2020, 2021])
-        result = resolve_accessed_times(ds, "2020-01-01/2021-12-31", "anomaly", "2020-01-01/2021-12-31")
+        result = resolve_accessed_times(
+            ds, "2020-01-01/2021-12-31", "anomaly", "2020-01-01/2021-12-31"
+        )
         assert len(result) == 2

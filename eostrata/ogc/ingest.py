@@ -42,15 +42,16 @@ _INGEST_DESCRIPTION = {
     "description": (
         "Download earth observation data, clip to the configured bounding box, "
         "write to the Zarr store, and register a STAC item. "
-        "Set ``source`` to select the dataset: ``worldpop``, ``chirps``, or ``cds``."
+        "Set ``source`` to select the dataset: ``worldpop``, ``chirps``, ``cds``, "
+        "or ``sentinel_ndvi``."
     ),
     "version": "0.1.0",
     "jobControlOptions": ["async-execute"],
     "inputs": {
         "source": {
             "title": "Source",
-            "description": "Dataset to ingest: worldpop, chirps, or cds.",
-            "schema": {"type": "string", "enum": ["worldpop", "chirps", "cds"]},
+            "description": "Dataset to ingest: worldpop, chirps, cds, or sentinel_ndvi.",
+            "schema": {"type": "string", "enum": ["worldpop", "chirps", "cds", "sentinel_ndvi"]},
         },
         "iso3": {
             "title": "ISO3 country code",
@@ -71,11 +72,24 @@ _INGEST_DESCRIPTION = {
             "title": "Months",
             "description": (
                 "List of months 1-12, or the string 'ALL' for every month "
-                "(chirps/cds only; default: latest available)."
+                "(chirps/cds/sentinel_ndvi only; default: latest available)."
             ),
             "schema": {
                 "oneOf": [
                     {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 12}},
+                    {"type": "string", "enum": ["ALL"]},
+                ]
+            },
+        },
+        "dekads": {
+            "title": "Dekads",
+            "description": (
+                "List of dekads 1-3, or the string 'ALL' for all three dekads "
+                "(sentinel_ndvi only; default: latest available)."
+            ),
+            "schema": {
+                "oneOf": [
+                    {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 3}},
                     {"type": "string", "enum": ["ALL"]},
                 ]
             },
@@ -87,12 +101,14 @@ _INGEST_DESCRIPTION = {
 # ── Pydantic model ────────────────────────────────────────────────────────────
 
 Month = Annotated[int, Field(ge=1, le=12)]
+Dekad = Annotated[int, Field(ge=1, le=3)]
 
 _ALL_MONTHS = list(range(1, 13))
+_ALL_DEKADS = [1, 2, 3]
 
 
 class IngestInputs(BaseModel):
-    source: Literal["worldpop", "chirps", "cds"]
+    source: Literal["worldpop", "chirps", "cds", "sentinel_ndvi"]
     iso3: Annotated[str, Field(min_length=3, max_length=3)] | None = Field(
         None, description="ISO 3166-1 alpha-3 country code (worldpop only)"
     )
@@ -101,7 +117,11 @@ class IngestInputs(BaseModel):
     )
     years: list[int] | None = Field(None, description="Years to ingest")
     months: list[Month] | Literal["ALL"] | None = Field(
-        None, description="Months 1-12 to ingest, or 'ALL' for every month (chirps/cds only)"
+        None,
+        description="Months 1-12 to ingest, or 'ALL' for every month (chirps/cds/sentinel_ndvi)",
+    )
+    dekads: list[Dekad] | Literal["ALL"] | None = Field(
+        None, description="Dekads 1-3 to ingest, or 'ALL' for all three (sentinel_ndvi only)"
     )
 
     @field_validator("months", mode="before")
@@ -109,6 +129,13 @@ class IngestInputs(BaseModel):
     def expand_all_months(cls, v):
         if isinstance(v, str) and v.strip().upper() == "ALL":
             return _ALL_MONTHS
+        return v
+
+    @field_validator("dekads", mode="before")
+    @classmethod
+    def expand_all_dekads(cls, v):
+        if isinstance(v, str) and v.strip().upper() == "ALL":
+            return _ALL_DEKADS
         return v
 
     @model_validator(mode="after")
@@ -125,6 +152,14 @@ class IngestExecutionRequest(BaseModel):
                 {"inputs": {"source": "worldpop", "iso3": "NGA", "years": [2023]}},
                 {"inputs": {"source": "chirps", "years": [2024], "months": [1, 2, 3]}},
                 {"inputs": {"source": "cds", "variable": "t2m", "years": [2023]}},
+                {
+                    "inputs": {
+                        "source": "sentinel_ndvi",
+                        "years": [2024],
+                        "months": [1],
+                        "dekads": [1, 2, 3],
+                    }
+                },
             ]
         }
     }
@@ -261,7 +296,7 @@ def execute_ingest(body: IngestExecutionRequest, response: Response) -> dict:
             eviction_buffer_mb=settings.store_eviction_buffer_mb,
         )
 
-    else:  # cds
+    elif inp.source == "cds":
         from eostrata.sources.cds import CDSSource
 
         variable = inp.variable or "t2m"
@@ -276,6 +311,32 @@ def execute_ingest(body: IngestExecutionRequest, response: Response) -> dict:
             variable=variable,
             years=years,
             months=months,
+            zarr_root=settings.zarr_root,
+            raw_dir=settings.raw_dir,
+            catalog_path=settings.catalog_path,
+            bbox=settings.bbox,
+            quota_mb=settings.store_quota_mb,
+            eviction_buffer_mb=settings.store_eviction_buffer_mb,
+        )
+
+    else:  # sentinel_ndvi
+        from eostrata.sources.sentinel_ndvi import SentinelNDVISource
+
+        latest = SentinelNDVISource().latest_available()
+        years = inp.years or [latest.year]
+        months = inp.months or [latest.month]
+        _default_dekad = 1 if latest.day < 11 else (2 if latest.day < 21 else 3)
+        dekads = inp.dekads or [_default_dekad]
+        job = jobs.create_job(
+            "sentinel_ndvi", {"years": years, "months": months, "dekads": dekads}
+        )
+        _executor.submit(
+            _run_job,
+            job.job_id,
+            ingestion.run_sentinel_ndvi_ingest,
+            years=years,
+            months=months,
+            dekads=dekads,
             zarr_root=settings.zarr_root,
             raw_dir=settings.raw_dir,
             catalog_path=settings.catalog_path,

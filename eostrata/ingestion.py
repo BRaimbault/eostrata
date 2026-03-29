@@ -233,6 +233,89 @@ def run_cds_ingest(
     return failed, saved
 
 
+def run_sentinel_ndvi_ingest(
+    *,
+    years: list[int],
+    months: list[int],
+    dekads: list[int],
+    zarr_root: Path,
+    raw_dir: Path,
+    catalog_path: Path,
+    bbox: tuple[float, float, float, float],
+    quota_mb: float = 0.0,
+    eviction_buffer_mb: float = 0.0,
+) -> tuple[list[str], bool]:
+    """Download Sentinel NDVI dekadal rasters, write to Zarr, and register STAC items.
+
+    Returns ``(failed, saved)`` where *failed* is a list of period labels that
+    encountered errors and *saved* is True if at least one period was written.
+    """
+    from eostrata import catalog as cat
+    from eostrata.cache import check_and_evict
+    from eostrata.sources.sentinel_ndvi import SentinelNDVISource
+
+    check_and_evict(
+        zarr_root, quota_mb=quota_mb, required_mb=eviction_buffer_mb, catalog_path=catalog_path
+    )
+
+    source = SentinelNDVISource()
+    zarr_group = source.zarr_group()
+    catalogue = cat.load_or_create(catalog_path)
+    failed: list[str] = []
+    saved = False
+
+    for year in years:
+        for month in months:
+            for dekad in dekads:
+                label = f"{year}-{month:02d}-d{dekad}"
+                logger.info(
+                    "Sentinel NDVI: ingesting year=%d month=%02d dekad=%d", year, month, dekad
+                )
+                try:
+                    paths = source.download(raw_dir, bbox, year=year, month=month, dekad=dekad)
+                except Exception as exc:
+                    logger.error("Sentinel NDVI: failed to download %s: %s", label, exc)
+                    failed.append(label)
+                    continue
+                try:
+                    ds = source.to_zarr(
+                        paths[0], zarr_root, bbox, year=year, month=month, dekad=dekad
+                    )
+                except Exception as exc:
+                    logger.error("Sentinel NDVI: failed to write Zarr for %s: %s", label, exc)
+                    failed.append(label)
+                    continue
+                paths[0].unlink(missing_ok=True)
+                logger.debug("Sentinel NDVI: removed raw file %s", paths[0])
+                item_bbox = (
+                    float(ds.x.min()),
+                    float(ds.y.min()),
+                    float(ds.x.max()),
+                    float(ds.y.max()),
+                )
+                start_day = {1: 1, 2: 11, 3: 21}[dekad]
+                cat.register_item(
+                    catalogue,
+                    collection_id=source.collection_id,
+                    item_id=source.stac_item_id(),
+                    bbox=item_bbox,
+                    datetime_=datetime(year, month, start_day, tzinfo=UTC),
+                    zarr_root=zarr_root,
+                    zarr_group=zarr_group,
+                    variable=source.VARIABLE,
+                    extra_properties=source.stac_properties(
+                        year=year, month=month, dekad=dekad
+                    ),
+                )
+                saved = True
+
+    if saved:
+        cat.save(catalogue, catalog_path)
+        logger.info("Sentinel NDVI: STAC item saved to %s", catalog_path)
+
+    return failed, saved
+
+
 def rebuild_catalog_from_zarr(
     *,
     zarr_root: Path,
@@ -308,6 +391,11 @@ def rebuild_catalog_from_zarr(
             item_id = f"era5_{dataset_name}"
             variable = dataset_name
             extra = {"eostrata:variable": variable}
+        elif source_type == "sentinel_ndvi":
+            collection_id = "sentinel_ndvi"
+            item_id = "sentinel_ndvi_global"
+            variable = "ndvi"
+            extra = {"eostrata:variable": variable, "eostrata:source": "Sentinel-3 OLCI"}
         else:
             logger.warning("Unknown source type '%s' in '%s' — skipping", source_type, group_path)
             ds.close()

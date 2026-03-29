@@ -476,6 +476,98 @@ def download_cds(
     console.print("[bold green]Done.[/bold green]")
 
 
+# ── download sentinel-ndvi ────────────────────────────────────────────────────
+
+
+_ALL_DEKADS = [1, 2, 3]
+
+
+@download_app.command("sentinel-ndvi")
+def download_sentinel_ndvi(
+    year: int = typer.Option(None, help="Single year (default: latest available)"),
+    years: str = typer.Option(None, help="Multiple years, comma-separated: 2022,2023"),
+    month: int = typer.Option(None, help="Single month 1-12 (default: latest available)"),
+    months: str = typer.Option(None, help="Multiple months, comma-separated: 1,2,3 or ALL"),
+    dekad: int = typer.Option(None, help="Single dekad 1-3 (default: latest available)"),
+    dekads: str = typer.Option(
+        None, help="Multiple dekads, comma-separated: 1,2,3 or ALL (all dekads of month)"
+    ),
+    zarr_root: Path | None = typer.Option(None, help="Override Zarr store root"),
+    raw_dir: Path | None = typer.Option(None, help="Override raw download directory"),
+    catalog_path: Path | None = typer.Option(None, help="Override catalog.json path"),
+    verbose: bool = typer.Option(False, "-v", "--verbose"),
+) -> None:
+    """Download Sentinel-3 NDVI 300m dekadal composites from the Copernicus Global Land Service.
+
+    Supports multiple years, months and dekads in a single call:
+      --years 2022,2023 --months 1,2,3 --dekads ALL
+    """
+    _setup_logging(verbose)
+
+    from eostrata.config import settings
+    from eostrata.ingestion import run_sentinel_ndvi_ingest
+    from eostrata.sources.sentinel_ndvi import SentinelNDVISource
+
+    _zarr_root = zarr_root or settings.zarr_root
+    _raw_dir = raw_dir or settings.raw_dir
+    _catalog_path = catalog_path or settings.catalog_path
+
+    latest = SentinelNDVISource().latest_available()
+    # Derive default dekad from latest_available day
+    _default_dekad = 1 if latest.day < 11 else (2 if latest.day < 21 else 3)
+    _years = _parse_int_list(year, years, latest.year)
+    _months = _parse_int_list(month, months, latest.month, all_values=_ALL_MONTHS)
+    _dekads = _parse_int_list(dekad, dekads, _default_dekad, all_values=_ALL_DEKADS)
+
+    logger.info(
+        "CLI download sentinel-ndvi years=%s months=%s dekads=%s bbox=%s",
+        _years,
+        _months,
+        _dekads,
+        settings.bbox,
+    )
+    console.print(
+        f"[bold]Downloading Sentinel NDVI[/bold] years=[cyan]{_years}[/cyan] "
+        f"months=[cyan]{_months}[/cyan] dekads=[cyan]{_dekads}[/cyan] "
+        f"bbox=[cyan]{settings.bbox}[/cyan]"
+    )
+
+    try:
+        failed, saved = run_sentinel_ndvi_ingest(
+            years=_years,
+            months=_months,
+            dekads=_dekads,
+            zarr_root=_zarr_root,
+            raw_dir=_raw_dir,
+            catalog_path=_catalog_path,
+            bbox=settings.bbox,
+            quota_mb=settings.store_quota_mb,
+            eviction_buffer_mb=settings.store_eviction_buffer_mb,
+        )
+    except Exception as exc:
+        logger.exception("CLI command failed: %s", exc)
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from None
+
+    if not saved:
+        if failed:
+            console.print(
+                f"[red]Error: nothing ingested — {len(failed)} period(s) failed: "
+                f"{', '.join(failed)}[/red]"
+            )
+        else:
+            console.print(
+                "[red]Error: nothing ingested — all requested periods may be unavailable[/red]"
+            )
+        raise typer.Exit(1) from None
+    if failed:
+        console.print(
+            f"[yellow]Warning: {len(failed)} period(s) failed to download: "
+            f"{', '.join(failed)}[/yellow]"
+        )
+    console.print("[bold green]Done.[/bold green]")
+
+
 # ── rebuild-catalog ───────────────────────────────────────────────────────────
 
 

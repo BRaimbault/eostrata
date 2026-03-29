@@ -1131,3 +1131,124 @@ class TestRebuildCatalog:
             result = runner.invoke(app, ["rebuild-catalog"])
         assert result.exit_code == 0
         mock_rebuild.assert_called_once()
+
+
+# ── download sentinel-ndvi ────────────────────────────────────────────────────
+
+
+class TestDownloadSentinelNDVI:
+    def test_success(self, tmp_path):
+        mock_settings = _make_settings_mock(tmp_path)
+        mock_settings.store_eviction_buffer_mb = 0.0
+
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch(
+                "eostrata.ingestion.run_sentinel_ndvi_ingest", return_value=([], True)
+            ) as mock_ingest,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "download",
+                    "sentinel-ndvi",
+                    "--year", "2024",
+                    "--month", "3",
+                    "--dekad", "1",
+                    "--zarr-root", str(tmp_path / "zarr"),
+                    "--raw-dir", str(tmp_path / "raw"),
+                    "--catalog-path", str(tmp_path / "catalog.json"),
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert "Done" in result.output
+        kw = mock_ingest.call_args.kwargs
+        assert kw["years"] == [2024]
+        assert kw["months"] == [3]
+        assert kw["dekads"] == [1]
+
+    def test_failure_nothing_saved_exits_1(self, tmp_path):
+        mock_settings = _make_settings_mock(tmp_path)
+        mock_settings.store_eviction_buffer_mb = 0.0
+
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch(
+                "eostrata.ingestion.run_sentinel_ndvi_ingest",
+                return_value=(["2024-03-d1"], False),
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "download",
+                    "sentinel-ndvi",
+                    "--year", "2024",
+                    "--month", "3",
+                    "--dekad", "1",
+                ],
+            )
+
+        assert result.exit_code == 1
+        assert "failed" in result.output
+
+    def test_no_failures_no_save_exits_1(self, tmp_path):
+        """When nothing is saved but no explicit failures, exit 1 with unavailable message."""
+        mock_settings = _make_settings_mock(tmp_path)
+        mock_settings.store_eviction_buffer_mb = 0.0
+
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch(
+                "eostrata.ingestion.run_sentinel_ndvi_ingest",
+                return_value=([], False),
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                ["download", "sentinel-ndvi", "--year", "2024", "--month", "3", "--dekad", "1"],
+            )
+
+        assert result.exit_code == 1
+        assert "unavailable" in result.output
+
+    def test_partial_failure_shows_warning(self, tmp_path):
+        """When some but not all periods fail, exit 0 with a warning."""
+        mock_settings = _make_settings_mock(tmp_path)
+        mock_settings.store_eviction_buffer_mb = 0.0
+
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch(
+                "eostrata.ingestion.run_sentinel_ndvi_ingest",
+                return_value=(["2024-03-d2"], True),
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                ["download", "sentinel-ndvi", "--year", "2024", "--month", "3"],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert "Warning" in result.output
+        assert "Done" in result.output
+
+    def test_exception_exits_1(self, tmp_path):
+        mock_settings = _make_settings_mock(tmp_path)
+        mock_settings.store_eviction_buffer_mb = 0.0
+
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch(
+                "eostrata.ingestion.run_sentinel_ndvi_ingest",
+                side_effect=RuntimeError("connection refused"),
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                ["download", "sentinel-ndvi", "--year", "2024", "--month", "3", "--dekad", "1"],
+            )
+
+        assert result.exit_code == 1
+        assert "Error" in result.output

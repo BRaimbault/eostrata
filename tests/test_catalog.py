@@ -39,15 +39,15 @@ def _catalog_with_item(tmp_path: Path, item_id: str = "worldpop_nga") -> pystac.
 
 
 class TestMakeCatalog:
-    def test_has_three_collections(self):
+    def test_has_four_collections(self):
         cat = _make_catalog()
         colls = list(cat.get_children())
-        assert len(colls) == 3
+        assert len(colls) == 4
 
     def test_collection_ids(self):
         cat = _make_catalog()
         ids = {c.id for c in cat.get_children()}
-        assert ids == {"worldpop", "cds", "chirps"}
+        assert ids == {"worldpop", "cds", "chirps", "sentinel_ndvi"}
 
 
 class TestLoadOrCreate:
@@ -250,7 +250,7 @@ class TestPystacClient:
     def test_all_collections(self, tmp_path):
         client = self._client(tmp_path)
         result = client.all_collections()
-        assert len(result["collections"]) == 3
+        assert len(result["collections"]) == 4
 
     def test_get_collection_found(self, tmp_path):
         client = self._client(tmp_path)

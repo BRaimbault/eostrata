@@ -872,6 +872,214 @@ class TestRebuildCatalogFromZarr:
 
         assert results == {}
 
+    def test_sentinel_ndvi_group_registered(self, tmp_path):
+        from eostrata.ingestion import rebuild_catalog_from_zarr
+
+        zarr_root = tmp_path / "zarr"
+        zarr_root.mkdir()
+        catalog_path = tmp_path / "catalog.json"
+        mock_ds = _mock_zarr_ds(_TS_MONTHLY)
+
+        with (
+            patch(
+                "eostrata.cache.list_groups",
+                return_value=[("sentinel_ndvi/global", 5.0, 0.0)],
+            ),
+            patch("xarray.open_zarr", return_value=mock_ds),
+            patch("eostrata.catalog.save"),
+        ):
+            results = rebuild_catalog_from_zarr(zarr_root=zarr_root, catalog_path=catalog_path)
+
+        assert results == {"sentinel_ndvi/global": 3}
+
+
+# ── Sentinel NDVI OGC execution ───────────────────────────────────────────────
+
+
+class TestSentinelNDVIExecution:
+    def test_returns_201_with_job_id(self, client, sync_executor):
+        with patch("eostrata.ingestion.run_sentinel_ndvi_ingest", return_value=([], True)):
+            resp = client.post(
+                "/processes/ingest/execution",
+                json={
+                    "inputs": {
+                        "source": "sentinel_ndvi",
+                        "years": [2024],
+                        "months": [1],
+                        "dekads": [1],
+                    }
+                },
+            )
+        assert resp.status_code == 201
+        assert "jobID" in resp.json()
+
+    def test_success_path_calls_ingest(self, client, sync_executor):
+        with patch(
+            "eostrata.ingestion.run_sentinel_ndvi_ingest", return_value=([], True)
+        ) as mock_fn:
+            client.post(
+                "/processes/ingest/execution",
+                json={
+                    "inputs": {
+                        "source": "sentinel_ndvi",
+                        "years": [2024],
+                        "months": [3],
+                        "dekads": [2],
+                    }
+                },
+            )
+        kw = mock_fn.call_args.kwargs
+        assert kw["years"] == [2024]
+        assert kw["months"] == [3]
+        assert kw["dekads"] == [2]
+
+    def test_dekads_all_string_expands(self, client, sync_executor):
+        with patch(
+            "eostrata.ingestion.run_sentinel_ndvi_ingest", return_value=([], True)
+        ) as mock_fn:
+            client.post(
+                "/processes/ingest/execution",
+                json={"inputs": {"source": "sentinel_ndvi", "dekads": "ALL"}},
+            )
+        assert mock_fn.call_args.kwargs["dekads"] == [1, 2, 3]
+
+    def test_failure_path_marks_job_failed(self, client, sync_executor):
+        with patch(
+            "eostrata.ingestion.run_sentinel_ndvi_ingest",
+            side_effect=RuntimeError("network error"),
+        ):
+            resp = client.post(
+                "/processes/ingest/execution",
+                json={"inputs": {"source": "sentinel_ndvi"}},
+            )
+        job = client.get(f"/processes/jobs/{resp.json()['jobID']}").json()
+        assert job["status"] == "failed"
+
+
+# ── Sentinel NDVI ingestion unit tests ────────────────────────────────────────
+
+
+class TestSentinelNDVIIngestion:
+    def test_ingest_calls_source_and_catalog(self, tmp_path):
+        from contextlib import ExitStack
+
+        from eostrata import ingestion
+
+        mock_ds = _mock_ds()
+
+        with ExitStack() as stack:
+            src, mock_register, mock_save = _setup_source(
+                stack,
+                "eostrata.sources.sentinel_ndvi.SentinelNDVISource",
+                "sentinel_ndvi/global",
+                mock_ds,
+                tmp_path,
+                collection_id="sentinel_ndvi",
+                VARIABLE="ndvi",
+            )
+            ingestion.run_sentinel_ndvi_ingest(
+                years=[2024],
+                months=[3],
+                dekads=[1],
+                zarr_root=tmp_path / "zarr",
+                raw_dir=tmp_path / "raw",
+                catalog_path=tmp_path / "catalog.json",
+                bbox=_BBOX,
+            )
+
+        src.download.assert_called_once()
+        src.to_zarr.assert_called_once()
+        mock_register.assert_called_once()
+        mock_save.assert_called_once()
+
+    def test_ingest_multiple_dekads(self, tmp_path):
+        from contextlib import ExitStack
+
+        from eostrata import ingestion
+
+        with ExitStack() as stack:
+            src, mock_register, _ = _setup_source(
+                stack,
+                "eostrata.sources.sentinel_ndvi.SentinelNDVISource",
+                "sentinel_ndvi/global",
+                _mock_ds(),
+                tmp_path,
+                collection_id="sentinel_ndvi",
+                VARIABLE="ndvi",
+            )
+            ingestion.run_sentinel_ndvi_ingest(
+                years=[2024],
+                months=[1],
+                dekads=[1, 2, 3],
+                zarr_root=tmp_path / "zarr",
+                raw_dir=tmp_path / "raw",
+                catalog_path=tmp_path / "catalog.json",
+                bbox=_BBOX,
+            )
+
+        assert src.download.call_count == 3
+        assert mock_register.call_count == 3
+
+    def test_ingest_download_failure_collected(self, tmp_path):
+        from contextlib import ExitStack
+
+        from eostrata import ingestion
+
+        with ExitStack() as stack:
+            src, _, mock_save = _setup_source(
+                stack,
+                "eostrata.sources.sentinel_ndvi.SentinelNDVISource",
+                "sentinel_ndvi/global",
+                _mock_ds(),
+                tmp_path,
+                collection_id="sentinel_ndvi",
+                VARIABLE="ndvi",
+            )
+            src.download.side_effect = RuntimeError("network error")
+            failed, saved = ingestion.run_sentinel_ndvi_ingest(
+                years=[2024],
+                months=[1],
+                dekads=[1],
+                zarr_root=tmp_path / "zarr",
+                raw_dir=tmp_path / "raw",
+                catalog_path=tmp_path / "catalog.json",
+                bbox=_BBOX,
+            )
+
+        assert failed == ["2024-01-d1"]
+        assert not saved
+        mock_save.assert_not_called()
+
+    def test_ingest_zarr_failure_collected(self, tmp_path):
+        from contextlib import ExitStack
+
+        from eostrata import ingestion
+
+        with ExitStack() as stack:
+            src, _, mock_save = _setup_source(
+                stack,
+                "eostrata.sources.sentinel_ndvi.SentinelNDVISource",
+                "sentinel_ndvi/global",
+                _mock_ds(),
+                tmp_path,
+                collection_id="sentinel_ndvi",
+                VARIABLE="ndvi",
+            )
+            src.to_zarr.side_effect = RuntimeError("zarr error")
+            failed, saved = ingestion.run_sentinel_ndvi_ingest(
+                years=[2024],
+                months=[1],
+                dekads=[1],
+                zarr_root=tmp_path / "zarr",
+                raw_dir=tmp_path / "raw",
+                catalog_path=tmp_path / "catalog.json",
+                bbox=_BBOX,
+            )
+
+        assert failed == ["2024-01-d1"]
+        assert not saved
+        mock_save.assert_not_called()
+
     def test_zarr_open_error_skipped(self, tmp_path):
         from eostrata.ingestion import rebuild_catalog_from_zarr
 

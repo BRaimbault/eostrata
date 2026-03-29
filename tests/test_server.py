@@ -184,12 +184,12 @@ class TestCollections:
     def test_empty_store_returns_predefined_collections(self, client):
         data = client.get("/collections").json()
         assert "collections" in data
-        # The catalog always has 3 predefined collections (worldpop, cds, chirps)
+        # The catalog always has 4 predefined collections (worldpop, cds, chirps, sentinel_ndvi)
         # even when no data has been ingested yet
         assert isinstance(data["collections"], list)
-        assert len(data["collections"]) == 3
+        assert len(data["collections"]) == 4
         ids = {c["id"] for c in data["collections"]}
-        assert ids == {"worldpop", "cds", "chirps"}
+        assert ids == {"worldpop", "cds", "chirps", "sentinel_ndvi"}
 
     def test_with_registered_item(self, tmp_path, monkeypatch):
         monkeypatch.setenv("EOSTRATA_CATALOG_PATH", str(tmp_path / "catalog.json"))

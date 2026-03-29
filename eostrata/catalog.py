@@ -22,6 +22,7 @@ CATALOG_DESCRIPTION = "eostrata earth observation data catalogue"
 COLLECTION_WORLDPOP = "worldpop"
 COLLECTION_CDS = "cds"
 COLLECTION_CHIRPS = "chirps"
+COLLECTION_SENTINEL_NDVI = "sentinel_ndvi"
 
 _COLLECTIONS = {
     COLLECTION_WORLDPOP: {
@@ -35,6 +36,10 @@ _COLLECTIONS = {
     COLLECTION_CHIRPS: {
         "title": "CHIRPS precipitation",
         "description": "Climate Hazards Group InfraRed Precipitation with Station data",
+    },
+    COLLECTION_SENTINEL_NDVI: {
+        "title": "Sentinel NDVI (CGLS)",
+        "description": "Sentinel-3 NDVI 300m dekadal composites from the Copernicus Global Land Service",
     },
 }
 

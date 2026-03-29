@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import httpx
 import numpy as np
+import pytest
 
 from eostrata.sources.sentinel_ndvi import (
     SentinelNDVISource,
     _build_wcs_url,
+    _download,
     _end_day_of_dekad,
 )
 
@@ -220,3 +223,134 @@ class TestSentinelNDVISource:
         assert ts.year == 2023
         assert ts.month == 6
         assert ts.day == 11  # dekad 2 starts on the 11th
+
+
+# ── _download() unit tests ─────────────────────────────────────────────────────
+
+
+def _make_httpx_stream_mock(content: bytes):
+    mock_resp = MagicMock()
+    mock_resp.__enter__ = lambda s: s
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.headers = {"content-length": str(len(content))}
+    mock_resp.iter_bytes = MagicMock(return_value=iter([content]))
+    return mock_resp
+
+
+class TestDownloadFunction:
+    def test_streams_content_to_file(self, tmp_path):
+        dest = tmp_path / "sub" / "out.tif"
+        content = b"fake tif bytes"
+        mock_resp = _make_httpx_stream_mock(content)
+
+        with patch("eostrata.sources.sentinel_ndvi.httpx.stream", return_value=mock_resp):
+            result = _download("http://example.com/ndvi.tif", dest)
+
+        assert result == dest
+        assert dest.read_bytes() == content
+
+    def test_skips_if_file_already_exists(self, tmp_path):
+        dest = tmp_path / "out.tif"
+        dest.write_bytes(b"existing")
+
+        with patch("eostrata.sources.sentinel_ndvi.httpx.stream") as mock_stream:
+            result = _download("http://example.com/ndvi.tif", dest)
+
+        mock_stream.assert_not_called()
+        assert result == dest
+
+    def test_sends_bearer_auth_header(self, tmp_path):
+        dest = tmp_path / "out.tif"
+        content = b"data"
+        mock_resp = _make_httpx_stream_mock(content)
+
+        with patch(
+            "eostrata.sources.sentinel_ndvi.httpx.stream", return_value=mock_resp
+        ) as mock_stream:
+            _download("http://example.com/ndvi.tif", dest, api_key="mytoken")
+
+        call_kwargs = mock_stream.call_args
+        headers = call_kwargs.kwargs["headers"]
+        assert headers["Authorization"] == "Bearer mytoken"
+
+    def test_no_auth_header_without_api_key(self, tmp_path):
+        dest = tmp_path / "out.tif"
+        content = b"data"
+        mock_resp = _make_httpx_stream_mock(content)
+
+        with patch(
+            "eostrata.sources.sentinel_ndvi.httpx.stream", return_value=mock_resp
+        ) as mock_stream:
+            _download("http://example.com/ndvi.tif", dest)
+
+        headers = mock_stream.call_args.kwargs["headers"]
+        assert "Authorization" not in headers
+
+    def test_retries_on_transport_error_then_succeeds(self, tmp_path):
+        dest = tmp_path / "out.tif"
+        content = b"recovered"
+        good_resp = _make_httpx_stream_mock(content)
+        error = httpx.TransportError("connection reset")
+
+        call_count = 0
+
+        def _side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise error
+            return good_resp
+
+        with (
+            patch(
+                "eostrata.sources.sentinel_ndvi.httpx.stream", side_effect=_side_effect
+            ),
+            patch("eostrata.sources.sentinel_ndvi.time.sleep"),
+        ):
+            result = _download("http://example.com/ndvi.tif", dest)
+
+        assert result == dest
+        assert call_count == 2
+
+    def test_raises_after_all_retries_exhausted(self, tmp_path):
+        dest = tmp_path / "out.tif"
+        error = httpx.TransportError("timeout")
+
+        with (
+            patch(
+                "eostrata.sources.sentinel_ndvi.httpx.stream",
+                side_effect=error,
+            ),
+            patch("eostrata.sources.sentinel_ndvi.time.sleep"),pytest.raises(httpx.TransportError)
+        ):
+            _download("http://example.com/ndvi.tif", dest)
+
+    def test_download_method_calls_download_helper(self, tmp_path):
+        """SentinelNDVISource.download() calls _download when file is missing."""
+        source = SentinelNDVISource()
+        content = b"tif bytes"
+        mock_resp = _make_httpx_stream_mock(content)
+
+        with (
+            patch("eostrata.sources.sentinel_ndvi.httpx.stream", return_value=mock_resp),
+            patch("eostrata.config.settings") as mock_settings,
+        ):
+            mock_settings.cgls_api_key = ""
+            paths = source.download(tmp_path, (0, 0, 10, 10), year=2023, month=6, dekad=1)
+
+        assert len(paths) == 1
+        assert paths[0].exists()
+
+
+# ── latest_available() mid-month branch ───────────────────────────────────────
+
+
+class TestLatestAvailableMidMonth:
+    def test_latest_available_day_5_to_14_returns_dekad3_prev_month(self):
+        """Between day 5 and 14 inclusive, returns dekad 3 (day 21) of the previous month."""
+        with patch("eostrata.sources.sentinel_ndvi.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2024, 4, 10, tzinfo=UTC)
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            result = SentinelNDVISource().latest_available()
+        assert result == datetime(2024, 3, 21, tzinfo=UTC)

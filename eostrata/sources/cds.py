@@ -316,12 +316,15 @@ class CDSSource(BaseSource):
         return datetime(year, month, 1, tzinfo=UTC)
 
     @classmethod
-    def iter_periods(cls, *, variable: str = "t2m", years: list[int], months: list[int], **_) -> Iterator[tuple[str, dict]]:
+    def iter_periods(
+        cls, *, variable: str = "t2m", years: list[int], months: list[int], **_
+    ) -> Iterator[tuple[str, dict]]:
         for year in years:
             yield (f"{variable}/{year}", {"variable": variable, "year": year, "months": months})
 
     def stac_registrations(self, ds, period_kwargs: dict) -> list[dict]:
         from datetime import UTC, datetime
+
         variable = period_kwargs["variable"]
         year = period_kwargs["year"]
         months = period_kwargs["months"]

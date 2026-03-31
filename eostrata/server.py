@@ -521,8 +521,7 @@ def map_viewer(
 
     sources_data = json.dumps(INGEST_SOURCES)
     html = (
-        _MAP_HTML
-        .replace("__PRESELECT__", preselect)
+        _MAP_HTML.replace("__PRESELECT__", preselect)
         .replace("__CONFIG__", config_data)
         .replace("__SOURCES__", sources_data)
     )

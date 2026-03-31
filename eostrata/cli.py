@@ -53,9 +53,15 @@ _ALL_DEKADS = [1, 2, 3]
 
 @app.command("download")
 def download(
-    source_id: str = typer.Argument(..., help="Source ID: worldpop, chirps, cds, sentinel_ndvi (or sentinel-ndvi)"),
-    iso3: str = typer.Option(None, help="ISO 3166-1 alpha-3 country code (worldpop only), e.g. NGA"),
-    variable: str = typer.Option("t2m", help="ERA5 variable short name (cds only): t2m, tp, u10, v10, sp"),
+    source_id: str = typer.Argument(
+        ..., help="Source ID: worldpop, chirps, cds, sentinel_ndvi (or sentinel-ndvi)"
+    ),
+    iso3: str = typer.Option(
+        None, help="ISO 3166-1 alpha-3 country code (worldpop only), e.g. NGA"
+    ),
+    variable: str = typer.Option(
+        "t2m", help="ERA5 variable short name (cds only): t2m, tp, u10, v10, sp"
+    ),
     year: int = typer.Option(None, help="Single year (default: latest available)"),
     years: str = typer.Option(None, help="Multiple years, comma-separated: 2020,2021,2022"),
     month: int = typer.Option(None, help="Single month 1-12 (default: latest available)"),
@@ -63,7 +69,9 @@ def download(
     dekad: int = typer.Option(None, help="Single dekad 1-3 (sentinel_ndvi only)"),
     dekads: str = typer.Option(None, help="Multiple dekads: 1,2,3 or ALL (sentinel_ndvi only)"),
     day: int = typer.Option(None, help="Single day 1-31 (daily sources only)"),
-    days: str = typer.Option(None, help="Multiple days, comma-separated: 1,2,3 or ALL (daily sources only)"),
+    days: str = typer.Option(
+        None, help="Multiple days, comma-separated: 1,2,3 or ALL (daily sources only)"
+    ),
     zarr_root: Path | None = typer.Option(None, help="Override Zarr store root"),
     raw_dir: Path | None = typer.Option(None, help="Override raw download directory"),
     catalog_path: Path | None = typer.Option(None, help="Override catalog.json path"),
@@ -106,10 +114,14 @@ def download(
     if "years" in source_cls.ui_fields:
         source_params["years"] = _parse_int_list(year, years, latest.year)
     if "months" in source_cls.ui_fields:
-        source_params["months"] = _parse_int_list(month, months, latest.month, all_values=_ALL_MONTHS)
+        source_params["months"] = _parse_int_list(
+            month, months, latest.month, all_values=_ALL_MONTHS
+        )
     if "dekads" in source_cls.ui_fields:
         _default_dekad = 1 if latest.day < 11 else (2 if latest.day < 21 else 3)
-        source_params["dekads"] = _parse_int_list(dekad, dekads, _default_dekad, all_values=_ALL_DEKADS)
+        source_params["dekads"] = _parse_int_list(
+            dekad, dekads, _default_dekad, all_values=_ALL_DEKADS
+        )
     if "days" in source_cls.ui_fields:
         source_params["days"] = _parse_int_list(day, days, latest.day, all_values=_ALL_DAYS)
 

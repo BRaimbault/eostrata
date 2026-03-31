@@ -120,11 +120,14 @@ class WorldPopSource(BaseSource):
 
     def stac_registrations(self, ds, period_kwargs: dict) -> list[dict]:
         from datetime import UTC, datetime
+
         iso3 = period_kwargs["iso3"]
         year = period_kwargs["year"]
-        return [{
-            "item_id": self.stac_item_id(iso3=iso3),
-            "datetime_": datetime(year, 1, 1, tzinfo=UTC),
-            "variable": self.VARIABLE,
-            "extra_properties": self.stac_properties(**period_kwargs),
-        }]
+        return [
+            {
+                "item_id": self.stac_item_id(iso3=iso3),
+                "datetime_": datetime(year, 1, 1, tzinfo=UTC),
+                "variable": self.VARIABLE,
+                "extra_properties": self.stac_properties(**period_kwargs),
+            }
+        ]

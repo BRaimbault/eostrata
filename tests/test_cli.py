@@ -1150,21 +1150,25 @@ class TestDownloadSentinelNDVI:
 
         with (
             patch("eostrata.config.settings", mock_settings),
-            patch(
-                "eostrata.ingestion.run_ingest", return_value=([], True)
-            ) as mock_ingest,
+            patch("eostrata.ingestion.run_ingest", return_value=([], True)) as mock_ingest,
         ):
             result = runner.invoke(
                 app,
                 [
                     "download",
                     "sentinel-ndvi",
-                    "--year", "2024",
-                    "--month", "3",
-                    "--dekad", "1",
-                    "--zarr-root", str(tmp_path / "zarr"),
-                    "--raw-dir", str(tmp_path / "raw"),
-                    "--catalog-path", str(tmp_path / "catalog.json"),
+                    "--year",
+                    "2024",
+                    "--month",
+                    "3",
+                    "--dekad",
+                    "1",
+                    "--zarr-root",
+                    str(tmp_path / "zarr"),
+                    "--raw-dir",
+                    str(tmp_path / "raw"),
+                    "--catalog-path",
+                    str(tmp_path / "catalog.json"),
                 ],
             )
 
@@ -1191,9 +1195,12 @@ class TestDownloadSentinelNDVI:
                 [
                     "download",
                     "sentinel-ndvi",
-                    "--year", "2024",
-                    "--month", "3",
-                    "--dekad", "1",
+                    "--year",
+                    "2024",
+                    "--month",
+                    "3",
+                    "--dekad",
+                    "1",
                 ],
             )
 

@@ -126,9 +126,7 @@ def _download(url: str, dest: Path, *, api_key: str = "") -> Path:
                 )
                 time.sleep(delay)
             else:
-                logger.error(
-                    "Download failed after %d attempts: %s", _DOWNLOAD_RETRIES + 1, exc
-                )
+                logger.error("Download failed after %d attempts: %s", _DOWNLOAD_RETRIES + 1, exc)
 
     raise last_exc  # type: ignore[misc]
 
@@ -230,8 +228,7 @@ class SentinelNDVISource(BaseSource):
             "eostrata:product": _COVERAGE_ID,
             "eostrata:source": "Sentinel-3 OLCI",
             "eostrata:period": (
-                f"{year:04d}-{month:02d}-{start_day:02d}"
-                f"/{year:04d}-{month:02d}-{end_day:02d}"
+                f"{year:04d}-{month:02d}-{start_day:02d}/{year:04d}-{month:02d}-{end_day:02d}"
             ),
         }
 
@@ -273,13 +270,16 @@ class SentinelNDVISource(BaseSource):
 
     def stac_registrations(self, ds, period_kwargs: dict) -> list[dict]:
         from datetime import UTC, datetime
+
         year = period_kwargs["year"]
         month = period_kwargs["month"]
         dekad = period_kwargs.get("dekad", 1)
         start_day = _DEKAD_START_DAYS[dekad]
-        return [{
-            "item_id": self.stac_item_id(),
-            "datetime_": datetime(year, month, start_day, tzinfo=UTC),
-            "variable": self.VARIABLE,
-            "extra_properties": self.stac_properties(**period_kwargs),
-        }]
+        return [
+            {
+                "item_id": self.stac_item_id(),
+                "datetime_": datetime(year, month, start_day, tzinfo=UTC),
+                "variable": self.VARIABLE,
+                "extra_properties": self.stac_properties(**period_kwargs),
+            }
+        ]

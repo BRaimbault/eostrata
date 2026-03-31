@@ -233,9 +233,11 @@ class TemplateSource(BaseSource):
         """
         year = period_kwargs["year"]
         month = period_kwargs["month"]
-        return [{
-            "item_id": self.stac_item_id(**period_kwargs),
-            "datetime_": datetime(year, month, 1, tzinfo=UTC),
-            "variable": self.VARIABLE,
-            "extra_properties": self.stac_properties(**period_kwargs),
-        }]
+        return [
+            {
+                "item_id": self.stac_item_id(**period_kwargs),
+                "datetime_": datetime(year, month, 1, tzinfo=UTC),
+                "variable": self.VARIABLE,
+                "extra_properties": self.stac_properties(**period_kwargs),
+            }
+        ]

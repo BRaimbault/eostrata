@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 CATALOG_ID = "eostrata"
 CATALOG_DESCRIPTION = "eostrata earth observation data catalogue"
 
+
 def _make_catalog() -> pystac.Catalog:
     """Create a fresh catalog with one collection per registered source."""
     from eostrata.sources.base import all_sources

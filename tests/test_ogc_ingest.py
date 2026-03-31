@@ -161,9 +161,7 @@ class TestWorldPopExecution:
         assert poll.json()["status"] == "successful"
 
     def test_failure_path(self, client, sync_executor):
-        with patch(
-            "eostrata.ingestion.run_ingest", side_effect=RuntimeError("network error")
-        ):
+        with patch("eostrata.ingestion.run_ingest", side_effect=RuntimeError("network error")):
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "NGA"}},
@@ -914,9 +912,7 @@ class TestSentinelNDVIExecution:
         assert "jobID" in resp.json()
 
     def test_success_path_calls_ingest(self, client, sync_executor):
-        with patch(
-            "eostrata.ingestion.run_ingest", return_value=([], True)
-        ) as mock_fn:
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)) as mock_fn:
             client.post(
                 "/processes/ingest/execution",
                 json={
@@ -934,9 +930,7 @@ class TestSentinelNDVIExecution:
         assert kw["dekads"] == [2]
 
     def test_dekads_all_string_expands(self, client, sync_executor):
-        with patch(
-            "eostrata.ingestion.run_ingest", return_value=([], True)
-        ) as mock_fn:
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)) as mock_fn:
             client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "sentinel_ndvi", "dekads": "ALL"}},

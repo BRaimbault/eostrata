@@ -189,7 +189,7 @@ class BaseSource(ABC):
         return (float(ds.x.min()), float(ds.y.min()), float(ds.x.max()), float(ds.y.max()))
 
     @classmethod
-    def iter_periods(cls, **source_params) -> "Iterator[tuple[str, dict]]":
+    def iter_periods(cls, **source_params) -> Iterator[tuple[str, dict]]:
         """Yield (label, period_kwargs) for each period to ingest.
 
         Must be implemented by each source subclass.

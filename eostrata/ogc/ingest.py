@@ -38,9 +38,8 @@ INGEST_PROCESS_IDS = [
 # Derived from the source registry — adding a new source with ui_fields defined
 # automatically makes it available here.
 
-import eostrata.sources  # noqa: E402 — triggers auto-discovery of all source modules
-
-from eostrata.sources.base import all_sources as _all_sources
+import eostrata.sources  # noqa: E402,F401 — triggers auto-discovery of all source modules
+from eostrata.sources.base import all_sources as _all_sources  # noqa: E402
 
 INGEST_SOURCES = [
     {
@@ -152,6 +151,7 @@ class IngestInputs(BaseModel):
         if v not in _SOURCE_IDS:
             raise ValueError(f"must be one of {_SOURCE_IDS}")
         return v
+
     iso3: Annotated[str, Field(min_length=3, max_length=3)] | None = Field(
         None, description="ISO 3166-1 alpha-3 country code (worldpop only)"
     )
@@ -167,7 +167,8 @@ class IngestInputs(BaseModel):
         None, description="Dekads 1-3 to ingest, or 'ALL' for all three (sentinel_ndvi only)"
     )
     days: list[Day] | Literal["ALL"] | None = Field(
-        None, description="Days 1-31 to ingest, or 'ALL' for every day of the month (daily sources only)"
+        None,
+        description="Days 1-31 to ingest, or 'ALL' for every day of the month (daily sources only)",
     )
 
     @field_validator("months", mode="before")
@@ -192,8 +193,9 @@ class IngestInputs(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def check_source_fields(self) -> "IngestInputs":
+    def check_source_fields(self) -> IngestInputs:
         from eostrata.sources.base import get_source
+
         try:
             source_cls = get_source(self.source)
         except ValueError:

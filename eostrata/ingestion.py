@@ -375,9 +375,7 @@ def run_sentinel_ndvi_ingest(
                     zarr_root=zarr_root,
                     zarr_group=zarr_group,
                     variable=source.VARIABLE,
-                    extra_properties=source.stac_properties(
-                        year=year, month=month, dekad=dekad
-                    ),
+                    extra_properties=source.stac_properties(year=year, month=month, dekad=dekad),
                 )
                 saved = True
 

@@ -303,9 +303,7 @@ class TestDownloadFunction:
             return good_resp
 
         with (
-            patch(
-                "eostrata.sources.sentinel_ndvi.httpx.stream", side_effect=_side_effect
-            ),
+            patch("eostrata.sources.sentinel_ndvi.httpx.stream", side_effect=_side_effect),
             patch("eostrata.sources.sentinel_ndvi.time.sleep"),
         ):
             result = _download("http://example.com/ndvi.tif", dest)
@@ -322,7 +320,8 @@ class TestDownloadFunction:
                 "eostrata.sources.sentinel_ndvi.httpx.stream",
                 side_effect=error,
             ),
-            patch("eostrata.sources.sentinel_ndvi.time.sleep"),pytest.raises(httpx.TransportError)
+            patch("eostrata.sources.sentinel_ndvi.time.sleep"),
+            pytest.raises(httpx.TransportError),
         ):
             _download("http://example.com/ndvi.tif", dest)
 

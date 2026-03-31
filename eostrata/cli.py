@@ -62,6 +62,8 @@ def download(
     months: str = typer.Option(None, help="Multiple months, comma-separated: 1,2,3 or ALL"),
     dekad: int = typer.Option(None, help="Single dekad 1-3 (sentinel_ndvi only)"),
     dekads: str = typer.Option(None, help="Multiple dekads: 1,2,3 or ALL (sentinel_ndvi only)"),
+    day: int = typer.Option(None, help="Single day 1-31 (daily sources only)"),
+    days: str = typer.Option(None, help="Multiple days, comma-separated: 1,2,3 or ALL (daily sources only)"),
     zarr_root: Path | None = typer.Option(None, help="Override Zarr store root"),
     raw_dir: Path | None = typer.Option(None, help="Override raw download directory"),
     catalog_path: Path | None = typer.Option(None, help="Override catalog.json path"),
@@ -108,6 +110,8 @@ def download(
     if "dekads" in source_cls.ui_fields:
         _default_dekad = 1 if latest.day < 11 else (2 if latest.day < 21 else 3)
         source_params["dekads"] = _parse_int_list(dekad, dekads, _default_dekad, all_values=_ALL_DEKADS)
+    if "days" in source_cls.ui_fields:
+        source_params["days"] = _parse_int_list(day, days, latest.day, all_values=_ALL_DAYS)
 
     logger.info("CLI download %s params=%s bbox=%s", source_id, source_params, settings.bbox)
     console.print(

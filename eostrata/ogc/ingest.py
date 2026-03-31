@@ -115,6 +115,19 @@ _INGEST_DESCRIPTION = {
                 ]
             },
         },
+        "days": {
+            "title": "Days",
+            "description": (
+                "List of days 1-31, or the string 'ALL' for every day of the month "
+                "(daily sources only; default: latest available)."
+            ),
+            "schema": {
+                "oneOf": [
+                    {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 31}},
+                    {"type": "string", "enum": ["ALL"]},
+                ]
+            },
+        },
     },
     "outputs": {"job_id": {"title": "Job ID", "schema": {"type": "string"}}},
 }
@@ -123,9 +136,11 @@ _INGEST_DESCRIPTION = {
 
 Month = Annotated[int, Field(ge=1, le=12)]
 Dekad = Annotated[int, Field(ge=1, le=3)]
+Day = Annotated[int, Field(ge=1, le=31)]
 
 _ALL_MONTHS = list(range(1, 13))
 _ALL_DEKADS = [1, 2, 3]
+_ALL_DAYS = list(range(1, 32))
 
 
 class IngestInputs(BaseModel):
@@ -151,6 +166,9 @@ class IngestInputs(BaseModel):
     dekads: list[Dekad] | Literal["ALL"] | None = Field(
         None, description="Dekads 1-3 to ingest, or 'ALL' for all three (sentinel_ndvi only)"
     )
+    days: list[Day] | Literal["ALL"] | None = Field(
+        None, description="Days 1-31 to ingest, or 'ALL' for every day of the month (daily sources only)"
+    )
 
     @field_validator("months", mode="before")
     @classmethod
@@ -164,6 +182,13 @@ class IngestInputs(BaseModel):
     def expand_all_dekads(cls, v):
         if isinstance(v, str) and v.strip().upper() == "ALL":
             return _ALL_DEKADS
+        return v
+
+    @field_validator("days", mode="before")
+    @classmethod
+    def expand_all_days(cls, v):
+        if isinstance(v, str) and v.strip().upper() == "ALL":
+            return _ALL_DAYS
         return v
 
     @model_validator(mode="after")
@@ -300,6 +325,8 @@ def execute_ingest(body: IngestExecutionRequest, response: Response) -> dict:
     if "dekads" in source_cls.ui_fields:
         default_dekad = 1 if latest.day < 11 else (2 if latest.day < 21 else 3)
         source_params["dekads"] = inp.dekads or [default_dekad]
+    if "days" in source_cls.ui_fields:
+        source_params["days"] = inp.days or [latest.day]
 
     job = jobs.create_job(inp.source, source_params)
     _executor.submit(

@@ -70,8 +70,13 @@ class TemplateSource(BaseSource):
     skip_404 = False  # TODO
 
     #: Form fields shown in the map UI ingest tab.
-    #: Recognised values: "iso3", "variable", "years", "months", "dekads"
+    #: Recognised values: "iso3", "variable", "years", "months", "days", "dekads"
     ui_fields = ["years", "months"]  # TODO: adjust for your source
+    # Examples:
+    #   Annual   per-country:  ["iso3", "years"]
+    #   Monthly  global:       ["years", "months"]
+    #   Daily    global:       ["years", "months", "days"]
+    #   Dekadal  global:       ["years", "months", "dekads"]
 
     # ── Catalog metadata ───────────────────────────────────────────────────────
 
@@ -200,12 +205,18 @@ class TemplateSource(BaseSource):
         TODO: add / remove loop variables to match your source's period structure.
         Examples:
           WorldPop  — loops over years only (annual data)
-          CHIRPS    — loops over years × months
+          CHIRPS    — loops over years × months (monthly data)
+          Daily     — loops over years × months × days (daily data)
           Sentinel  — loops over years × months × dekads
         """
         for year in years:
             for month in months:
                 yield (f"{year}-{month:02d}", {"year": year, "month": month})
+        # For daily sources, add an inner loop:
+        # for year in years:
+        #     for month in months:
+        #         for day in days:
+        #             yield (f"{year}-{month:02d}-{day:02d}", {"year": year, "month": month, "day": day})
 
     def stac_registrations(self, ds, period_kwargs: dict) -> list[dict]:
         """Return STAC items to register after one period is written to Zarr.

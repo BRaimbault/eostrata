@@ -332,6 +332,11 @@
         <input id="ing-months" type="text" placeholder="e.g. 1,2,3 or ALL"/>
       </div>
 
+      <div id="ing-days-row" style="display:none">
+        <label>Days (comma-separated, blank = latest)</label>
+        <input id="ing-days" type="text" placeholder="e.g. 1,2,3 or ALL"/>
+      </div>
+
       <div id="ing-dekads-row" style="display:none">
         <label>Dekads (comma-separated, blank = latest)</label>
         <input id="ing-dekads" type="text" placeholder="e.g. 1,2,3 or ALL"/>
@@ -917,6 +922,7 @@
       document.getElementById('ing-iso3-row').style.display   = fields.includes('iso3')     ? '' : 'none';
       document.getElementById('ing-var-row').style.display    = fields.includes('variable')  ? '' : 'none';
       document.getElementById('ing-months-row').style.display = fields.includes('months')    ? '' : 'none';
+      document.getElementById('ing-days-row').style.display   = fields.includes('days')      ? '' : 'none';
       document.getElementById('ing-dekads-row').style.display = fields.includes('dekads')    ? '' : 'none';
     }
 
@@ -930,6 +936,7 @@
       const years  = document.getElementById('ing-years').value.trim();
       const months = document.getElementById('ing-months').value.trim();
       const dekads = document.getElementById('ing-dekads').value.trim();
+      const ddays  = document.getElementById('ing-days').value.trim();
       const iso3   = document.getElementById('ing-iso3').value.trim().toUpperCase();
       const varbl  = document.getElementById('ing-variable').value;
 
@@ -944,6 +951,8 @@
       if (years)  inputs.years  = _parseInts(years);
       if (months && fields.includes('months'))
         inputs.months = months.toUpperCase() === 'ALL' ? 'ALL' : _parseInts(months);
+      if (ddays && fields.includes('days'))
+        inputs.days = ddays.toUpperCase() === 'ALL' ? 'ALL' : _parseInts(ddays);
       if (dekads && fields.includes('dekads'))
         inputs.dekads = dekads.toUpperCase() === 'ALL' ? 'ALL' : _parseInts(dekads);
 

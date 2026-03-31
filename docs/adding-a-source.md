@@ -56,6 +56,7 @@ When your source file is placed in `eostrata/sources/` and decorated with
 | `"variable"` | ERA5 variable `<select>` |
 | `"years"` | Years free-text input |
 | `"months"` | Months free-text input |
+| `"days"` | Days free-text input (daily sources) |
 | `"dekads"` | Dekads free-text input |
 
 ---

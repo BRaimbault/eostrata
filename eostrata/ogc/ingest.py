@@ -34,6 +34,40 @@ INGEST_PROCESS_IDS = [
     {"id": "rebuild-catalog", "version": "0.1.0"},
 ]
 
+# ── Source registry for the UI ────────────────────────────────────────────────
+# Each entry describes one ingest source and which form fields it exposes.
+# Add a new entry here when adding a new source; the map UI picks it up automatically.
+#
+# Recognised field keys:
+#   "iso3"     – ISO3 country-code text input  (required for worldpop)
+#   "variable" – ERA5 variable <select>        (required for cds)
+#   "years"    – free-text years input         (shown for all sources)
+#   "months"   – free-text months input        (hidden for worldpop)
+#   "dekads"   – free-text dekads input        (sentinel_ndvi only)
+
+INGEST_SOURCES = [
+    {
+        "id": "worldpop",
+        "label": "worldpop — population rasters",
+        "fields": ["iso3", "years"],
+    },
+    {
+        "id": "chirps",
+        "label": "chirps — precipitation",
+        "fields": ["years", "months"],
+    },
+    {
+        "id": "cds",
+        "label": "cds — ERA5 reanalysis",
+        "fields": ["variable", "years", "months"],
+    },
+    {
+        "id": "sentinel_ndvi",
+        "label": "sentinel_ndvi — Sentinel-3 NDVI 300m",
+        "fields": ["years", "months", "dekads"],
+    },
+]
+
 # ── Process description ───────────────────────────────────────────────────────
 
 _INGEST_DESCRIPTION = {

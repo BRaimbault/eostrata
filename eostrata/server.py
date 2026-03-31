@@ -517,7 +517,15 @@ def map_viewer(
             "catalog_path": str(settings.catalog_path),
         }
     )
-    html = _MAP_HTML.replace("__PRESELECT__", preselect).replace("__CONFIG__", config_data)
+    from eostrata.ogc.ingest import INGEST_SOURCES
+
+    sources_data = json.dumps(INGEST_SOURCES)
+    html = (
+        _MAP_HTML
+        .replace("__PRESELECT__", preselect)
+        .replace("__CONFIG__", config_data)
+        .replace("__SOURCES__", sources_data)
+    )
     return HTMLResponse(content=html)
 
 

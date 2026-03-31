@@ -18,44 +18,24 @@ logger = logging.getLogger(__name__)
 CATALOG_ID = "eostrata"
 CATALOG_DESCRIPTION = "eostrata earth observation data catalogue"
 
-# STAC collection IDs
-COLLECTION_WORLDPOP = "worldpop"
-COLLECTION_CDS = "cds"
-COLLECTION_CHIRPS = "chirps"
-COLLECTION_SENTINEL_NDVI = "sentinel_ndvi"
-
-_COLLECTIONS = {
-    COLLECTION_WORLDPOP: {
-        "title": "WorldPop population",
-        "description": "Global population rasters from WorldPop (worldpop.org)",
-    },
-    COLLECTION_CDS: {
-        "title": "CDS / ERA5 climate reanalysis",
-        "description": "Climate reanalysis data from the Copernicus Climate Data Store",
-    },
-    COLLECTION_CHIRPS: {
-        "title": "CHIRPS precipitation",
-        "description": "Climate Hazards Group InfraRed Precipitation with Station data",
-    },
-    COLLECTION_SENTINEL_NDVI: {
-        "title": "Sentinel NDVI (CGLS)",
-        "description": "Sentinel-3 NDVI 300m dekadal composites from the Copernicus Global Land Service",
-    },
-}
-
-
 def _make_catalog() -> pystac.Catalog:
-    """Create a fresh catalog with the three default collections."""
+    """Create a fresh catalog with one collection per registered source."""
+    from eostrata.sources.base import all_sources
+
     catalog = pystac.Catalog(
         id=CATALOG_ID,
         description=CATALOG_DESCRIPTION,
         catalog_type=pystac.CatalogType.SELF_CONTAINED,
     )
-    for coll_id, meta in _COLLECTIONS.items():
+    seen: set[str] = set()
+    for cls in all_sources():
+        if cls.collection_id in seen:
+            continue
+        seen.add(cls.collection_id)
         collection = pystac.Collection(
-            id=coll_id,
-            title=meta["title"],
-            description=meta["description"],
+            id=cls.collection_id,
+            title=cls.collection_title,
+            description=cls.collection_description,
             extent=pystac.Extent(
                 spatial=pystac.SpatialExtent(bboxes=[[-180, -90, 180, 90]]),
                 temporal=pystac.TemporalExtent(intervals=[[None, None]]),

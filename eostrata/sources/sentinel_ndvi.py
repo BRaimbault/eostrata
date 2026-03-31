@@ -138,9 +138,22 @@ class SentinelNDVISource(BaseSource):
 
     id = "sentinel_ndvi"
     collection_id = "sentinel_ndvi"
+    collection_title = "Sentinel NDVI (CGLS)"
+    collection_description = (
+        "Sentinel-3 NDVI 300m dekadal composites from the Copernicus Global Land Service"
+    )
+    zarr_prefix = "sentinel_ndvi"
     temporal_resolution = "dekadal"
     default_lag_days = 5  # ~5 days after dekad end before publication
     VARIABLE = "ndvi"
+
+    @classmethod
+    def catalog_meta(cls, dataset_name: str) -> dict:
+        return {
+            "item_id": "sentinel_ndvi_global",
+            "variable": cls.VARIABLE,
+            "extra": {"eostrata:variable": cls.VARIABLE, "eostrata:source": "Sentinel-3 OLCI"},
+        }
 
     def download(
         self,

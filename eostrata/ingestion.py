@@ -376,30 +376,23 @@ def rebuild_catalog_from_zarr(
             ds.close()
             continue
 
-        if source_type == "worldpop":
-            collection_id = "worldpop"
-            item_id = f"worldpop_{dataset_name}"
-            variable = "population"
-            extra: dict = {"eostrata:iso3": dataset_name.upper(), "eostrata:variable": variable}
-        elif source_type == "chirps":
-            collection_id = "chirps"
-            item_id = "chirps_global"
-            variable = "precipitation"
-            extra = {"eostrata:variable": variable}
-        elif source_type == "era5":
-            collection_id = "cds"
-            item_id = f"era5_{dataset_name}"
-            variable = dataset_name
-            extra = {"eostrata:variable": variable}
-        elif source_type == "sentinel_ndvi":
-            collection_id = "sentinel_ndvi"
-            item_id = "sentinel_ndvi_global"
-            variable = "ndvi"
-            extra = {"eostrata:variable": variable, "eostrata:source": "Sentinel-3 OLCI"}
-        else:
+        from eostrata.sources.base import _REGISTRY as _src_registry
+
+        # Look up the source class by its zarr_prefix
+        source_cls = next(
+            (cls for cls in _src_registry.values() if cls.zarr_prefix == source_type),
+            None,
+        )
+        if source_cls is None:
             logger.warning("Unknown source type '%s' in '%s' — skipping", source_type, group_path)
             ds.close()
             continue
+
+        meta = source_cls.catalog_meta(dataset_name)
+        collection_id: str = source_cls.collection_id
+        item_id: str = meta["item_id"]
+        variable: str = meta["variable"]
+        extra: dict = meta["extra"]
 
         for ts in times:
             dt = pd.Timestamp(ts).to_pydatetime().replace(tzinfo=UTC)

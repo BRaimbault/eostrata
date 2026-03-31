@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-from typing import Annotated, Literal
+from typing import Annotated, Literal  # Literal still used for months/dekads "ALL"
 
 from fastapi import APIRouter, HTTPException, Path, Response
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -68,6 +68,10 @@ INGEST_SOURCES = [
     },
 ]
 
+# Derived from INGEST_SOURCES so we never have to update the two separately.
+_SOURCE_IDS = [s["id"] for s in INGEST_SOURCES]
+_source_list = ", ".join(f"``{sid}``" for sid in _SOURCE_IDS)
+
 # ── Process description ───────────────────────────────────────────────────────
 
 _INGEST_DESCRIPTION = {
@@ -75,17 +79,16 @@ _INGEST_DESCRIPTION = {
     "title": "Data ingestion",
     "description": (
         "Download earth observation data, clip to the configured bounding box, "
-        "write to the Zarr store, and register a STAC item. "
-        "Set ``source`` to select the dataset: ``worldpop``, ``chirps``, ``cds``, "
-        "or ``sentinel_ndvi``."
+        f"write to the Zarr store, and register a STAC item. "
+        f"Set ``source`` to select the dataset: {_source_list}."
     ),
     "version": "0.1.0",
     "jobControlOptions": ["async-execute"],
     "inputs": {
         "source": {
             "title": "Source",
-            "description": "Dataset to ingest: worldpop, chirps, cds, or sentinel_ndvi.",
-            "schema": {"type": "string", "enum": ["worldpop", "chirps", "cds", "sentinel_ndvi"]},
+            "description": f"Dataset to ingest: {', '.join(_SOURCE_IDS)}.",
+            "schema": {"type": "string", "enum": _SOURCE_IDS},
         },
         "iso3": {
             "title": "ISO3 country code",
@@ -142,7 +145,14 @@ _ALL_DEKADS = [1, 2, 3]
 
 
 class IngestInputs(BaseModel):
-    source: Literal["worldpop", "chirps", "cds", "sentinel_ndvi"]
+    source: Annotated[str, Field(json_schema_extra={"enum": _SOURCE_IDS})]
+
+    @field_validator("source")
+    @classmethod
+    def validate_source(cls, v: str) -> str:
+        if v not in _SOURCE_IDS:
+            raise ValueError(f"must be one of {_SOURCE_IDS}")
+        return v
     iso3: Annotated[str, Field(min_length=3, max_length=3)] | None = Field(
         None, description="ISO 3166-1 alpha-3 country code (worldpop only)"
     )

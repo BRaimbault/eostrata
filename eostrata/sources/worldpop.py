@@ -38,9 +38,20 @@ class WorldPopSource(BaseSource):
 
     id = "worldpop"
     collection_id = "worldpop"
+    collection_title = "WorldPop population"
+    collection_description = "Global population rasters from WorldPop (worldpop.org)"
+    zarr_prefix = "worldpop"
     temporal_resolution = "annual"
     default_lag_days = 365
     VARIABLE = "population"
+
+    @classmethod
+    def catalog_meta(cls, dataset_name: str) -> dict:
+        return {
+            "item_id": f"worldpop_{dataset_name}",
+            "variable": cls.VARIABLE,
+            "extra": {"eostrata:iso3": dataset_name.upper(), "eostrata:variable": cls.VARIABLE},
+        }
 
     def download(
         self,

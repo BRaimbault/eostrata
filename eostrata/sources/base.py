@@ -109,11 +109,39 @@ class BaseSource(ABC):
     #: STAC collection this source belongs to.
     collection_id: str
 
+    #: Human-readable title for the STAC collection.
+    collection_title: str
+
+    #: Human-readable description for the STAC collection.
+    collection_description: str
+
+    #: First component of the Zarr group path (may differ from ``id``, e.g. ``"era5"`` for CDS).
+    zarr_prefix: str
+
+    #: Primary data variable name stored in the Zarr group.
+    VARIABLE: str
+
     #: Temporal resolution: ``"monthly"``, ``"annual"``, etc.
     temporal_resolution: str
 
     #: Typical number of days between a period ending and data availability.
     default_lag_days: int
+
+    @classmethod
+    def catalog_meta(cls, dataset_name: str) -> dict:
+        """Return catalog registration metadata for a Zarr group with this source's prefix.
+
+        ``dataset_name`` is the second path component of the Zarr group
+        (e.g. ``"nga"`` from ``worldpop/nga``, ``"t2m"`` from ``era5/t2m``).
+
+        Returns a dict with keys ``item_id``, ``variable``, and ``extra``.
+        Override in subclasses when the default derivation doesn't apply.
+        """
+        return {
+            "item_id": f"{cls.zarr_prefix}_{dataset_name}",
+            "variable": cls.VARIABLE,
+            "extra": {"eostrata:variable": cls.VARIABLE},
+        }
 
     @abstractmethod
     def download(

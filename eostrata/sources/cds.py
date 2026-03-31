@@ -210,9 +210,21 @@ class CDSSource(BaseSource):
 
     id = "cds"
     collection_id = "cds"
+    collection_title = "CDS / ERA5 climate reanalysis"
+    collection_description = "Climate reanalysis data from the Copernicus Climate Data Store"
+    zarr_prefix = "era5"
     temporal_resolution = "monthly"
     default_lag_days = 90  # ERA5 has ~3-month production lag
     VARIABLE = "t2m"  # default variable short name
+
+    @classmethod
+    def catalog_meta(cls, dataset_name: str) -> dict:
+        # dataset_name IS the variable (e.g. "t2m" from "era5/t2m")
+        return {
+            "item_id": f"era5_{dataset_name}",
+            "variable": dataset_name,
+            "extra": {"eostrata:variable": dataset_name},
+        }
 
     def download(
         self,

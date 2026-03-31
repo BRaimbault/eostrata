@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -127,6 +128,12 @@ class BaseSource(ABC):
     #: Typical number of days between a period ending and data availability.
     default_lag_days: int
 
+    #: Whether 404 HTTP errors should be silently skipped (True for WorldPop, CHIRPS).
+    skip_404: bool = False
+
+    #: Form fields shown in the ingest UI for this source.
+    ui_fields: list[str] = []
+
     @classmethod
     def catalog_meta(cls, dataset_name: str) -> dict:
         """Return catalog registration metadata for a Zarr group with this source's prefix.
@@ -176,3 +183,23 @@ class BaseSource(ABC):
     @abstractmethod
     def latest_available(self) -> datetime:
         """Return the most recent period for which data is available."""
+
+    def extract_item_bbox(self, ds) -> tuple[float, float, float, float]:
+        """Extract (west, south, east, north) bounding box from a dataset."""
+        return (float(ds.x.min()), float(ds.y.min()), float(ds.x.max()), float(ds.y.max()))
+
+    @classmethod
+    def iter_periods(cls, **source_params) -> "Iterator[tuple[str, dict]]":
+        """Yield (label, period_kwargs) for each period to ingest.
+
+        Must be implemented by each source subclass.
+        """
+        raise NotImplementedError(f"{cls.__name__} must implement iter_periods()")
+
+    def stac_registrations(self, ds, period_kwargs: dict) -> list[dict]:
+        """Return list of STAC registration dicts for one downloaded period.
+
+        Each dict has keys: item_id, datetime_, variable, extra_properties.
+        Must be implemented by each source subclass.
+        """
+        raise NotImplementedError(f"{type(self).__name__} must implement stac_registrations()")

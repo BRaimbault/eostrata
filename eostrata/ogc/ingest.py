@@ -35,37 +35,21 @@ INGEST_PROCESS_IDS = [
 ]
 
 # ── Source registry for the UI ────────────────────────────────────────────────
-# Each entry describes one ingest source and which form fields it exposes.
-# Add a new entry here when adding a new source; the map UI picks it up automatically.
-#
-# Recognised field keys:
-#   "iso3"     – ISO3 country-code text input  (required for worldpop)
-#   "variable" – ERA5 variable <select>        (required for cds)
-#   "years"    – free-text years input         (shown for all sources)
-#   "months"   – free-text months input        (hidden for worldpop)
-#   "dekads"   – free-text dekads input        (sentinel_ndvi only)
+# Derived from the source registry — adding a new source with ui_fields defined
+# automatically makes it available here.
+
+import eostrata.sources  # noqa: E402 — triggers auto-discovery of all source modules
+
+from eostrata.sources.base import all_sources as _all_sources
 
 INGEST_SOURCES = [
     {
-        "id": "worldpop",
-        "label": "worldpop — population rasters",
-        "fields": ["iso3", "years"],
-    },
-    {
-        "id": "chirps",
-        "label": "chirps — precipitation",
-        "fields": ["years", "months"],
-    },
-    {
-        "id": "cds",
-        "label": "cds — ERA5 reanalysis",
-        "fields": ["variable", "years", "months"],
-    },
-    {
-        "id": "sentinel_ndvi",
-        "label": "sentinel_ndvi — Sentinel-3 NDVI 300m",
-        "fields": ["years", "months", "dekads"],
-    },
+        "id": cls.id,
+        "label": f"{cls.id} — {cls.collection_title}",
+        "fields": cls.ui_fields,
+    }
+    for cls in _all_sources()
+    if cls.ui_fields
 ]
 
 # Derived from INGEST_SOURCES so we never have to update the two separately.
@@ -183,9 +167,14 @@ class IngestInputs(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def check_source_fields(self) -> IngestInputs:
-        if self.source == "worldpop" and self.iso3 is None:
-            raise ValueError("iso3 is required when source is 'worldpop'")
+    def check_source_fields(self) -> "IngestInputs":
+        from eostrata.sources.base import get_source
+        try:
+            source_cls = get_source(self.source)
+        except ValueError:
+            return self  # Invalid source already caught by validate_source
+        if "iso3" in source_cls.ui_fields and self.iso3 is None:
+            raise ValueError(f"iso3 is required when source is '{self.source}'")
         return self
 
 
@@ -286,108 +275,46 @@ def describe_ingest() -> dict:
 
 @router.post("/ingest/execution", status_code=201, summary="Start an ingestion job")
 def execute_ingest(body: IngestExecutionRequest, response: Response) -> dict:
-    """
-    Start a data ingestion job for WorldPop, CHIRPS, or CDS/ERA5.
+    """Start a data ingestion job for any registered source.
 
     Returns a ``job_id`` immediately. Poll ``GET /processes/jobs/{job_id}`` for status.
-
-    **source = worldpop** — requires ``iso3``
-    **source = chirps** — uses ``years`` and ``months``
-    **source = cds** — uses ``variable`` (default ``t2m``), ``years``, and ``months``
-
-    All year/month values default to the latest available when omitted.
     """
     inp = body.inputs
     logger.info("API POST /processes/ingest/execution %s", inp.model_dump(exclude_none=True))
 
-    if inp.source == "worldpop":
-        from eostrata.sources import WorldPopSource
+    from eostrata.sources.base import get_source
 
-        years = inp.years or [WorldPopSource().latest_available().year]
-        job = jobs.create_job("worldpop", {"iso3": inp.iso3.upper(), "years": years})
-        _executor.submit(
-            _run_job,
-            job.job_id,
-            ingestion.run_worldpop_ingest,
-            iso3=inp.iso3,
-            years=years,
-            zarr_root=settings.zarr_root,
-            raw_dir=settings.raw_dir,
-            catalog_path=settings.catalog_path,
-            bbox=settings.bbox,
-            quota_mb=settings.store_quota_mb,
-            eviction_buffer_mb=settings.store_eviction_buffer_mb,
-        )
+    source_cls = get_source(inp.source)
+    source = source_cls()
+    latest = source.latest_available()
 
-    elif inp.source == "chirps":
-        from eostrata.sources.chirps import CHIRPSSource
+    source_params: dict = {}
+    if "iso3" in source_cls.ui_fields:
+        source_params["iso3"] = inp.iso3.upper()
+    if "variable" in source_cls.ui_fields:
+        source_params["variable"] = inp.variable or "t2m"
+    if "years" in source_cls.ui_fields:
+        source_params["years"] = inp.years or [latest.year]
+    if "months" in source_cls.ui_fields:
+        source_params["months"] = inp.months or [latest.month]
+    if "dekads" in source_cls.ui_fields:
+        default_dekad = 1 if latest.day < 11 else (2 if latest.day < 21 else 3)
+        source_params["dekads"] = inp.dekads or [default_dekad]
 
-        latest = CHIRPSSource().latest_available()
-        years = inp.years or [latest.year]
-        months = inp.months or [latest.month]
-        job = jobs.create_job("chirps", {"years": years, "months": months})
-        _executor.submit(
-            _run_job,
-            job.job_id,
-            ingestion.run_chirps_ingest,
-            years=years,
-            months=months,
-            zarr_root=settings.zarr_root,
-            raw_dir=settings.raw_dir,
-            catalog_path=settings.catalog_path,
-            bbox=settings.bbox,
-            quota_mb=settings.store_quota_mb,
-            eviction_buffer_mb=settings.store_eviction_buffer_mb,
-        )
-
-    elif inp.source == "cds":
-        from eostrata.sources.cds import CDSSource
-
-        variable = inp.variable or "t2m"
-        latest = CDSSource().latest_available()
-        years = inp.years or [latest.year]
-        months = inp.months or [latest.month]
-        job = jobs.create_job("cds", {"variable": variable, "years": years, "months": months})
-        _executor.submit(
-            _run_job,
-            job.job_id,
-            ingestion.run_cds_ingest,
-            variable=variable,
-            years=years,
-            months=months,
-            zarr_root=settings.zarr_root,
-            raw_dir=settings.raw_dir,
-            catalog_path=settings.catalog_path,
-            bbox=settings.bbox,
-            quota_mb=settings.store_quota_mb,
-            eviction_buffer_mb=settings.store_eviction_buffer_mb,
-        )
-
-    else:  # sentinel_ndvi
-        from eostrata.sources.sentinel_ndvi import SentinelNDVISource
-
-        latest = SentinelNDVISource().latest_available()
-        years = inp.years or [latest.year]
-        months = inp.months or [latest.month]
-        _default_dekad = 1 if latest.day < 11 else (2 if latest.day < 21 else 3)
-        dekads = inp.dekads or [_default_dekad]
-        job = jobs.create_job(
-            "sentinel_ndvi", {"years": years, "months": months, "dekads": dekads}
-        )
-        _executor.submit(
-            _run_job,
-            job.job_id,
-            ingestion.run_sentinel_ndvi_ingest,
-            years=years,
-            months=months,
-            dekads=dekads,
-            zarr_root=settings.zarr_root,
-            raw_dir=settings.raw_dir,
-            catalog_path=settings.catalog_path,
-            bbox=settings.bbox,
-            quota_mb=settings.store_quota_mb,
-            eviction_buffer_mb=settings.store_eviction_buffer_mb,
-        )
+    job = jobs.create_job(inp.source, source_params)
+    _executor.submit(
+        _run_job,
+        job.job_id,
+        ingestion.run_ingest,
+        source_id=inp.source,
+        zarr_root=settings.zarr_root,
+        raw_dir=settings.raw_dir,
+        catalog_path=settings.catalog_path,
+        bbox=settings.bbox,
+        quota_mb=settings.store_quota_mb,
+        eviction_buffer_mb=settings.store_eviction_buffer_mb,
+        **source_params,
+    )
 
     response.headers["Location"] = f"/processes/jobs/{job.job_id}"
     return _job_response(job)

@@ -15,6 +15,78 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
+def run_ingest(
+    source_id: str,
+    *,
+    zarr_root: Path,
+    raw_dir: Path,
+    catalog_path: Path,
+    bbox: tuple[float, float, float, float],
+    quota_mb: float = 0.0,
+    eviction_buffer_mb: float = 0.0,
+    **source_params,
+) -> tuple[list[str], bool]:
+    """Generic ingestion: download + zarr write + STAC registration for any registered source.
+
+    Returns ``(failed, saved)`` where *failed* is a list of period labels that
+    encountered errors and *saved* is True if at least one period was written.
+    """
+    import httpx
+
+    from eostrata import catalog as cat
+    from eostrata.cache import check_and_evict
+    from eostrata.sources.base import get_source
+
+    check_and_evict(
+        zarr_root, quota_mb=quota_mb, required_mb=eviction_buffer_mb, catalog_path=catalog_path
+    )
+
+    source_cls = get_source(source_id)
+    source = source_cls()
+    zarr_group = source.zarr_group(**source_params)
+    catalogue = cat.load_or_create(catalog_path)
+    failed: list[str] = []
+    saved = False
+
+    for label, period_kwargs in source_cls.iter_periods(**source_params):
+        logger.info("%s: ingesting %s", source_id, label)
+        try:
+            paths = source.download(raw_dir, bbox, **period_kwargs)
+            ds = source.to_zarr(paths[0], zarr_root, bbox, **period_kwargs)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404 and source_cls.skip_404:
+                logger.warning("%s: %s not available (404), skipping", source_id, label)
+                continue
+            logger.error("%s: HTTP error for %s: %s", source_id, label, exc)
+            failed.append(label)
+            continue
+        except Exception as exc:
+            logger.error("%s: failed to ingest %s: %s", source_id, label, exc)
+            failed.append(label)
+            continue
+        paths[0].unlink(missing_ok=True)
+        item_bbox = source.extract_item_bbox(ds)
+        for reg in source.stac_registrations(ds, period_kwargs):
+            cat.register_item(
+                catalogue,
+                collection_id=source.collection_id,
+                item_id=reg["item_id"],
+                bbox=item_bbox,
+                datetime_=reg["datetime_"],
+                zarr_root=zarr_root,
+                zarr_group=zarr_group,
+                variable=reg["variable"],
+                extra_properties=reg["extra_properties"],
+            )
+        saved = True
+
+    if saved:
+        cat.save(catalogue, catalog_path)
+        logger.info("%s: STAC items saved to %s", source_id, catalog_path)
+
+    return failed, saved
+
+
 def run_worldpop_ingest(
     *,
     iso3: str,

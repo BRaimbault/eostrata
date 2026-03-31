@@ -115,7 +115,7 @@ class TestInputValidation:
 
     def test_months_all_string_is_accepted(self, client, sync_executor):
         """'ALL' string must be accepted and expanded to all 12 months."""
-        with patch("eostrata.ingestion.run_chirps_ingest", return_value=([], True)) as mock_fn:
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)) as mock_fn:
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "chirps", "months": "ALL"}},
@@ -136,7 +136,7 @@ class TestInputValidation:
 
 class TestWorldPopExecution:
     def test_returns_201_with_job_id(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], True)):
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)):
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "NGA"}},
@@ -147,7 +147,7 @@ class TestWorldPopExecution:
         assert any("/processes/jobs/" in link["href"] for link in data["links"])
 
     def test_success_path(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], True)) as mock_fn:
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)) as mock_fn:
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "NGA", "years": [2022]}},
@@ -162,7 +162,7 @@ class TestWorldPopExecution:
 
     def test_failure_path(self, client, sync_executor):
         with patch(
-            "eostrata.ingestion.run_worldpop_ingest", side_effect=RuntimeError("network error")
+            "eostrata.ingestion.run_ingest", side_effect=RuntimeError("network error")
         ):
             resp = client.post(
                 "/processes/ingest/execution",
@@ -175,7 +175,7 @@ class TestWorldPopExecution:
 
     def test_nothing_saved_marks_job_failed(self, client, sync_executor):
         """When saved=False (e.g. all 404), the job status must be 'failed', not 'successful'."""
-        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], False)):
+        with patch("eostrata.ingestion.run_ingest", return_value=([], False)):
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "MAU", "years": [2022]}},
@@ -186,7 +186,7 @@ class TestWorldPopExecution:
 
     def test_nothing_saved_with_failures_marks_job_failed_with_details(self, client, sync_executor):
         """When saved=False and some periods failed, error message lists the failed periods."""
-        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=(["NGA/2022"], False)):
+        with patch("eostrata.ingestion.run_ingest", return_value=(["NGA/2022"], False)):
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "NGA", "years": [2022]}},
@@ -197,7 +197,7 @@ class TestWorldPopExecution:
 
     def test_partial_save_marks_job_succeeded_with_message(self, client, sync_executor):
         """When saved=True but some periods failed, job is successful with a warning message."""
-        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=(["NGA/2021"], True)):
+        with patch("eostrata.ingestion.run_ingest", return_value=(["NGA/2021"], True)):
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "NGA", "years": [2021, 2022]}},
@@ -207,7 +207,7 @@ class TestWorldPopExecution:
         assert "NGA/2021" in job["message"]
 
     def test_default_year_used_when_omitted(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], True)) as mock_fn:
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)) as mock_fn:
             client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "NGA"}},
@@ -216,7 +216,7 @@ class TestWorldPopExecution:
         assert len(years) == 1 and isinstance(years[0], int)
 
     def test_iso3_uppercased_in_params(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], True)):
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)):
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "nga"}},
@@ -230,12 +230,12 @@ class TestWorldPopExecution:
 
 class TestCHIRPSExecution:
     def test_returns_201(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_chirps_ingest", return_value=([], True)):
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)):
             resp = client.post("/processes/ingest/execution", json={"inputs": {"source": "chirps"}})
         assert resp.status_code == 201
 
     def test_success_path(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_chirps_ingest", return_value=([], True)) as mock_fn:
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)) as mock_fn:
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "chirps", "years": [2023], "months": [6]}},
@@ -248,7 +248,7 @@ class TestCHIRPSExecution:
         )
 
     def test_failure_path(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_chirps_ingest", side_effect=OSError("disk full")):
+        with patch("eostrata.ingestion.run_ingest", side_effect=OSError("disk full")):
             resp = client.post("/processes/ingest/execution", json={"inputs": {"source": "chirps"}})
         assert client.get(f"/processes/jobs/{resp.json()['jobID']}").json()["status"] == "failed"
 
@@ -258,7 +258,7 @@ class TestCHIRPSExecution:
 
 class TestCDSExecution:
     def test_returns_201(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_cds_ingest", return_value=([], True)):
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)):
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "cds", "variable": "t2m"}},
@@ -266,7 +266,7 @@ class TestCDSExecution:
         assert resp.status_code == 201
 
     def test_success_path(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_cds_ingest", return_value=([], True)) as mock_fn:
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)) as mock_fn:
             resp = client.post(
                 "/processes/ingest/execution",
                 json={
@@ -282,12 +282,12 @@ class TestCDSExecution:
         )
 
     def test_failure_path(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_cds_ingest", side_effect=RuntimeError("no credentials")):
+        with patch("eostrata.ingestion.run_ingest", side_effect=RuntimeError("no credentials")):
             resp = client.post("/processes/ingest/execution", json={"inputs": {"source": "cds"}})
         assert client.get(f"/processes/jobs/{resp.json()['jobID']}").json()["status"] == "failed"
 
     def test_default_variable_is_t2m(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_cds_ingest", return_value=([], True)) as mock_fn:
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)) as mock_fn:
             client.post("/processes/ingest/execution", json={"inputs": {"source": "cds"}})
         assert mock_fn.call_args.kwargs["variable"] == "t2m"
 
@@ -305,7 +305,7 @@ class TestJobPolling:
         assert any(link["rel"] == "self" for link in data["links"])
 
     def test_list_jobs_after_submissions(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], True)):
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)):
             client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "NGA"}},
@@ -317,7 +317,7 @@ class TestJobPolling:
         assert len(client.get("/processes/jobs").json()["jobs"]) == 2
 
     def test_job_dict_has_expected_keys(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], True)):
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)):
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "NGA"}},
@@ -327,7 +327,7 @@ class TestJobPolling:
             assert key in job
 
     def test_params_stored_in_job(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], True)):
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)):
             resp = client.post(
                 "/processes/ingest/execution",
                 json={"inputs": {"source": "worldpop", "iso3": "ETH", "years": [2021]}},
@@ -343,7 +343,7 @@ class TestJobPolling:
 class TestConcurrency:
     def test_many_jobs_have_unique_ids(self, client, sync_executor):
         job_ids = []
-        with patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], True)):
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)):
             for _ in range(10):
                 resp = client.post(
                     "/processes/ingest/execution",
@@ -898,7 +898,7 @@ class TestRebuildCatalogFromZarr:
 
 class TestSentinelNDVIExecution:
     def test_returns_201_with_job_id(self, client, sync_executor):
-        with patch("eostrata.ingestion.run_sentinel_ndvi_ingest", return_value=([], True)):
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)):
             resp = client.post(
                 "/processes/ingest/execution",
                 json={
@@ -915,7 +915,7 @@ class TestSentinelNDVIExecution:
 
     def test_success_path_calls_ingest(self, client, sync_executor):
         with patch(
-            "eostrata.ingestion.run_sentinel_ndvi_ingest", return_value=([], True)
+            "eostrata.ingestion.run_ingest", return_value=([], True)
         ) as mock_fn:
             client.post(
                 "/processes/ingest/execution",
@@ -935,7 +935,7 @@ class TestSentinelNDVIExecution:
 
     def test_dekads_all_string_expands(self, client, sync_executor):
         with patch(
-            "eostrata.ingestion.run_sentinel_ndvi_ingest", return_value=([], True)
+            "eostrata.ingestion.run_ingest", return_value=([], True)
         ) as mock_fn:
             client.post(
                 "/processes/ingest/execution",
@@ -945,7 +945,7 @@ class TestSentinelNDVIExecution:
 
     def test_failure_path_marks_job_failed(self, client, sync_executor):
         with patch(
-            "eostrata.ingestion.run_sentinel_ndvi_ingest",
+            "eostrata.ingestion.run_ingest",
             side_effect=RuntimeError("network error"),
         ):
             resp = client.post(

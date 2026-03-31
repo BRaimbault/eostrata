@@ -18,10 +18,6 @@ app = typer.Typer(
 )
 console = Console()
 
-download_app = typer.Typer(help="Download data from a source.", no_args_is_help=True)
-app.add_typer(download_app, name="download")
-
-
 _ALL_MONTHS = list(range(1, 13))
 _ALL_DAYS = list(range(1, 32))
 
@@ -52,53 +48,83 @@ def _setup_logging(verbose: bool) -> None:
     setup_logging(verbose=verbose)
 
 
-# ── download worldpop ─────────────────────────────────────────────────────────
+_ALL_DEKADS = [1, 2, 3]
 
 
-@download_app.command("worldpop")
-def download_worldpop(
-    iso3: str = typer.Argument(..., help="ISO 3166-1 alpha-3 country code, e.g. NGA"),
+@app.command("download")
+def download(
+    source_id: str = typer.Argument(..., help="Source ID: worldpop, chirps, cds, sentinel_ndvi (or sentinel-ndvi)"),
+    iso3: str = typer.Option(None, help="ISO 3166-1 alpha-3 country code (worldpop only), e.g. NGA"),
+    variable: str = typer.Option("t2m", help="ERA5 variable short name (cds only): t2m, tp, u10, v10, sp"),
     year: int = typer.Option(None, help="Single year (default: latest available)"),
     years: str = typer.Option(None, help="Multiple years, comma-separated: 2020,2021,2022"),
+    month: int = typer.Option(None, help="Single month 1-12 (default: latest available)"),
+    months: str = typer.Option(None, help="Multiple months, comma-separated: 1,2,3 or ALL"),
+    dekad: int = typer.Option(None, help="Single dekad 1-3 (sentinel_ndvi only)"),
+    dekads: str = typer.Option(None, help="Multiple dekads: 1,2,3 or ALL (sentinel_ndvi only)"),
     zarr_root: Path | None = typer.Option(None, help="Override Zarr store root"),
     raw_dir: Path | None = typer.Option(None, help="Override raw download directory"),
     catalog_path: Path | None = typer.Option(None, help="Override catalog.json path"),
     verbose: bool = typer.Option(False, "-v", "--verbose"),
 ) -> None:
-    """Download WorldPop population rasters, clip to bbox, write to Zarr and register in STAC.
+    """Download data from a source, clip to bbox, write to Zarr and register in STAC.
 
-    Supports multiple years in a single call: --years 2020,2021,2022
+    SOURCE_ID can be: worldpop, chirps, cds, sentinel_ndvi (or sentinel-ndvi).
     """
     _setup_logging(verbose)
 
+    # Normalize hyphens to underscores (e.g. sentinel-ndvi → sentinel_ndvi)
+    source_id = source_id.replace("-", "_")
+
     from eostrata.config import settings
-    from eostrata.ingestion import run_worldpop_ingest
-    from eostrata.sources import WorldPopSource
+    from eostrata.ingestion import run_ingest
+    from eostrata.sources.base import get_source
 
     _zarr_root = zarr_root or settings.zarr_root
     _raw_dir = raw_dir or settings.raw_dir
     _catalog_path = catalog_path or settings.catalog_path
 
-    _years = _parse_int_list(year, years, WorldPopSource().latest_available().year)
+    try:
+        source_cls = get_source(source_id)
+    except ValueError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from None
 
-    logger.info(
-        "CLI download worldpop iso3=%s years=%s bbox=%s", iso3.upper(), _years, settings.bbox
-    )
+    source = source_cls()
+    latest = source.latest_available()
+
+    source_params: dict = {}
+    if "iso3" in source_cls.ui_fields:
+        if iso3 is None:
+            console.print(f"[red]Error:[/red] --iso3 is required for source '{source_id}'")
+            raise typer.Exit(1) from None
+        source_params["iso3"] = iso3
+    if "variable" in source_cls.ui_fields:
+        source_params["variable"] = variable
+    if "years" in source_cls.ui_fields:
+        source_params["years"] = _parse_int_list(year, years, latest.year)
+    if "months" in source_cls.ui_fields:
+        source_params["months"] = _parse_int_list(month, months, latest.month, all_values=_ALL_MONTHS)
+    if "dekads" in source_cls.ui_fields:
+        _default_dekad = 1 if latest.day < 11 else (2 if latest.day < 21 else 3)
+        source_params["dekads"] = _parse_int_list(dekad, dekads, _default_dekad, all_values=_ALL_DEKADS)
+
+    logger.info("CLI download %s params=%s bbox=%s", source_id, source_params, settings.bbox)
     console.print(
-        f"[bold]Downloading WorldPop[/bold] iso3=[cyan]{iso3.upper()}[/cyan] "
-        f"years=[cyan]{_years}[/cyan] bbox=[cyan]{settings.bbox}[/cyan]"
+        f"[bold]Downloading {source_id}[/bold] params=[cyan]{source_params}[/cyan] "
+        f"bbox=[cyan]{settings.bbox}[/cyan]"
     )
 
     try:
-        failed, saved = run_worldpop_ingest(
-            iso3=iso3,
-            years=_years,
+        failed, saved = run_ingest(
+            source_id,
             zarr_root=_zarr_root,
             raw_dir=_raw_dir,
             catalog_path=_catalog_path,
             bbox=settings.bbox,
             quota_mb=settings.store_quota_mb,
             eviction_buffer_mb=settings.store_eviction_buffer_mb,
+            **source_params,
         )
     except Exception as exc:
         logger.exception("CLI command failed: %s", exc)
@@ -314,258 +340,6 @@ def cleanup(
         console.print(f"[red]Deleted[/red] {_catalog_path.parent}")
 
     console.print("[bold]Cleanup complete.[/bold]")
-
-
-# ── download chirps ───────────────────────────────────────────────────────────
-
-
-@download_app.command("chirps")
-def download_chirps(
-    year: int = typer.Option(None, help="Single year (default: latest available)"),
-    years: str = typer.Option(None, help="Multiple years, comma-separated: 2022,2023"),
-    month: int = typer.Option(None, help="Single month 1-12 (default: latest available)"),
-    months: str = typer.Option(None, help="Multiple months, comma-separated: 1,2,3 or ALL"),
-    zarr_root: Path | None = typer.Option(None, help="Override Zarr store root"),
-    raw_dir: Path | None = typer.Option(None, help="Override raw download directory"),
-    catalog_path: Path | None = typer.Option(None, help="Override catalog.json path"),
-    verbose: bool = typer.Option(False, "-v", "--verbose"),
-) -> None:
-    """Download CHIRPS monthly precipitation rasters, clip to bbox, write to Zarr and register in STAC.
-
-    Supports multiple years and months in a single call:
-      --years 2022,2023 --months 1,2,3
-    """
-    _setup_logging(verbose)
-
-    from eostrata.config import settings
-    from eostrata.ingestion import run_chirps_ingest
-    from eostrata.sources.chirps import CHIRPSSource
-
-    _zarr_root = zarr_root or settings.zarr_root
-    _raw_dir = raw_dir or settings.raw_dir
-    _catalog_path = catalog_path or settings.catalog_path
-
-    latest = CHIRPSSource().latest_available()
-    _years = _parse_int_list(year, years, latest.year)
-    _months = _parse_int_list(month, months, latest.month, all_values=_ALL_MONTHS)
-
-    logger.info("CLI download chirps years=%s months=%s bbox=%s", _years, _months, settings.bbox)
-    console.print(
-        f"[bold]Downloading CHIRPS[/bold] years=[cyan]{_years}[/cyan] "
-        f"months=[cyan]{_months}[/cyan] bbox=[cyan]{settings.bbox}[/cyan]"
-    )
-
-    try:
-        failed, saved = run_chirps_ingest(
-            years=_years,
-            months=_months,
-            zarr_root=_zarr_root,
-            raw_dir=_raw_dir,
-            catalog_path=_catalog_path,
-            bbox=settings.bbox,
-            quota_mb=settings.store_quota_mb,
-            eviction_buffer_mb=settings.store_eviction_buffer_mb,
-        )
-    except Exception as exc:
-        logger.exception("CLI command failed: %s", exc)
-        console.print(f"[red]Error:[/red] {exc}")
-        raise typer.Exit(1) from None
-
-    if not saved:
-        if failed:
-            console.print(
-                f"[red]Error: nothing ingested — {len(failed)} period(s) failed: "
-                f"{', '.join(failed)}[/red]"
-            )
-        else:
-            console.print(
-                "[red]Error: nothing ingested — all requested periods may be unavailable[/red]"
-            )
-        raise typer.Exit(1) from None
-    if failed:
-        console.print(
-            f"[yellow]Warning: {len(failed)} period(s) failed to download: "
-            f"{', '.join(failed)}[/yellow]"
-        )
-    console.print("[bold green]Done.[/bold green]")
-
-
-# ── download cds ──────────────────────────────────────────────────────────────
-
-
-@download_app.command("cds")
-def download_cds(
-    variable: str = typer.Option("t2m", help="ERA5 variable short name: t2m, tp, u10, v10, sp"),
-    year: int = typer.Option(None, help="Single year (default: latest available)"),
-    years: str = typer.Option(None, help="Multiple years, comma-separated: 2022,2023"),
-    month: int = typer.Option(None, help="Single month 1-12 (default: latest available)"),
-    months: str = typer.Option(
-        None, help="Months to fetch, comma-separated: 1,2,3 or ALL (default: latest available)"
-    ),
-    zarr_root: Path | None = typer.Option(None, help="Override Zarr store root"),
-    raw_dir: Path | None = typer.Option(None, help="Override raw download directory"),
-    catalog_path: Path | None = typer.Option(None, help="Override catalog.json path"),
-    verbose: bool = typer.Option(False, "-v", "--verbose"),
-) -> None:
-    """Download ERA5 monthly reanalysis from the Copernicus Climate Data Store.
-
-    Supports multiple years in a single call: --years 2022,2023
-
-    Requires a CDS account and ~/.cdsapirc credentials file.
-    See: https://cds.climate.copernicus.eu/how-to-api
-    """
-    _setup_logging(verbose)
-
-    from eostrata.config import settings
-    from eostrata.ingestion import run_cds_ingest
-    from eostrata.sources.cds import CDSSource
-
-    _zarr_root = zarr_root or settings.zarr_root
-    _raw_dir = raw_dir or settings.raw_dir
-    _catalog_path = catalog_path or settings.catalog_path
-
-    latest = CDSSource().latest_available()
-    _years = _parse_int_list(year, years, latest.year)
-    _months = _parse_int_list(month, months, latest.month, all_values=_ALL_MONTHS)
-
-    logger.info(
-        "CLI download cds variable=%s years=%s months=%s bbox=%s",
-        variable,
-        _years,
-        _months,
-        settings.bbox,
-    )
-    console.print(
-        f"[bold]Downloading ERA5[/bold] variable=[cyan]{variable}[/cyan] "
-        f"years=[cyan]{_years}[/cyan] months=[cyan]{_months}[/cyan] bbox=[cyan]{settings.bbox}[/cyan]"
-    )
-
-    try:
-        failed, saved = run_cds_ingest(
-            variable=variable,
-            years=_years,
-            months=_months,
-            zarr_root=_zarr_root,
-            raw_dir=_raw_dir,
-            catalog_path=_catalog_path,
-            bbox=settings.bbox,
-            quota_mb=settings.store_quota_mb,
-            eviction_buffer_mb=settings.store_eviction_buffer_mb,
-        )
-    except Exception as exc:
-        logger.exception("CLI command failed: %s", exc)
-        console.print(f"[red]Error:[/red] {exc}")
-        raise typer.Exit(1) from None
-
-    if not saved:
-        if failed:
-            console.print(
-                f"[red]Error: nothing ingested — {len(failed)} period(s) failed: "
-                f"{', '.join(failed)}[/red]"
-            )
-        else:
-            console.print(
-                "[red]Error: nothing ingested — all requested periods may be unavailable[/red]"
-            )
-        raise typer.Exit(1) from None
-    if failed:
-        console.print(
-            f"[yellow]Warning: {len(failed)} period(s) failed to download: "
-            f"{', '.join(failed)}[/yellow]"
-        )
-    console.print("[bold green]Done.[/bold green]")
-
-
-# ── download sentinel-ndvi ────────────────────────────────────────────────────
-
-
-_ALL_DEKADS = [1, 2, 3]
-
-
-@download_app.command("sentinel-ndvi")
-def download_sentinel_ndvi(
-    year: int = typer.Option(None, help="Single year (default: latest available)"),
-    years: str = typer.Option(None, help="Multiple years, comma-separated: 2022,2023"),
-    month: int = typer.Option(None, help="Single month 1-12 (default: latest available)"),
-    months: str = typer.Option(None, help="Multiple months, comma-separated: 1,2,3 or ALL"),
-    dekad: int = typer.Option(None, help="Single dekad 1-3 (default: latest available)"),
-    dekads: str = typer.Option(
-        None, help="Multiple dekads, comma-separated: 1,2,3 or ALL (all dekads of month)"
-    ),
-    zarr_root: Path | None = typer.Option(None, help="Override Zarr store root"),
-    raw_dir: Path | None = typer.Option(None, help="Override raw download directory"),
-    catalog_path: Path | None = typer.Option(None, help="Override catalog.json path"),
-    verbose: bool = typer.Option(False, "-v", "--verbose"),
-) -> None:
-    """Download Sentinel-3 NDVI 300m dekadal composites from the Copernicus Global Land Service.
-
-    Supports multiple years, months and dekads in a single call:
-      --years 2022,2023 --months 1,2,3 --dekads ALL
-    """
-    _setup_logging(verbose)
-
-    from eostrata.config import settings
-    from eostrata.ingestion import run_sentinel_ndvi_ingest
-    from eostrata.sources.sentinel_ndvi import SentinelNDVISource
-
-    _zarr_root = zarr_root or settings.zarr_root
-    _raw_dir = raw_dir or settings.raw_dir
-    _catalog_path = catalog_path or settings.catalog_path
-
-    latest = SentinelNDVISource().latest_available()
-    # Derive default dekad from latest_available day
-    _default_dekad = 1 if latest.day < 11 else (2 if latest.day < 21 else 3)
-    _years = _parse_int_list(year, years, latest.year)
-    _months = _parse_int_list(month, months, latest.month, all_values=_ALL_MONTHS)
-    _dekads = _parse_int_list(dekad, dekads, _default_dekad, all_values=_ALL_DEKADS)
-
-    logger.info(
-        "CLI download sentinel-ndvi years=%s months=%s dekads=%s bbox=%s",
-        _years,
-        _months,
-        _dekads,
-        settings.bbox,
-    )
-    console.print(
-        f"[bold]Downloading Sentinel NDVI[/bold] years=[cyan]{_years}[/cyan] "
-        f"months=[cyan]{_months}[/cyan] dekads=[cyan]{_dekads}[/cyan] "
-        f"bbox=[cyan]{settings.bbox}[/cyan]"
-    )
-
-    try:
-        failed, saved = run_sentinel_ndvi_ingest(
-            years=_years,
-            months=_months,
-            dekads=_dekads,
-            zarr_root=_zarr_root,
-            raw_dir=_raw_dir,
-            catalog_path=_catalog_path,
-            bbox=settings.bbox,
-            quota_mb=settings.store_quota_mb,
-            eviction_buffer_mb=settings.store_eviction_buffer_mb,
-        )
-    except Exception as exc:
-        logger.exception("CLI command failed: %s", exc)
-        console.print(f"[red]Error:[/red] {exc}")
-        raise typer.Exit(1) from None
-
-    if not saved:
-        if failed:
-            console.print(
-                f"[red]Error: nothing ingested — {len(failed)} period(s) failed: "
-                f"{', '.join(failed)}[/red]"
-            )
-        else:
-            console.print(
-                "[red]Error: nothing ingested — all requested periods may be unavailable[/red]"
-            )
-        raise typer.Exit(1) from None
-    if failed:
-        console.print(
-            f"[yellow]Warning: {len(failed)} period(s) failed to download: "
-            f"{', '.join(failed)}[/yellow]"
-        )
-    console.print("[bold green]Done.[/bold green]")
 
 
 # ── rebuild-catalog ───────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,8 @@ class WorldPopSource(BaseSource):
     temporal_resolution = "annual"
     default_lag_days = 365
     VARIABLE = "population"
+    skip_404 = True
+    ui_fields = ["iso3", "years"]
 
     @classmethod
     def catalog_meta(cls, dataset_name: str) -> dict:
@@ -109,3 +112,19 @@ class WorldPopSource(BaseSource):
         """WorldPop R2025A covers 2015-2030 — default to previous year."""
         year = datetime.now(tz=UTC).year - 1
         return datetime(year, 1, 1, tzinfo=UTC)
+
+    @classmethod
+    def iter_periods(cls, *, iso3: str, years: list[int], **_) -> Iterator[tuple[str, dict]]:
+        for year in years:
+            yield (f"{iso3.upper()}/{year}", {"iso3": iso3, "year": year})
+
+    def stac_registrations(self, ds, period_kwargs: dict) -> list[dict]:
+        from datetime import UTC, datetime
+        iso3 = period_kwargs["iso3"]
+        year = period_kwargs["year"]
+        return [{
+            "item_id": self.stac_item_id(iso3=iso3),
+            "datetime_": datetime(year, 1, 1, tzinfo=UTC),
+            "variable": self.VARIABLE,
+            "extra_properties": self.stac_properties(**period_kwargs),
+        }]

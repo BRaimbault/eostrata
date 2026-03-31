@@ -30,6 +30,7 @@ from __future__ import annotations
 import calendar
 import logging
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -146,6 +147,7 @@ class SentinelNDVISource(BaseSource):
     temporal_resolution = "dekadal"
     default_lag_days = 5  # ~5 days after dekad end before publication
     VARIABLE = "ndvi"
+    ui_fields = ["years", "months", "dekads"]
 
     @classmethod
     def catalog_meta(cls, dataset_name: str) -> dict:
@@ -256,3 +258,28 @@ class SentinelNDVISource(BaseSource):
         prev_month = month - 1 or 12
         prev_year = year if month > 1 else year - 1
         return datetime(prev_year, prev_month, 11, tzinfo=UTC)
+
+    @classmethod
+    def iter_periods(
+        cls, *, years: list[int], months: list[int], dekads: list[int], **_
+    ) -> Iterator[tuple[str, dict]]:
+        for year in years:
+            for month in months:
+                for dekad in dekads:
+                    yield (
+                        f"{year}-{month:02d}-d{dekad}",
+                        {"year": year, "month": month, "dekad": dekad},
+                    )
+
+    def stac_registrations(self, ds, period_kwargs: dict) -> list[dict]:
+        from datetime import UTC, datetime
+        year = period_kwargs["year"]
+        month = period_kwargs["month"]
+        dekad = period_kwargs.get("dekad", 1)
+        start_day = _DEKAD_START_DAYS[dekad]
+        return [{
+            "item_id": self.stac_item_id(),
+            "datetime_": datetime(year, month, start_day, tzinfo=UTC),
+            "variable": self.VARIABLE,
+            "extra_properties": self.stac_properties(**period_kwargs),
+        }]

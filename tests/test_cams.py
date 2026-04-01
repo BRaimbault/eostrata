@@ -7,12 +7,15 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+import xarray as xr
 
 from eostrata.sources.cams import (
-    CAMSSource,
     _MULTI_LEVEL_VARS,
     _VARIABLE_MAP,
+    CAMSSource,
     _cams_netcdf_to_zarr,
+    _download_cams,
+    _get_cdsapi,
 )
 
 
@@ -22,7 +25,7 @@ class TestCAMSVariableMap:
         assert set(_VARIABLE_MAP) == expected
 
     def test_multi_level_vars_are_subset(self):
-        assert _MULTI_LEVEL_VARS < set(_VARIABLE_MAP)
+        assert set(_VARIABLE_MAP) > _MULTI_LEVEL_VARS
 
     def test_aod550_is_single_level(self):
         assert "aod550" not in _MULTI_LEVEL_VARS
@@ -152,6 +155,165 @@ class TestCAMSStacRegistrations:
             assert item["datetime_"].day == 1
 
 
+class TestGetCdsapi:
+    def test_returns_cdsapi_when_available(self):
+        result = _get_cdsapi()
+        import cdsapi
+
+        assert result is cdsapi
+
+    def test_raises_import_error_when_missing(self):
+        import sys
+
+        with (
+            patch.dict(sys.modules, {"cdsapi": None}),
+            pytest.raises((ImportError, AttributeError)),
+            patch("builtins.__import__", side_effect=ImportError("no module")),
+        ):
+            _get_cdsapi()
+
+
+class TestDownloadCams:
+    def test_skips_if_dest_exists(self, tmp_path):
+        """_download_cams must skip the network call when the file is already on disk."""
+        dest = tmp_path / "cams" / "cams_no2_2022_01.nc"
+        dest.parent.mkdir(parents=True)
+        dest.write_bytes(b"fake nc")
+
+        result = _download_cams(dest, variable="no2", year=2022, months=[1], bbox=(0, 0, 10, 10))
+
+        assert result == dest
+
+    def test_download_multi_level_var_with_key(self, tmp_path):
+        """Multi-level variable request includes pressure_level; key triggers keyed client."""
+        dest = tmp_path / "cams" / "cams_no2_2022_01.nc"
+        mock_client = MagicMock()
+        mock_cdsapi = MagicMock()
+        mock_cdsapi.Client.return_value = mock_client
+
+        with (
+            patch("eostrata.sources.cams._get_cdsapi", return_value=mock_cdsapi),
+            patch("eostrata.config.settings") as mock_settings,
+        ):
+            mock_settings.ads_url = "https://ads.example.com/api"
+            mock_settings.ads_key = "uid:secret"
+            _download_cams(dest, variable="no2", year=2022, months=[1, 2], bbox=(0, 0, 10, 10))
+
+        mock_cdsapi.Client.assert_called_once_with(
+            url="https://ads.example.com/api", key="uid:secret", quiet=True
+        )
+        retrieve_call = mock_client.retrieve.call_args
+        assert retrieve_call[0][0] == "cams-global-reanalysis-eac4-monthly"
+        request = retrieve_call[0][1]
+        assert "pressure_level" in request
+        assert request["pressure_level"] == ["1000"]
+
+    def test_download_single_level_var_without_key(self, tmp_path):
+        """Single-level variable (aod550) omits pressure_level; no key uses keyless client."""
+        dest = tmp_path / "cams" / "cams_aod550_2022_06.nc"
+        mock_client = MagicMock()
+        mock_cdsapi = MagicMock()
+        mock_cdsapi.Client.return_value = mock_client
+
+        with (
+            patch("eostrata.sources.cams._get_cdsapi", return_value=mock_cdsapi),
+            patch("eostrata.config.settings") as mock_settings,
+        ):
+            mock_settings.ads_url = "https://ads.example.com/api"
+            mock_settings.ads_key = ""
+            _download_cams(dest, variable="aod550", year=2022, months=[6], bbox=(0, 0, 10, 10))
+
+        # No key → client created without key argument
+        mock_cdsapi.Client.assert_called_once_with(url="https://ads.example.com/api", quiet=True)
+        request = mock_client.retrieve.call_args[0][1]
+        assert "pressure_level" not in request
+
+    def test_download_uses_default_ads_url_when_settings_url_empty(self, tmp_path):
+        """Falls back to _DEFAULT_ADS_URL when ads_url is empty string."""
+        from eostrata.sources.cams import _DEFAULT_ADS_URL
+
+        dest = tmp_path / "cams" / "cams_co_2022_01.nc"
+        mock_client = MagicMock()
+        mock_cdsapi = MagicMock()
+        mock_cdsapi.Client.return_value = mock_client
+
+        with (
+            patch("eostrata.sources.cams._get_cdsapi", return_value=mock_cdsapi),
+            patch("eostrata.config.settings") as mock_settings,
+        ):
+            mock_settings.ads_url = ""  # falsy → should fall back
+            mock_settings.ads_key = ""
+            _download_cams(dest, variable="co", year=2022, months=[1], bbox=(0, 0, 10, 10))
+
+        mock_cdsapi.Client.assert_called_once_with(url=_DEFAULT_ADS_URL, quiet=True)
+
+
+class TestCAMSSourceDownload:
+    def test_download_calls_download_cams(self, tmp_path):
+        """CAMSSource.download() constructs the right filename and delegates."""
+        source = CAMSSource()
+        fake_path = tmp_path / "cams" / "cams_pm2p5_2021_01-02-03.nc"
+
+        with patch("eostrata.sources.cams._download_cams", return_value=fake_path) as mock_dl:
+            result = source.download(
+                tmp_path, (0, 0, 10, 10), variable="pm2p5", year=2021, months=[1, 2, 3]
+            )
+
+        assert result == [fake_path]
+        mock_dl.assert_called_once()
+        _, kwargs = mock_dl.call_args
+        assert kwargs["variable"] == "pm2p5"
+        assert kwargs["year"] == 2021
+        assert kwargs["months"] == [1, 2, 3]
+
+    def test_download_defaults_to_all_12_months(self, tmp_path):
+        source = CAMSSource()
+        with patch("eostrata.sources.cams._download_cams", return_value=tmp_path / "x.nc") as mock_dl:
+            source.download(tmp_path, (0, 0, 10, 10), variable="no2", year=2021)
+
+        _, kwargs = mock_dl.call_args
+        assert kwargs["months"] == list(range(1, 13))
+
+
+class TestCAMSExtractItemBbox:
+    def _make_ds(self, coords, values):
+        """Build a tiny real xarray Dataset with the given coord names."""
+        import xarray as xr
+
+        data = np.zeros((len(values["y"]), len(values["x"])), dtype="float32")
+        coord_keys = list(coords.keys())
+        da = xr.DataArray(
+            data,
+            dims=(coord_keys[0], coord_keys[1]),
+            coords=dict(zip(coord_keys, [values["y"], values["x"]], strict=True)),
+        )
+        return da.to_dataset(name="test")
+
+    def test_uses_x_y_coords(self, tmp_path):
+
+        source = CAMSSource()
+        nc = self._make_cams_netcdf_for_bbox(tmp_path, "x", "y")
+        bbox = source.extract_item_bbox(nc)
+        assert bbox[0] < bbox[2]  # west < east
+        assert bbox[1] < bbox[3]  # south < north
+
+    def _make_cams_netcdf_for_bbox(self, tmp_path, x_name, y_name):
+        """Return a tiny xr.Dataset with the requested coordinate names."""
+        import xarray as xr
+
+        lons = np.array([0.0, 1.0, 2.0], dtype="float64")
+        lats = np.array([0.0, 1.0, 2.0], dtype="float64")
+        data = np.zeros((3, 3), dtype="float32")
+        da = xr.DataArray(data, dims=(y_name, x_name), coords={y_name: lats, x_name: lons})
+        return da.to_dataset(name="var")
+
+    def test_falls_back_to_longitude_latitude(self, tmp_path):
+        source = CAMSSource()
+        ds = self._make_cams_netcdf_for_bbox(tmp_path, "longitude", "latitude")
+        bbox = source.extract_item_bbox(ds)
+        assert bbox == (0.0, 0.0, 2.0, 2.0)
+
+
 class TestCAMSNetcdfToZarr:
     """Integration-style test for the NetCDF→Zarr conversion function."""
 
@@ -225,3 +387,196 @@ class TestCAMSNetcdfToZarr:
 
         assert "no2" in ds
         assert (zarr_root / "cams" / "no2").exists()
+
+    def _make_cams_netcdf_lon_lat(self, tmp_path, variable="pm2p5"):
+        """NetCDF using 'lon'/'lat' short dim names instead of 'longitude'/'latitude'."""
+        lats = np.array([0.0, 0.75, 1.5], dtype="float64")
+        lons = np.array([0.0, 0.75, 1.5], dtype="float64")
+        times = np.array(["2022-01-01"], dtype="datetime64[ns]")
+        data = np.random.rand(1, 3, 3).astype("float32")
+        da = xr.DataArray(
+            data,
+            dims=("time", "lat", "lon"),
+            coords={"time": times, "lat": lats, "lon": lons},
+            name=variable,
+        )
+        nc_path = tmp_path / f"cams_lonlat_{variable}.nc"
+        da.to_dataset().to_netcdf(nc_path)
+        return nc_path
+
+    def test_lon_lat_dim_names_are_renamed(self, tmp_path):
+        """Files with 'lon'/'lat' coords should be renamed to x/y."""
+        nc_path = self._make_cams_netcdf_lon_lat(tmp_path, "pm2p5")
+        zarr_root = tmp_path / "zarr"
+        bbox = (0.0, 0.0, 2.0, 2.0)
+
+        ds = _cams_netcdf_to_zarr(nc_path, zarr_root, "cams/pm2p5", variable="pm2p5", bbox=bbox)
+
+        assert "x" in ds.coords
+        assert "y" in ds.coords
+
+    def _make_cams_netcdf_with_expver(self, tmp_path, variable="o3"):
+        """NetCDF that includes an 'expver' auxiliary variable (ERA5/CAMS metadata)."""
+        lats = np.array([0.0, 0.75, 1.5], dtype="float64")
+        lons = np.array([0.0, 0.75, 1.5], dtype="float64")
+        times = np.array(["2022-03-01"], dtype="datetime64[ns]")
+        data = np.random.rand(1, 3, 3).astype("float32")
+        da = xr.DataArray(
+            data,
+            dims=("valid_time", "latitude", "longitude"),
+            coords={"valid_time": times, "latitude": lats, "longitude": lons},
+            name=variable,
+        )
+        ds = da.to_dataset()
+        ds["expver"] = xr.DataArray(["0001"], dims=("valid_time",))
+        nc_path = tmp_path / f"cams_expver_{variable}.nc"
+        ds.to_netcdf(nc_path)
+        return nc_path
+
+    def test_expver_auxiliary_variable_is_dropped(self, tmp_path):
+        """'expver' metadata variable must not appear in the Zarr output."""
+        nc_path = self._make_cams_netcdf_with_expver(tmp_path, "o3")
+        zarr_root = tmp_path / "zarr"
+        bbox = (0.0, 0.0, 2.0, 2.0)
+
+        ds = _cams_netcdf_to_zarr(nc_path, zarr_root, "cams/o3", variable="o3", bbox=bbox)
+
+        assert "expver" not in ds
+
+    def test_zarr_append_falls_back_when_existing_read_fails(self, tmp_path):
+        """If open_zarr raises while checking existing timestamps, append proceeds anyway."""
+        nc_path = self._make_cams_netcdf(tmp_path, "pm2p5", has_pressure_level=False)
+        zarr_root = tmp_path / "zarr"
+        bbox = (0.0, 0.0, 2.0, 2.0)
+
+        # Write once to create the group
+        _cams_netcdf_to_zarr(nc_path, zarr_root, "cams/pm2p5", variable="pm2p5", bbox=bbox)
+
+        # On the second call, patch open_zarr to raise inside the duplicate check
+        def _raise_once(store, **kwargs):
+            raise OSError("simulated read failure")
+
+        with patch("xarray.open_zarr", side_effect=_raise_once):
+            # Should not raise — falls back to appending
+            _cams_netcdf_to_zarr(nc_path, zarr_root, "cams/pm2p5", variable="pm2p5", bbox=bbox)
+
+    def test_zarr_append_skips_duplicate_timestamps(self, tmp_path):
+        """Writing the same period twice must not create duplicate time entries."""
+        nc_path = self._make_cams_netcdf(tmp_path, "so2", has_pressure_level=False)
+        zarr_root = tmp_path / "zarr"
+        bbox = (0.0, 0.0, 2.0, 2.0)
+
+        # First write
+        _cams_netcdf_to_zarr(nc_path, zarr_root, "cams/so2", variable="so2", bbox=bbox)
+        # Second write — same timestamps, should be skipped
+        _cams_netcdf_to_zarr(nc_path, zarr_root, "cams/so2", variable="so2", bbox=bbox)
+
+        stored = xr.open_zarr(str(zarr_root), group="cams/so2", consolidated=False)
+        # Timestamps should not be duplicated
+        assert len(stored["time"]) == len(np.array(["2022-01-01", "2022-02-01"], dtype="datetime64[ns]"))
+
+    def test_zarr_append_partial_overlap_skips_existing_keeps_new(self, tmp_path):
+        """When a second write contains both existing and new timestamps,
+        existing ones are dropped and only the new one is appended."""
+        bbox = (0.0, 0.0, 2.0, 2.0)
+        zarr_root = tmp_path / "zarr"
+        lats = np.array([0.0, 0.75, 1.5], dtype="float64")
+        lons = np.array([0.0, 0.75, 1.5], dtype="float64")
+
+        # First write: Jan 2022
+        times1 = np.array(["2022-01-01"], dtype="datetime64[ns]")
+        da1 = xr.DataArray(
+            np.random.rand(1, 3, 3).astype("float32"),
+            dims=("valid_time", "latitude", "longitude"),
+            coords={"valid_time": times1, "latitude": lats, "longitude": lons},
+            name="pm10",
+        )
+        nc1 = tmp_path / "nc_jan.nc"
+        da1.to_dataset().to_netcdf(nc1)
+        _cams_netcdf_to_zarr(nc1, zarr_root, "cams/pm10", variable="pm10", bbox=bbox)
+
+        # Second write: Jan (already present) + Feb (new)
+        times2 = np.array(["2022-01-01", "2022-02-01"], dtype="datetime64[ns]")
+        da2 = xr.DataArray(
+            np.random.rand(2, 3, 3).astype("float32"),
+            dims=("valid_time", "latitude", "longitude"),
+            coords={"valid_time": times2, "latitude": lats, "longitude": lons},
+            name="pm10",
+        )
+        nc2 = tmp_path / "nc_jan_feb.nc"
+        da2.to_dataset().to_netcdf(nc2)
+        _cams_netcdf_to_zarr(nc2, zarr_root, "cams/pm10", variable="pm10", bbox=bbox)
+
+        stored = xr.open_zarr(str(zarr_root), group="cams/pm10", consolidated=False)
+        assert len(stored["time"]) == 2  # Jan + Feb, no duplicate
+
+    def test_zarr_append_adds_new_timestamps(self, tmp_path):
+        """A second write with NEW timestamps must append to the existing group."""
+        bbox = (0.0, 0.0, 2.0, 2.0)
+        zarr_root = tmp_path / "zarr"
+
+        # First NetCDF: Jan + Feb 2022
+        (tmp_path / "nc1").mkdir()
+        nc1 = self._make_cams_netcdf(tmp_path / "nc1", "co", has_pressure_level=False)
+        _cams_netcdf_to_zarr(nc1, zarr_root, "cams/co", variable="co", bbox=bbox)
+
+        # Second NetCDF: Mar 2022 only
+        lats = np.array([0.0, 0.75, 1.5], dtype="float64")
+        lons = np.array([0.0, 0.75, 1.5], dtype="float64")
+        times_mar = np.array(["2022-03-01"], dtype="datetime64[ns]")
+        data = np.random.rand(1, 3, 3).astype("float32")
+        da2 = xr.DataArray(
+            data,
+            dims=("valid_time", "latitude", "longitude"),
+            coords={"valid_time": times_mar, "latitude": lats, "longitude": lons},
+            name="co",
+        )
+        nc2 = tmp_path / "nc2" / "cams_co_mar.nc"
+        nc2.parent.mkdir(parents=True)
+        da2.to_dataset().to_netcdf(nc2)
+        _cams_netcdf_to_zarr(nc2, zarr_root, "cams/co", variable="co", bbox=bbox)
+
+        stored = xr.open_zarr(str(zarr_root), group="cams/co", consolidated=False)
+        assert len(stored["time"]) == 3  # Jan + Feb + Mar
+
+    def test_level_dim_alternative_name(self, tmp_path):
+        """Handles NetCDF files that use 'level' instead of 'pressure_level'."""
+        lats = np.array([0.0, 0.75, 1.5], dtype="float64")
+        lons = np.array([0.0, 0.75, 1.5], dtype="float64")
+        times = np.array(["2022-01-01"], dtype="datetime64[ns]")
+        data = np.random.rand(1, 1, 3, 3).astype("float32")
+        da = xr.DataArray(
+            data,
+            dims=("valid_time", "level", "latitude", "longitude"),
+            coords={"valid_time": times, "level": np.array([1000.0]), "latitude": lats, "longitude": lons},
+            name="no2",
+        )
+        nc_path = tmp_path / "cams_level_dim.nc"
+        da.to_dataset().to_netcdf(nc_path)
+
+        zarr_root = tmp_path / "zarr"
+        ds = _cams_netcdf_to_zarr(nc_path, zarr_root, "cams/no2", variable="no2", bbox=(0, 0, 2, 2))
+
+        assert "level" not in ds.dims
+        assert "no2" in ds
+
+    def test_variable_rename_when_named_by_long_name(self, tmp_path):
+        """If the file stores the variable under its long name, it's renamed to the short name."""
+        lats = np.array([0.0, 0.75, 1.5], dtype="float64")
+        lons = np.array([0.0, 0.75, 1.5], dtype="float64")
+        times = np.array(["2022-01-01"], dtype="datetime64[ns]")
+        data = np.random.rand(1, 3, 3).astype("float32")
+        # Store under the long name 'nitrogen_dioxide' rather than 'no2'
+        da = xr.DataArray(
+            data,
+            dims=("valid_time", "latitude", "longitude"),
+            coords={"valid_time": times, "latitude": lats, "longitude": lons},
+            name="nitrogen_dioxide",
+        )
+        nc_path = tmp_path / "cams_long_name.nc"
+        da.to_dataset().to_netcdf(nc_path)
+
+        zarr_root = tmp_path / "zarr"
+        ds = _cams_netcdf_to_zarr(nc_path, zarr_root, "cams/no2", variable="no2", bbox=(0, 0, 2, 2))
+
+        assert "no2" in ds

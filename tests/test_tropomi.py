@@ -70,9 +70,7 @@ class TestSearchProducts:
         resp1 = self._make_search_response(page1, next_link="https://next.page")
         resp2 = self._make_search_response(page2)
 
-        with patch(
-            "eostrata.sources.tropomi.httpx.get", side_effect=[resp1, resp2]
-        ):
+        with patch("eostrata.sources.tropomi.httpx.get", side_effect=[resp1, resp2]):
             result = _search_products("L2__NO2___", date(2023, 6, 1), (0, 0, 10, 10))
 
         assert len(result) == 2
@@ -165,7 +163,9 @@ class TestDownloadProduct:
 
 
 class TestReadSwath:
-    def _make_hdf5_swath(self, tmp_path, var_name="nitrogendioxide_tropospheric_column", add_fill=True):
+    def _make_hdf5_swath(
+        self, tmp_path, var_name="nitrogendioxide_tropospheric_column", add_fill=True
+    ):
         import h5py
 
         nc_path = tmp_path / "swath.nc"
@@ -252,7 +252,7 @@ class TestBuildBboxWkt:
         """First and last coordinate pair must be the same."""
         wkt = _build_bbox_wkt((0.0, 0.0, 1.0, 1.0))
         # The polygon string ends with the closing coord before ")"
-        coords_str = wkt[len("POLYGON(("):-2]  # strip 'POLYGON((' and '))'
+        coords_str = wkt[len("POLYGON((") : -2]  # strip 'POLYGON((' and '))'
         pairs = [p.strip() for p in coords_str.split(",")]
         assert pairs[0] == pairs[-1]
 
@@ -366,28 +366,30 @@ class TestTROPOMISource:
 
 class TestTROPOMIIterPeriods:
     def test_yields_one_entry_per_day(self):
-        periods = list(TROPOMISource.iter_periods(
-            variable="no2", years=[2023], months=[1], days=[1, 2, 3]
-        ))
+        periods = list(
+            TROPOMISource.iter_periods(variable="no2", years=[2023], months=[1], days=[1, 2, 3])
+        )
         assert len(periods) == 3
 
     def test_multiple_years_months_days(self):
-        periods = list(TROPOMISource.iter_periods(
-            variable="co", years=[2022, 2023], months=[6, 7], days=[1, 15]
-        ))
+        periods = list(
+            TROPOMISource.iter_periods(
+                variable="co", years=[2022, 2023], months=[6, 7], days=[1, 15]
+            )
+        )
         assert len(periods) == 2 * 2 * 2  # 8 total
 
     def test_label_format(self):
-        periods = list(TROPOMISource.iter_periods(
-            variable="no2", years=[2023], months=[3], days=[5]
-        ))
+        periods = list(
+            TROPOMISource.iter_periods(variable="no2", years=[2023], months=[3], days=[5])
+        )
         label, kwargs = periods[0]
         assert label == "no2/2023-03-05"
 
     def test_kwargs_structure(self):
-        periods = list(TROPOMISource.iter_periods(
-            variable="so2", years=[2022], months=[12], days=[31]
-        ))
+        periods = list(
+            TROPOMISource.iter_periods(variable="so2", years=[2022], months=[12], days=[31])
+        )
         _, kwargs = periods[0]
         assert kwargs == {"variable": "so2", "year": 2022, "month": 12, "day": 31}
 
@@ -552,8 +554,15 @@ class TestTROPOMIToZarrMissingBranches:
         fake_nc = tmp_path / "orbit.nc"
         fake_nc.write_bytes(b"")
         with pytest.raises(ValueError, match="Unknown TROPOMI variable"):
-            source.to_zarr(fake_nc, tmp_path / "zarr", (0, 0, 10, 5), variable="bad_var",
-                           year=2023, month=6, day=1)
+            source.to_zarr(
+                fake_nc,
+                tmp_path / "zarr",
+                (0, 0, 10, 5),
+                variable="bad_var",
+                year=2023,
+                month=6,
+                day=1,
+            )
 
     def test_to_zarr_skips_unreadable_swath_files(self, tmp_path):
         """If a sibling swath file is corrupt/unreadable, it is warned and skipped."""
@@ -565,8 +574,9 @@ class TestTROPOMIToZarrMissingBranches:
         zarr_root = tmp_path / "zarr"
         source = TROPOMISource()
         # Should not raise — corrupt file is skipped
-        ds = source.to_zarr(good_swath, zarr_root, (0, 0, 6, 4), variable="no2",
-                            year=2023, month=6, day=1)
+        ds = source.to_zarr(
+            good_swath, zarr_root, (0, 0, 6, 4), variable="no2", year=2023, month=6, day=1
+        )
         assert "no2" in ds
 
     def test_to_zarr_handles_no_valid_pixels(self, tmp_path):
@@ -577,8 +587,9 @@ class TestTROPOMIToZarrMissingBranches:
 
         zarr_root = tmp_path / "zarr"
         source = TROPOMISource()
-        ds = source.to_zarr(bad_nc, zarr_root, (0, 0, 10, 5), variable="no2",
-                            year=2023, month=6, day=2)
+        ds = source.to_zarr(
+            bad_nc, zarr_root, (0, 0, 10, 5), variable="no2", year=2023, month=6, day=2
+        )
         assert "no2" in ds
 
     def test_write_daily_grid_falls_back_when_existing_read_fails(self, tmp_path):
@@ -592,7 +603,6 @@ class TestTROPOMIToZarrMissingBranches:
 
         # First write to create the group
         source.to_zarr(swath, zarr_root, bbox, variable="no2", year=2023, month=7, day=1)
-
 
         with patch("xarray.open_zarr", side_effect=OSError("broken")):
             # Should not raise — fallback appends
@@ -644,7 +654,9 @@ class TestTROPOMIToZarrWritesDailyGrid:
             parts = var_path.split("/")
             parent = "/".join(parts[:-1])
             var_name = parts[-1]
-            grp_parent = f.require_group(parent.replace("PRODUCT/", "") if "/" in parent else "PRODUCT")
+            grp_parent = f.require_group(
+                parent.replace("PRODUCT/", "") if "/" in parent else "PRODUCT"
+            )
             data = np.full((1, nlines, npixels), 1e-5, dtype="float64")
             ds = grp_parent.create_dataset(var_name, data=data)
             ds.attrs["_FillValue"] = np.float64(9.96921e36)

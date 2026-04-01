@@ -104,15 +104,13 @@ class TestCAMSSource:
 
 class TestCAMSIterPeriods:
     def test_yields_one_entry_per_year(self):
-        periods = list(CAMSSource.iter_periods(
-            variable="no2", years=[2021, 2022], months=[1, 2, 3]
-        ))
+        periods = list(
+            CAMSSource.iter_periods(variable="no2", years=[2021, 2022], months=[1, 2, 3])
+        )
         assert len(periods) == 2
 
     def test_label_format(self):
-        periods = list(CAMSSource.iter_periods(
-            variable="pm2p5", years=[2020], months=[6, 7]
-        ))
+        periods = list(CAMSSource.iter_periods(variable="pm2p5", years=[2020], months=[6, 7]))
         label, kwargs = periods[0]
         assert label == "pm2p5/2020"
         assert kwargs["variable"] == "pm2p5"
@@ -268,7 +266,9 @@ class TestCAMSSourceDownload:
 
     def test_download_defaults_to_all_12_months(self, tmp_path):
         source = CAMSSource()
-        with patch("eostrata.sources.cams._download_cams", return_value=tmp_path / "x.nc") as mock_dl:
+        with patch(
+            "eostrata.sources.cams._download_cams", return_value=tmp_path / "x.nc"
+        ) as mock_dl:
             source.download(tmp_path, (0, 0, 10, 10), variable="no2", year=2021)
 
         _, kwargs = mock_dl.call_args
@@ -473,7 +473,9 @@ class TestCAMSNetcdfToZarr:
 
         stored = xr.open_zarr(str(zarr_root), group="cams/so2", consolidated=False)
         # Timestamps should not be duplicated
-        assert len(stored["time"]) == len(np.array(["2022-01-01", "2022-02-01"], dtype="datetime64[ns]"))
+        assert len(stored["time"]) == len(
+            np.array(["2022-01-01", "2022-02-01"], dtype="datetime64[ns]")
+        )
 
     def test_zarr_append_partial_overlap_skips_existing_keeps_new(self, tmp_path):
         """When a second write contains both existing and new timestamps,
@@ -548,7 +550,12 @@ class TestCAMSNetcdfToZarr:
         da = xr.DataArray(
             data,
             dims=("valid_time", "level", "latitude", "longitude"),
-            coords={"valid_time": times, "level": np.array([1000.0]), "latitude": lats, "longitude": lons},
+            coords={
+                "valid_time": times,
+                "level": np.array([1000.0]),
+                "latitude": lats,
+                "longitude": lons,
+            },
             name="no2",
         )
         nc_path = tmp_path / "cams_level_dim.nc"

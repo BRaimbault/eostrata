@@ -50,8 +50,7 @@ logger = logging.getLogger(__name__)
 # ── CDSE API constants ─────────────────────────────────────────────────────────
 
 _CDSE_TOKEN_URL = (
-    "https://identity.dataspace.copernicus.eu"
-    "/auth/realms/CDSE/protocol/openid-connect/token"
+    "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
 )
 _CDSE_SEARCH_URL = "https://catalogue.dataspace.copernicus.eu/odata/v1/Products"
 _CDSE_DOWNLOAD_URL = "https://zipper.dataspace.copernicus.eu/odata/v1/Products"
@@ -134,7 +133,9 @@ def _search_products(
     )
 
     products: list[dict] = []
-    url: str | None = f"{_CDSE_SEARCH_URL}?$filter={odata_filter}&$top=100&$orderby=ContentDate/Start"
+    url: str | None = (
+        f"{_CDSE_SEARCH_URL}?$filter={odata_filter}&$top=100&$orderby=ContentDate/Start"
+    )
 
     while url:
         resp = httpx.get(url, timeout=60)
@@ -219,7 +220,7 @@ def _read_swath(nc_path: Path, var_path: str) -> tuple[np.ndarray, np.ndarray, n
     returns flat 1-D arrays of valid pixel coordinates and values.
     """
     with h5py.File(nc_path, "r") as f:
-        lat = f["PRODUCT/latitude"][0].astype("float32")          # (scanline, pixel)
+        lat = f["PRODUCT/latitude"][0].astype("float32")  # (scanline, pixel)
         lon = f["PRODUCT/longitude"][0].astype("float32")
         qa = f["PRODUCT/qa_value"][0].astype("float32")
 
@@ -348,7 +349,9 @@ def _write_daily_grid(
         try:
             existing = xr.open_zarr(store_path, group=zarr_group, consolidated=False)
             if "time" in existing and time_coord in existing["time"].values:
-                logger.info("Timestamp %s already exists in '%s' — skipping", time_coord, zarr_group)
+                logger.info(
+                    "Timestamp %s already exists in '%s' — skipping", time_coord, zarr_group
+                )
                 return ds
         except Exception:
             pass
@@ -415,8 +418,7 @@ class TROPOMISource(BaseSource):
         """
         if variable not in _VARIABLE_MAP:
             raise ValueError(
-                f"Unknown TROPOMI variable '{variable}'. "
-                f"Available: {list(_VARIABLE_MAP)}"
+                f"Unknown TROPOMI variable '{variable}'. Available: {list(_VARIABLE_MAP)}"
             )
 
         from eostrata.config import settings
@@ -507,7 +509,9 @@ class TROPOMISource(BaseSource):
                 logger.warning("Could not read swath %s: %s — skipping", swath_path.name, exc)
 
         if not all_lat:
-            logger.info("No valid pixels in swaths for %s %s — writing empty grid", variable, time_coord)
+            logger.info(
+                "No valid pixels in swaths for %s %s — writing empty grid", variable, time_coord
+            )
             lat_empty: np.ndarray = np.array([], dtype="float32")
             lon_empty: np.ndarray = np.array([], dtype="float32")
             val_empty: np.ndarray = np.array([], dtype="float64")
@@ -536,7 +540,9 @@ class TROPOMISource(BaseSource):
         """One STAC item per TROPOMI variable (all days as timesteps)."""
         return f"tropomi_{variable}"
 
-    def stac_properties(self, *, variable: str = "no2", year: int, month: int, day: int, **_: Any) -> dict:
+    def stac_properties(
+        self, *, variable: str = "no2", year: int, month: int, day: int, **_: Any
+    ) -> dict:
         product_type, var_path = _VARIABLE_MAP.get(variable, ("", ""))
         return {
             "eostrata:variable": variable,

@@ -45,6 +45,7 @@ from eostrata.catalog import PystacClient, load_or_create
 from eostrata.config import settings
 from eostrata.ogc.ingest import router as ingest_router
 from eostrata.ogc.processes import router as processes_router
+from eostrata.ogc.scheduler_router import router as scheduler_router
 from eostrata.ogc.tiles import router as collection_tiles_router
 
 logger = logging.getLogger(__name__)
@@ -60,9 +61,10 @@ async def lifespan(app: FastAPI):
 
     scheduler = None
     try:
-        from eostrata.scheduler import Scheduler
+        from eostrata.scheduler import Scheduler, set_scheduler
 
         scheduler = Scheduler()
+        set_scheduler(scheduler)
         scheduler.start()
     except ImportError:
         logger.info(
@@ -76,6 +78,9 @@ async def lifespan(app: FastAPI):
 
     if scheduler is not None:
         scheduler.stop()
+        from eostrata.scheduler import set_scheduler
+
+        set_scheduler(None)
 
 
 # ── Main app ──────────────────────────────────────────────────────────────────
@@ -135,6 +140,15 @@ _OPENAPI_TAGS = [
         "description": (
             "OGC API - Common protocol endpoints: landing page and conformance classes. "
             "Primarily for OGC-native clients — most users can ignore these."
+        ),
+    },
+    {
+        "name": "Scheduler",
+        "description": (
+            "Manage APScheduler cron jobs at runtime. "
+            "Open [/scheduler](/scheduler) for the visual dashboard. "
+            "Jobs are persisted to ``schedules.yml`` so they survive restarts. "
+            "Use ``POST /scheduler/jobs/{job_id}/run`` to trigger a job immediately."
         ),
     },
 ]
@@ -210,6 +224,7 @@ app.include_router(
 
 app.include_router(processes_router)
 app.include_router(ingest_router)
+app.include_router(scheduler_router)
 
 add_exception_handlers(app, DEFAULT_STATUS_CODES)
 
@@ -281,6 +296,7 @@ def landing_page() -> dict:
             {"rel": "data", "href": "/collections", "type": "application/json"},
             {"rel": "search", "href": "/stac/search", "type": "application/json"},
             {"rel": "docs", "href": "/docs", "type": "text/html"},
+            {"rel": "scheduler", "href": "/scheduler", "type": "text/html"},
         ],
     }
 
@@ -470,6 +486,7 @@ def store_usage() -> dict:
 # ── Map viewer ────────────────────────────────────────────────────────────────
 
 _MAP_HTML = (Path(__file__).parent / "templates" / "map.html").read_text()
+_SCHEDULER_HTML = (Path(__file__).parent / "templates" / "scheduler.html").read_text()
 
 
 @app.get(
@@ -525,6 +542,31 @@ def map_viewer(
         .replace("__CONFIG__", config_data)
         .replace("__SOURCES__", sources_data)
     )
+    return HTMLResponse(content=html)
+
+
+# ── Scheduler dashboard ───────────────────────────────────────────────────────
+
+
+@app.get(
+    "/scheduler",
+    response_class=HTMLResponse,
+    tags=["Scheduler"],
+    summary="Scheduler dashboard",
+    include_in_schema=True,
+)
+def scheduler_ui() -> HTMLResponse:
+    """
+    Visual dashboard for managing APScheduler cron jobs.
+
+    Lists all configured jobs with their next run times, and provides a form
+    to add, edit, enable/disable, delete, and manually trigger jobs.
+    Jobs are persisted to ``schedules.yml`` so they survive restarts.
+    """
+    from eostrata.ogc.ingest import INGEST_SOURCES
+
+    sources_data = json.dumps(INGEST_SOURCES)
+    html = _SCHEDULER_HTML.replace("__SOURCES__", sources_data)
     return HTMLResponse(content=html)
 
 

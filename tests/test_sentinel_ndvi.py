@@ -104,6 +104,21 @@ class TestSentinelNDVISource:
         props = self.source.stac_properties(year=2023, month=1)
         assert props["eostrata:period"] == "2023-01-01/2023-01-10"
 
+    def test_iter_periods(self):
+        periods = list(SentinelNDVISource.iter_periods(years=[2024], months=[3], dekads=[1, 2]))
+        assert periods == [
+            ("2024-03-d1", {"year": 2024, "month": 3, "dekad": 1}),
+            ("2024-03-d2", {"year": 2024, "month": 3, "dekad": 2}),
+        ]
+
+    def test_stac_registrations(self):
+        regs = self.source.stac_registrations(None, {"year": 2024, "month": 3, "dekad": 1})
+        assert len(regs) == 1
+        reg = regs[0]
+        assert reg["variable"] == "ndvi"
+        assert reg["datetime_"] == datetime(2024, 3, 1, tzinfo=UTC)
+        assert reg["item_id"] == "sentinel_ndvi_global"
+
     def test_latest_available_is_in_past(self):
         latest = self.source.latest_available()
         assert latest < datetime.now(tz=UTC)

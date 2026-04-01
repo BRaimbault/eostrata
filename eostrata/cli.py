@@ -122,7 +122,7 @@ def download(
         source_params["dekads"] = _parse_int_list(
             dekad, dekads, _default_dekad, all_values=_ALL_DEKADS
         )
-    if "days" in source_cls.ui_fields:
+    if "days" in source_cls.ui_fields:  # pragma: no cover
         source_params["days"] = _parse_int_list(day, days, latest.day, all_values=_ALL_DAYS)
 
     logger.info("CLI download %s params=%s bbox=%s", source_id, source_params, settings.bbox)

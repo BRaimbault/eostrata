@@ -50,6 +50,17 @@ class TestCDSSource:
         latest = self.source.latest_available()
         assert latest.tzinfo is not None
 
+    def test_latest_available_january_wraps_to_previous_year(self):
+        """In January, subtracting 3 months wraps to October of the previous year."""
+        from unittest.mock import patch
+
+        with patch("eostrata.sources.cds.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2024, 1, 15, tzinfo=UTC)
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            latest = CDSSource().latest_available()
+
+        assert latest == datetime(2023, 10, 1, tzinfo=UTC)
+
     def test_cdsapi_import_error_message(self):
         """Helpful error message shown when cdsapi is not installed."""
         import sys

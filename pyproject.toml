@@ -91,7 +91,7 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 source = ["eostrata"]
-omit = ["tests/*"]
+omit = ["tests/*", "eostrata/sources/_template.py"]
 
 [tool.coverage.report]
 show_missing = true

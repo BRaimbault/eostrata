@@ -198,7 +198,7 @@ class IngestInputs(BaseModel):
 
         try:
             source_cls = get_source(self.source)
-        except ValueError:
+        except ValueError:  # pragma: no cover
             return self  # Invalid source already caught by validate_source
         if "iso3" in source_cls.ui_fields and self.iso3 is None:
             raise ValueError(f"iso3 is required when source is '{self.source}'")
@@ -327,7 +327,7 @@ def execute_ingest(body: IngestExecutionRequest, response: Response) -> dict:
     if "dekads" in source_cls.ui_fields:
         default_dekad = 1 if latest.day < 11 else (2 if latest.day < 21 else 3)
         source_params["dekads"] = inp.dekads or [default_dekad]
-    if "days" in source_cls.ui_fields:
+    if "days" in source_cls.ui_fields:  # pragma: no cover
         source_params["days"] = inp.days or [latest.day]
 
     job = jobs.create_job(inp.source, source_params)

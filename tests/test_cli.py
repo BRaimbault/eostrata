@@ -1266,3 +1266,21 @@ class TestDownloadSentinelNDVI:
 
         assert result.exit_code == 1
         assert "Error" in result.output
+
+
+class TestDownloadErrors:
+    def test_download_unknown_source_exits_1(self, tmp_path):
+        """Passing an unknown source id exits 1 with an error message."""
+        mock_settings = _make_settings_mock(tmp_path)
+        with patch("eostrata.config.settings", mock_settings):
+            result = runner.invoke(app, ["download", "no_such_source_xyz"])
+        assert result.exit_code == 1
+        assert "Error" in result.output
+
+    def test_download_worldpop_requires_iso3(self, tmp_path):
+        """Omitting --iso3 for a source that requires it exits 1 with an error."""
+        mock_settings = _make_settings_mock(tmp_path)
+        with patch("eostrata.config.settings", mock_settings):
+            result = runner.invoke(app, ["download", "worldpop"])
+        assert result.exit_code == 1
+        assert "Error" in result.output

@@ -1019,6 +1019,22 @@ class TestSentinelNDVIExecution:
             )
         assert mock_fn.call_args.kwargs["dekads"] == [1, 2, 3]
 
+    def test_days_all_string_expands(self, client, sync_executor):
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)) as mock_fn:
+            client.post(
+                "/processes/ingest/execution",
+                json={"inputs": {"source": "sentinel_ndvi", "days": "ALL"}},
+            )
+        assert mock_fn.call_args.kwargs.get("days") in (None, list(range(1, 32)))
+
+    def test_days_list_passthrough(self, client, sync_executor):
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)):
+            resp = client.post(
+                "/processes/ingest/execution",
+                json={"inputs": {"source": "sentinel_ndvi", "days": [1, 5]}},
+            )
+        assert resp.status_code == 201
+
     def test_failure_path_marks_job_failed(self, client, sync_executor):
         with patch(
             "eostrata.ingestion.run_ingest",

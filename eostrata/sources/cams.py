@@ -292,8 +292,7 @@ class CAMSSource(BaseSource):
         """
         if variable not in _VARIABLE_MAP:
             raise ValueError(
-                f"Unknown CAMS variable '{variable}'. "
-                f"Available: {list(_VARIABLE_MAP)}"
+                f"Unknown CAMS variable '{variable}'. Available: {list(_VARIABLE_MAP)}"
             )
         _months = months or list(range(1, 13))
         month_tag = "-".join(f"{m:02d}" for m in _months)

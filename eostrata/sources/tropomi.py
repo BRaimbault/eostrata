@@ -494,6 +494,15 @@ class TROPOMISource(BaseSource):
         duplicate-timestamp guard and skipped.  To merge all swaths, the
         daily grid is computed afresh from *all* available swath files in the
         raw directory before writing.
+
+        **First-write-wins limitation**: the daily grid is computed from
+        whichever swath files are present on disk at the time of the *first*
+        successful write for that day.  Any orbit files downloaded after that
+        point are silently skipped by the duplicate-timestamp guard and will
+        not be incorporated.  To regenerate the grid with all orbits, delete
+        the existing Zarr timestep and re-run ``to_zarr`` on any swath file
+        for that day (or use ``eostrata rebuild-catalog`` after deleting the
+        timestep).
         """
         if variable not in _VARIABLE_MAP:
             raise ValueError(f"Unknown TROPOMI variable '{variable}'")

@@ -274,6 +274,11 @@ class TestCAMSSourceDownload:
         _, kwargs = mock_dl.call_args
         assert kwargs["months"] == list(range(1, 13))
 
+    def test_download_raises_for_unknown_variable(self, tmp_path):
+        source = CAMSSource()
+        with pytest.raises(ValueError, match="Unknown CAMS variable 'bad_var'"):
+            source.download(tmp_path, (0, 0, 10, 10), variable="bad_var", year=2021)
+
 
 class TestCAMSExtractItemBbox:
     def _make_ds(self, coords, values):

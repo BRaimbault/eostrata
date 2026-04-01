@@ -290,6 +290,11 @@ class CAMSSource(BaseSource):
         months:
             List of months to fetch (1-12).  Defaults to all 12.
         """
+        if variable not in _VARIABLE_MAP:
+            raise ValueError(
+                f"Unknown CAMS variable '{variable}'. "
+                f"Available: {list(_VARIABLE_MAP)}"
+            )
         _months = months or list(range(1, 13))
         month_tag = "-".join(f"{m:02d}" for m in _months)
         filename = f"cams_{variable}_{year}_{month_tag}.nc"

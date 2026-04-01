@@ -217,6 +217,14 @@ class CDSSource(BaseSource):
     temporal_resolution = "monthly"
     default_lag_days = 90  # ERA5 has ~3-month production lag
     VARIABLE = "t2m"  # default variable short name
+    VARIABLES = ["t2m", "tp", "u10", "v10", "sp"]
+    VARIABLE_DESCRIPTIONS = {
+        "t2m": "2m temperature (K)",
+        "tp": "total precipitation (m)",
+        "u10": "10m U-component of wind (m/s)",
+        "v10": "10m V-component of wind (m/s)",
+        "sp": "surface pressure (Pa)",
+    }
     ui_fields = ["variable", "years", "months"]
 
     @classmethod

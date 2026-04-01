@@ -6,10 +6,17 @@
 
 ## Features
 
-- **Multi-source ingestion**: fetches earth observation data through a unified `BaseSource` plugin interface. New sources register with a single decorator: the scheduler, catalogue, and store pick them up automatically.
-  - WorldPop population rasters
-  - CDS / ERA5 climate reanalysis
-  - CHIRPS precipitation
+- **Multi-source ingestion**: fetches earth observation data through a unified `BaseSource` plugin interface. New sources register with a single decorator — the scheduler, catalogue, map UI, and store pick them up automatically.
+
+  | Source | Description | Resolution |
+  |---|---|---|
+  | `worldpop` | WorldPop population count rasters | Annual |
+  | `chirps` | CHIRPS precipitation | Monthly |
+  | `cds` | CDS / ERA5 climate reanalysis | Monthly |
+  | `cams` | CAMS EAC4 air quality reanalysis | Monthly |
+  | `tropomi` | Sentinel-5P TROPOMI air quality columns | Daily |
+  | `sentinel_ndvi` | CGLS Sentinel-3 NDVI 300m composites | Dekadal |
+  | _your source_ | _one `.py` file, one decorator_ | _any_ |
 
 - **Zarr collection store**: each ingested resource is stored as a CF-compliant (Climate and Forecast conventions - standard naming for dimensions, coordinates, units and fill values) Zarr collection with `x`, `y`, and `time` dimensions, locally or on cloud object storage. When the storage quota is reached, data is evicted before new downloads proceed.
 
@@ -31,6 +38,10 @@ flowchart TD
     WP["WorldPop\nREST API"]:::src
     CDS["CDS / ERA5\ncdsapi"]:::src
     CH["CHIRPS\nHTTP / .gz"]:::src
+    CAMS["CAMS EAC4\ncdsapi / ADS"]:::src
+    TR["TROPOMI\nCDSE OData API"]:::src
+    ND["Sentinel NDVI\nCGLS HTTP"]:::src
+    MORE["… your source\nBaseSource"]:::src
 
     CLI["CLI / Python API\neostrata download"]:::infra
     SCH["Scheduler\nAPScheduler · cron · webhook alert"]:::infra
@@ -46,7 +57,7 @@ flowchart TD
     ING["OGC API - Processes\ningest · async jobs · job polling"]:::serve
     OGC["OGC API - Common\n/ · /conformance · /collections"]:::serve
 
-    WP & CDS & CH --> DL
+    WP & CDS & CH & CAMS & TR & ND & MORE --> DL
     CLI --> DL
     SY --> SCH
     SCH --> DL
@@ -70,9 +81,13 @@ eostrata/
 ├── eostrata/
 │   ├── sources/
 │   │   ├── base.py          BaseSource ABC + @register_source registry + retry logic
-│   │   ├── worldpop.py      WorldPopSource
-│   │   ├── cds.py           CDSSource
-│   │   ├── chirps.py        CHIRPSSource
+│   │   ├── worldpop.py      WorldPopSource — annual population rasters
+│   │   ├── chirps.py        CHIRPSSource — monthly precipitation
+│   │   ├── cds.py           CDSSource — ERA5 monthly reanalysis
+│   │   ├── cams.py          CAMSSource — EAC4 monthly air quality
+│   │   ├── tropomi.py       TROPOMISource — Sentinel-5P daily air quality
+│   │   ├── sentinel_ndvi.py SentinelNDVISource — dekadal NDVI
+│   │   ├── _template.py     minimal template for new sources
 │   │   └── __init__.py      populates the source registry on import
 │   ├── ogc/
 │   │   ├── ingest.py        OGC API - Processes: async ingest jobs + job polling

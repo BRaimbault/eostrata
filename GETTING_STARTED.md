@@ -7,10 +7,14 @@ This guide walks through downloading earth observation data, storing it as Zarr,
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [Available data sources](#available-data-sources)
 - [Downloading data](#downloading-data)
   - [WorldPop — population](#worldpop--population)
   - [CHIRPS — precipitation](#chirps--precipitation)
   - [CDS / ERA5 — climate reanalysis](#cds--era5--climate-reanalysis)
+  - [CAMS — air quality reanalysis](#cams--air-quality-reanalysis)
+  - [TROPOMI — Sentinel-5P air quality](#tropomi--sentinel-5p-air-quality)
+  - [Sentinel NDVI — vegetation index](#sentinel-ndvi--vegetation-index)
 - [Ingesting data via the API](#ingesting-data-via-the-api)
 - [Starting the server](#starting-the-server)
 - [Exploring the map viewer](#exploring-the-map-viewer)
@@ -103,6 +107,49 @@ Practically this means:
 - A timestamp that was ingested but never served via tiles or zonal stats shows **"never read"** in `eostrata list` — it is the first eviction candidate.
 - A timestamp that is being actively served will not be evicted as long as it continues to receive requests within the debounce window.
 - You can inspect per-timestamp last-access times and sizes at any time via `eostrata list` or `GET /store-usage`.
+
+---
+
+## Available data sources
+
+eostrata ships with the following built-in sources. New sources can be added in a single file — see `docs/adding-a-source.md`.
+
+| Source | What it is | Variables | Resolution | Lag |
+|---|---|---|---|---|
+| `worldpop` | WorldPop R2025A population count | `population` | Annual | ~1 year |
+| `chirps` | CHIRPS v2.0 precipitation | `precipitation` | Monthly | ~45 days |
+| `cds` | CDS / ERA5 climate reanalysis | `t2m` `tp` `u10` `v10` `sp` | Monthly | ~90 days |
+| `cams` | CAMS EAC4 air quality reanalysis | `pm2p5` `pm10` `no2` `co` `o3` `so2` `aod550` | Monthly | ~120 days |
+| `tropomi` | Sentinel-5P TROPOMI OFFLINE L2 | `no2` `co` `o3` `so2` `ch4` `hcho` `aer_ai` | Daily | ~3 days |
+| `sentinel_ndvi` | CGLS Sentinel-3 NDVI 300m v2 | `ndvi` | Dekadal (10-day) | ~5 days |
+| _your source_ | _implement `BaseSource`_ | _any_ | _any_ | — |
+
+**Variable reference:**
+
+| Source | Variable | Description | Unit |
+|---|---|---|---|
+| `worldpop` | `population` | Total population count per pixel | count |
+| `chirps` | `precipitation` | Monthly precipitation total | mm |
+| `cds` | `t2m` | 2m air temperature | K |
+| `cds` | `tp` | Total precipitation | m |
+| `cds` | `u10` | 10m U-component of wind | m/s |
+| `cds` | `v10` | 10m V-component of wind | m/s |
+| `cds` | `sp` | Surface pressure | Pa |
+| `cams` | `pm2p5` | PM2.5 surface concentration | kg/m³ |
+| `cams` | `pm10` | PM10 surface concentration | kg/m³ |
+| `cams` | `no2` | Nitrogen dioxide surface concentration | kg/m³ |
+| `cams` | `co` | Carbon monoxide surface concentration | kg/m³ |
+| `cams` | `o3` | Ozone surface concentration | kg/m³ |
+| `cams` | `so2` | Sulphur dioxide surface concentration | kg/m³ |
+| `cams` | `aod550` | Total aerosol optical depth at 550 nm | dimensionless |
+| `tropomi` | `no2` | Tropospheric NO₂ column | mol/m² |
+| `tropomi` | `co` | Total CO column | mol/m² |
+| `tropomi` | `o3` | Total O₃ column | mol/m² |
+| `tropomi` | `so2` | Total SO₂ column | mol/m² |
+| `tropomi` | `ch4` | CH₄ mixing ratio | ppb |
+| `tropomi` | `hcho` | Tropospheric HCHO column | mol/m² |
+| `tropomi` | `aer_ai` | Aerosol index | dimensionless |
+| `sentinel_ndvi` | `ndvi` | Normalised Difference Vegetation Index | 0–1 |
 
 ---
 
@@ -278,6 +325,119 @@ uv run eostrata download cds --variable u10 --year 2023
 
 ---
 
+### CAMS — air quality reanalysis
+
+Monthly-averaged surface air quality from the [Copernicus Atmosphere Monitoring Service](https://ads.atmosphere.copernicus.eu) (CAMS EAC4). One Zarr group per variable.
+
+**Setup required** — CAMS needs an ADS account and API credentials:
+
+1. Register at [ads.atmosphere.copernicus.eu](https://ads.atmosphere.copernicus.eu)
+2. Install the optional dependency: `uv sync --extra cds` (uses the same `cdsapi` library)
+3. Create `~/.adsapirc`:
+```
+url: https://ads.atmosphere.copernicus.eu/api
+key: <your-api-key>
+```
+Or set environment variables: `EOSTRATA_ADS_URL` and `EOSTRATA_ADS_KEY`.
+
+**Download PM2.5 for the latest available year** (~4 months behind real time):
+```bash
+uv run eostrata download cams --variable pm2p5
+```
+
+**Download a specific year and months:**
+```bash
+uv run eostrata download cams --variable no2 --year 2023 --months 1,2,3
+```
+
+**Supported variables:** `pm2p5`, `pm10`, `no2`, `co`, `o3`, `so2`, `aod550` — see the variable reference table above.
+
+**What gets written** (example for `pm2p5`):
+
+| | Value |
+|---|---|
+| Zarr group | `data/zarr/cams/pm2p5/` |
+| Variable | `pm2p5` |
+| STAC item id | `cams_pm2p5` |
+| Time resolution | monthly (one timestep per month) |
+
+---
+
+### TROPOMI — Sentinel-5P air quality
+
+Daily Level-2 atmospheric composition columns from [Sentinel-5P TROPOMI](https://sentinels.copernicus.eu/web/sentinel/missions/sentinel-5p) via the Copernicus Data Space Ecosystem (CDSE). Swath pixels are aggregated to a 0.1° grid. One Zarr group per variable.
+
+**Setup required** — TROPOMI needs CDSE credentials:
+
+1. Register at [dataspace.copernicus.eu](https://dataspace.copernicus.eu)
+2. Set environment variables:
+```bash
+EOSTRATA_CDSE_USER=your@email.com
+EOSTRATA_CDSE_PASSWORD=yourpassword
+```
+
+**Download NO₂ for the latest available day** (~3 days behind real time):
+```bash
+uv run eostrata download tropomi --variable no2
+```
+
+**Download a specific day:**
+```bash
+uv run eostrata download tropomi --variable no2 --year 2024 --month 3 --day 15
+```
+
+**Download a full month:**
+```bash
+uv run eostrata download tropomi --variable co --year 2024 --month 1 --days ALL
+```
+
+**Supported variables:** `no2`, `co`, `o3`, `so2`, `ch4`, `hcho`, `aer_ai` — see the variable reference table above.
+
+> **Note** — TROPOMI data is not available for every day and region. Days with no matching products are silently skipped (`skip_404=true`).
+
+**What gets written** (example for `no2`):
+
+| | Value |
+|---|---|
+| Zarr group | `data/zarr/tropomi/no2/` |
+| Variable | `no2` |
+| STAC item id | `tropomi_no2` |
+| Time resolution | daily (one timestep per day) |
+
+---
+
+### Sentinel NDVI — vegetation index
+
+Dekadal (10-day) 300m NDVI composites from the [Copernicus Global Land Service](https://land.copernicus.eu/global/products/ndvi) (CGLS, Sentinel-3 OLCI). A single global Zarr group holds all dekads as timesteps.
+
+**Download the latest available dekad** (~5 days behind the end of the dekad):
+```bash
+uv run eostrata download sentinel_ndvi
+```
+
+**Download a specific year, month, and dekad (1, 2, or 3):**
+```bash
+uv run eostrata download sentinel_ndvi --year 2023 --month 6 --dekad 1
+```
+
+**Download all dekads in a month:**
+```bash
+uv run eostrata download sentinel_ndvi --year 2023 --month 6 --dekads ALL
+```
+
+Dekad 1 = days 1–10, dekad 2 = days 11–20, dekad 3 = days 21–end of month.
+
+**What gets written:**
+
+| | Value |
+|---|---|
+| Zarr group | `data/zarr/sentinel_ndvi/global/` |
+| Variable | `ndvi` |
+| STAC item id | `sentinel_ndvi_global` |
+| Time resolution | dekadal (three timesteps per month) |
+
+---
+
 ## Ingesting data via the API
 
 Once the server is running you can trigger ingestion jobs via HTTP without blocking the server. Jobs run in the background on a thread pool.
@@ -356,9 +516,33 @@ The map viewer is a catalog-aware Leaflet interface available at:
 http://127.0.0.1:8000/map
 ```
 
+The viewer has four tabs:
+
+### Map tab
+
 Use the dropdowns to select a collection, item, datetime, colormap and rescale range. The viewer loads all available data from the STAC catalogue automatically.
 
+**Date modes:**
+- **Single date** — select one timestep from the dropdown (default)
+- **Interval** — enter a start/end date range and apply a temporal aggregation method (`mean`, `sum`, `min`, `max`, or `anomaly`). The `anomaly` method requires a separate baseline interval.
+
 Tick **Auto-scale from stats** to set the rescale range automatically from the data's p5/p95 percentiles (falls back to p25/p75, then min/max if percentile data is unavailable). Editing the rescale field manually unticks the checkbox.
+
+Zonal statistics (mean, min, max, std, sum, percentiles, nodata count) are computed automatically for the current bbox and displayed below the controls.
+
+### Ingest tab
+
+Start ingestion jobs directly from the browser. Select a source, fill in the parameters (years, months, variable, etc.), and click **Start ingestion job**. The job list below refreshes automatically and shows running/successful/failed status badges.
+
+### Quota tab
+
+Shows live disk usage, the quota bar (blue < 70% · amber 70–90% · red > 90%), and a per-group/timestamp breakdown. Groups and timestamps highlighted in red are oldest-accessed and will be evicted first if the quota is exceeded. Hover over a red entry for details.
+
+### Config tab
+
+Shows static configuration: bounding box, storage paths, and a reference table of all registered sources with their variables and temporal resolution. Also provides the **Rebuild catalog from Zarr** action for recovery if the catalog becomes out of sync.
+
+---
 
 You can also deep-link directly to a specific view with query parameters:
 
@@ -502,7 +686,7 @@ You can pass any number of features in the `FeatureCollection`, statistics are c
 
 eostrata includes an in-process APScheduler that runs alongside the server. Edit `schedules.yml` to declare cron-based ingestion jobs. Each job supports:
 
-- `auto_period: true` — automatically targets the latest available interval (year/month) rather than requiring explicit dates
+- `auto_period: true` — see below
 - Exponential-backoff retry (3 attempts)
 - Optional webhook alert (`webhook_url`) on final failure
 
@@ -519,6 +703,27 @@ jobs:
 ```
 
 The scheduler starts automatically with `eostrata serve` and stops cleanly on shutdown.
+
+### Understanding `auto_period`
+
+When `auto_period: true` is set on a job, eostrata calls `source.latest_available()` at job run time to determine the most recent period for which data is expected to be available — based on the source's typical publication lag. This computed period overrides any `year`/`month`/`day` values in `params`.
+
+For example, CHIRPS has a ~45-day lag. A job running on 2024-03-15 with `auto_period: true` will target 2024-01 (roughly 45 days back), not the current month.
+
+**Per-source behaviour:**
+
+| Source | `latest_available()` returns | Typical lag |
+|---|---|---|
+| `worldpop` | previous year | ~1 year |
+| `chirps` | ~45 days ago (year + month) | 45 days |
+| `cds` | ~90 days ago (year + month) | 90 days |
+| `cams` | ~120 days ago (year + month) | 120 days |
+| `tropomi` | ~3 days ago (year + month + day) | 3 days |
+| `sentinel_ndvi` | ~5 days ago (year + month only) | 5 days |
+
+> **Note for Sentinel NDVI** — `auto_period` resolves year and month automatically, but the `dekad` must still be specified explicitly in `params` since the scheduler does not yet resolve dekadal periods automatically. See the commented examples in `schedules.yml`.
+
+When `auto_period: false` (the default), `params` must include explicit `year`/`month`/`day` values — use this when you want to backfill a specific historical period.
 
 ---
 

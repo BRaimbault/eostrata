@@ -382,6 +382,16 @@ class TROPOMISource(BaseSource):
     temporal_resolution = "daily"
     default_lag_days = 3  # OFFLINE products available ~1-3 days after sensing
     VARIABLE = "no2"  # default variable short name
+    VARIABLES = ["no2", "co", "o3", "so2", "ch4", "hcho", "aer_ai"]
+    VARIABLE_DESCRIPTIONS = {
+        "no2": "tropospheric NO₂ column (mol/m²)",
+        "co": "total CO column (mol/m²)",
+        "o3": "total O₃ column (mol/m²)",
+        "so2": "total SO₂ column (mol/m²)",
+        "ch4": "CH₄ mixing ratio (ppb)",
+        "hcho": "tropospheric HCHO column (mol/m²)",
+        "aer_ai": "aerosol index (dimensionless)",
+    }
     skip_404 = True  # no data for some days/regions is expected
     ui_fields = ["variable", "years", "months", "days"]
 

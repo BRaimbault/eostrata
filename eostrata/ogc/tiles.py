@@ -100,11 +100,17 @@ async def collection_map(
     collection_id: str = Path(..., description="Collection ID"),
     tileMatrixSetId: str = Path(..., description="Tile matrix set"),
     item: str | None = Query(None, description="Item ID within the collection"),
-    datetime: str | None = Query(None, description="ISO 8601 datetime for time selection"),
+    datetime: str | None = Query(
+        None,
+        description="ISO 8601 datetime or interval (`2023-06` or `2023-01/2023-12`).",
+    ),
     agg: str | None = Query(
         None, description="Temporal aggregation method: mean|sum|min|max|anomaly"
     ),
-    baseline: str | None = Query(None, description="ISO 8601 interval for anomaly baseline"),
+    baseline: str | None = Query(
+        None,
+        description="ISO 8601 interval for anomaly baseline (e.g. `2015-01/2020-12`). Required when `agg=anomaly`.",
+    ),
     colormap_name: str | None = Query(
         None, description="Colormap name (e.g. viridis, plasma, inferno)"
     ),
@@ -140,11 +146,17 @@ async def collection_tilejson(
     collection_id: str = Path(..., description="Collection ID"),
     tileMatrixSetId: str = Path(..., description="Tile matrix set"),
     item: str | None = Query(None, description="Item ID within the collection"),
-    datetime: str | None = Query(None, description="ISO 8601 datetime for time selection"),
+    datetime: str | None = Query(
+        None,
+        description="ISO 8601 datetime or interval (`2023-06` or `2023-01/2023-12`).",
+    ),
     agg: str | None = Query(
         None, description="Temporal aggregation method: mean|sum|min|max|anomaly"
     ),
-    baseline: str | None = Query(None, description="ISO 8601 interval for anomaly baseline"),
+    baseline: str | None = Query(
+        None,
+        description="ISO 8601 interval for anomaly baseline (e.g. `2015-01/2020-12`). Required when `agg=anomaly`.",
+    ),
     colormap_name: str | None = Query(None, description="Colormap name (e.g. viridis, plasma)"),
     rescale: str | None = Query(None, description="Colormap range as min,max"),
 ) -> dict:
@@ -186,12 +198,28 @@ async def collection_tile(
     x: int = Path(..., description="Tile column"),
     y: int = Path(..., description="Tile row"),
     item: str | None = Query(None, description="Item ID within the collection"),
-    datetime: str | None = Query(None, description="ISO 8601 datetime for time selection"),
+    datetime: str | None = Query(
+        None,
+        description=(
+            "ISO 8601 datetime or interval. "
+            "Single value: `2023-06` or `2023-06-01`. "
+            "Interval: `2023-01/2023-12` (enables temporal aggregation via `agg`)."
+        ),
+    ),
     agg: str | None = Query(
-        None, description="Temporal aggregation method: mean|sum|min|max|anomaly"
+        None,
+        description=(
+            "Temporal aggregation method applied over a `datetime` interval: "
+            "`mean`, `sum`, `min`, `max`, or `anomaly` (deviation from `baseline`). "
+            "Ignored when `datetime` is a single value."
+        ),
     ),
     baseline: str | None = Query(
-        None, description="ISO 8601 interval used as baseline for anomaly aggregation"
+        None,
+        description=(
+            "ISO 8601 interval defining the reference period for anomaly computation "
+            "(e.g. `2015-01/2020-12`). Required when `agg=anomaly`, ignored otherwise."
+        ),
     ),
     colormap_name: str | None = Query(None, description="Colormap name (e.g. viridis, plasma)"),
     rescale: str | None = Query(None, description="Colormap range as min,max"),

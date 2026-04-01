@@ -247,6 +247,16 @@ class CAMSSource(BaseSource):
     temporal_resolution = "monthly"
     default_lag_days = 120  # EAC4 has ~4-month production lag
     VARIABLE = "pm2p5"  # default variable short name
+    VARIABLES = ["pm2p5", "pm10", "no2", "co", "o3", "so2", "aod550"]
+    VARIABLE_DESCRIPTIONS = {
+        "pm2p5": "PM2.5 surface concentration (kg/m³)",
+        "pm10": "PM10 surface concentration (kg/m³)",
+        "no2": "nitrogen dioxide surface concentration (kg/m³)",
+        "co": "carbon monoxide surface concentration (kg/m³)",
+        "o3": "ozone surface concentration (kg/m³)",
+        "so2": "sulphur dioxide surface concentration (kg/m³)",
+        "aod550": "total aerosol optical depth at 550 nm",
+    }
     ui_fields = ["variable", "years", "months"]
 
     @classmethod

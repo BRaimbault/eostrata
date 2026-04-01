@@ -139,8 +139,55 @@
       display: inline-block; padding: 1px 7px; border-radius: 9px;
       font-size: 11px; font-weight: 500; white-space: nowrap;
     }
-    .badge-auto  { background: #dbeafe; color: #1e40af; }
-    .badge-fixed { background: #f3f4f6; color: #6b7280; }
+    .badge-auto    { background: #dbeafe; color: #1e40af; }
+    .badge-fixed   { background: #f3f4f6; color: #6b7280; }
+    .badge-success { background: #dcfce7; color: #166534; }
+    .badge-failed  { background: #fee2e2; color: #991b1b; }
+    .badge-running { background: #fef9c3; color: #854d0e; }
+
+    /* ── Last-run cell ────────────────────────────────────────────────────── */
+    td.last-run { font-size: 12px; }
+    .lr-err-btn {
+      display: inline-block; margin-left: 5px; font-size: 11px;
+      color: #991b1b; background: none; border: none; cursor: pointer;
+      text-decoration: underline; padding: 0; font-family: inherit;
+    }
+    .lr-err-btn:hover { color: #7f1d1d; }
+    .lr-detail {
+      display: none; margin-top: 4px; padding: 6px 8px;
+      background: #fff1f2; border: 1px solid #fecaca; border-radius: 4px;
+      font-family: ui-monospace, monospace; font-size: 11px; color: #991b1b;
+      white-space: pre-wrap; word-break: break-all; max-height: 120px;
+      overflow-y: auto;
+    }
+
+    /* ── Failures banner ──────────────────────────────────────────────────── */
+    #failures-banner {
+      display: none; margin-bottom: 16px; padding: 12px 16px;
+      background: #fff1f2; border: 1px solid #fecaca; border-radius: 8px;
+    }
+    #failures-banner .banner-hdr {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 13px; font-weight: 600; color: #991b1b;
+    }
+    #failures-banner .banner-hdr button {
+      font-size: 11px; background: none; border: none; cursor: pointer;
+      color: #991b1b; text-decoration: underline; padding: 0; font-family: inherit;
+    }
+    #failures-list {
+      margin-top: 8px; display: flex; flex-direction: column; gap: 6px;
+    }
+    .failure-item {
+      font-size: 12px; color: #374151;
+    }
+    .failure-item strong { font-family: ui-monospace, monospace; }
+    .failure-item .failure-err {
+      display: block; margin-top: 2px; padding: 4px 8px;
+      background: #fee2e2; border-radius: 4px;
+      font-family: ui-monospace, monospace; font-size: 11px; color: #991b1b;
+      white-space: pre-wrap; word-break: break-all; max-height: 80px;
+      overflow-y: auto;
+    }
 
     /* ── Empty / error state ──────────────────────────────────────────────── */
     #empty-state, #error-state {
@@ -264,6 +311,15 @@
     <button class="btn" id="add-btn" onclick="showAddForm()">+ Add Job</button>
   </div>
 
+  <!-- Failures banner -->
+  <div id="failures-banner">
+    <div class="banner-hdr">
+      <span id="failures-title">Job failures</span>
+      <button onclick="dismissFailures()">dismiss</button>
+    </div>
+    <div id="failures-list"></div>
+  </div>
+
   <!-- Jobs table -->
   <div class="card" id="jobs-card">
     <table id="jobs-table">
@@ -275,6 +331,7 @@
           <th>Period</th>
           <th>Enabled</th>
           <th>Next Run</th>
+          <th>Last Run</th>
           <th>Actions</th>
         </tr>
       </thead>
@@ -366,6 +423,9 @@ async function fetchJobs() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     jobs = data.jobs || [];
+    // Un-dismiss banner if the failures have changed
+    const failedIds = new Set(jobs.filter(j => j.last_run?.status === 'failed').map(j => j.id));
+    if (failedIds.size === 0) _failuresDismissed = false;
     setStatus('running', `Running · ${jobs.length} job${jobs.length !== 1 ? 's' : ''}`);
     renderJobs();
   } catch (e) {
@@ -396,6 +456,7 @@ function renderJobs() {
   if (jobs.length === 0) {
     tbody.innerHTML = '';
     document.getElementById('empty-state').style.display = 'block';
+    renderFailuresBanner();
     return;
   }
   document.getElementById('empty-state').style.display = 'none';
@@ -422,6 +483,7 @@ function renderJobs() {
         </label>
       </td>
       <td class="next-run">${nextRun}</td>
+      <td class="last-run">${renderLastRun(j)}</td>
       <td class="actions">
         <button class="btn icon run" title="Run now" data-run="${esc(j.id)}"
                 onclick="runJob('${esc(j.id)}', this)">▶</button>
@@ -430,6 +492,78 @@ function renderJobs() {
       </td>
     </tr>`;
   }).join('');
+
+  renderFailuresBanner();
+  scheduleNextPoll();
+}
+
+/* ── Last-run cell ──────────────────────────────────────────────────────── */
+function renderLastRun(j) {
+  const lr = j.last_run;
+  if (!lr) return '<span style="color:#9ca3af">—</span>';
+
+  const rowId = 'lr-err-' + j.id.replace(/[^a-z0-9]/gi, '_');
+  const ts = lr.finished_at || lr.started_at;
+  const rel = ts ? formatRelTime(ts) : '';
+
+  if (lr.status === 'running') {
+    return `<span class="badge badge-running">● running</span>`;
+  }
+  if (lr.status === 'success') {
+    return `<span class="badge badge-success">✓ ok</span> <span style="color:#9ca3af;font-size:11px">${rel}</span>`;
+  }
+  if (lr.status === 'failed') {
+    const errHtml = lr.error
+      ? `<button class="lr-err-btn" onclick="toggleErrDetail('${rowId}')">details</button>
+         <div class="lr-detail" id="${rowId}">${esc(lr.error)}</div>`
+      : '';
+    return `<span class="badge badge-failed">✕ failed</span> <span style="color:#9ca3af;font-size:11px">${rel}</span>${errHtml}`;
+  }
+  return '<span style="color:#9ca3af">—</span>';
+}
+
+function toggleErrDetail(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.display = el.style.display === 'block' ? 'none' : 'block';
+}
+
+/* ── Failures banner ────────────────────────────────────────────────────── */
+let _failuresDismissed = false;
+
+function renderFailuresBanner() {
+  const failed = jobs.filter(j => j.last_run && j.last_run.status === 'failed');
+  const banner = document.getElementById('failures-banner');
+  if (failed.length === 0 || _failuresDismissed) {
+    banner.style.display = 'none';
+    return;
+  }
+  _failuresDismissed = false;
+  document.getElementById('failures-title').textContent =
+    `${failed.length} job${failed.length > 1 ? 's' : ''} failed on last run`;
+  document.getElementById('failures-list').innerHTML = failed.map(j => {
+    const ts = j.last_run.finished_at || j.last_run.started_at;
+    const rel = ts ? formatRelTime(ts) : '';
+    return `<div class="failure-item">
+      <strong>${esc(j.id)}</strong> <span style="color:#9ca3af">${rel}</span>
+      ${j.last_run.error ? `<span class="failure-err">${esc(j.last_run.error)}</span>` : ''}
+    </div>`;
+  }).join('');
+  banner.style.display = 'block';
+}
+
+function dismissFailures() {
+  _failuresDismissed = true;
+  document.getElementById('failures-banner').style.display = 'none';
+}
+
+/* ── Auto-poll while any job is running ─────────────────────────────────── */
+let _pollTimer = null;
+
+function scheduleNextPoll() {
+  clearTimeout(_pollTimer);
+  const anyRunning = jobs.some(j => j.last_run && j.last_run.status === 'running');
+  _pollTimer = setTimeout(fetchJobs, anyRunning ? 3000 : 30000);
 }
 
 /* ── Relative time formatter ────────────────────────────────────────────── */

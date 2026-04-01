@@ -102,12 +102,12 @@ def _run_job(
     params: dict[str, Any],
     auto_period: bool,
     webhook_url: str | None,
-) -> None:
+) -> tuple[bool, str | None]:
     """
     Execute one scheduled ingestion job with retry + webhook alert.
 
-    This function is called by APScheduler in a thread pool, or directly
-    via Scheduler.trigger_job() for manual runs.
+    Returns ``(success, error_message)``.  Called by the tracking wrapper
+    registered with APScheduler and by Scheduler.trigger_job().
     """
     from eostrata.config import settings
     from eostrata.sources.base import get_source
@@ -130,7 +130,7 @@ def _run_job(
         try:
             _execute_ingestion(source, job_params, settings)
             logger.info("[scheduler] Job '%s' succeeded (attempt %d)", job_id, attempt)
-            return
+            return True, None
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
             delay = _RETRY_BASE_DELAY * (2 ** (attempt - 1))
@@ -146,6 +146,7 @@ def _run_job(
                 time.sleep(delay)
 
     # All retries exhausted
+    error_msg = str(last_exc)
     logger.error(
         "[scheduler] Job '%s' failed after %d attempts: %s", job_id, _MAX_RETRIES, last_exc
     )
@@ -157,10 +158,11 @@ def _run_job(
                 "job_id": job_id,
                 "source": source_id,
                 "params": job_params,
-                "error": str(last_exc),
+                "error": error_msg,
                 "timestamp": datetime.now(tz=UTC).isoformat(),
             },
         )
+    return False, error_msg
 
 
 def _execute_ingestion(source: Any, params: dict, settings: Any) -> None:
@@ -237,9 +239,46 @@ class Scheduler:
         self._path = schedules_path or _SCHEDULES_FILE
         self._job_defs: dict[str, dict] = {}
         self._global_webhook: str | None = None
+        self._job_runs: dict[str, dict] = {}  # job_id → last run record
         self._lock = threading.Lock()
 
     # ── Internal ──────────────────────────────────────────────────────────────
+
+    def _wrap_for_tracking(
+        self,
+        job_id: str,
+        source_id: str,
+        params: dict,
+        auto_period: bool,
+        webhook_url: str | None,
+    ):
+        """Return a zero-arg callable that runs the job and records its outcome."""
+
+        def _tracked() -> None:
+            started_at = datetime.now(tz=UTC).isoformat()
+            with self._lock:
+                self._job_runs[job_id] = {
+                    "started_at": started_at,
+                    "finished_at": None,
+                    "status": "running",
+                    "error": None,
+                }
+            success, error = _run_job(
+                job_id=job_id,
+                source_id=source_id,
+                params=params,
+                auto_period=auto_period,
+                webhook_url=webhook_url,
+            )
+            with self._lock:
+                self._job_runs[job_id] = {
+                    "started_at": started_at,
+                    "finished_at": datetime.now(tz=UTC).isoformat(),
+                    "status": "success" if success else "failed",
+                    "error": error,
+                }
+
+        return _tracked
 
     def _add_apscheduler_job(self, job_def: dict) -> None:
         """Register one job_def with APScheduler (does not touch _job_defs)."""
@@ -260,17 +299,14 @@ class Scheduler:
 
         minute, hour, day, month, day_of_week = parts
 
+        tracked_fn = self._wrap_for_tracking(
+            job_id, source_id, params, auto_period, self._global_webhook
+        )
+
         self._scheduler.add_job(
-            _run_job,
+            tracked_fn,
             trigger="cron",
             id=job_id,
-            kwargs={
-                "job_id": job_id,
-                "source_id": source_id,
-                "params": params,
-                "auto_period": auto_period,
-                "webhook_url": self._global_webhook,
-            },
             minute=minute,
             hour=hour,
             day=day,
@@ -324,7 +360,7 @@ class Scheduler:
     # ── Public runtime API ────────────────────────────────────────────────────
 
     def get_jobs(self) -> list[dict]:
-        """Return all job definitions enriched with APScheduler next_run_time."""
+        """Return all job definitions enriched with APScheduler next_run_time and last_run."""
         result = []
         with self._lock:
             for job_id, job_def in self._job_defs.items():
@@ -334,7 +370,8 @@ class Scheduler:
                     if apjob and apjob.next_run_time
                     else None
                 )
-                result.append({**job_def, "next_run_time": next_run})
+                last_run = self._job_runs.get(job_id)
+                result.append({**job_def, "next_run_time": next_run, "last_run": last_run})
         return result
 
     def save_job(self, job_def: dict) -> None:
@@ -377,15 +414,15 @@ class Scheduler:
         if job_def is None:
             raise KeyError(f"Job '{job_id}' not found.")
 
+        tracked_fn = self._wrap_for_tracking(
+            job_id=job_id,
+            source_id=job_def["source"],
+            params=job_def.get("params") or {},
+            auto_period=job_def.get("auto_period", False),
+            webhook_url=self._global_webhook,
+        )
         t = threading.Thread(
-            target=_run_job,
-            kwargs={
-                "job_id": job_id,
-                "source_id": job_def["source"],
-                "params": job_def.get("params") or {},
-                "auto_period": job_def.get("auto_period", False),
-                "webhook_url": self._global_webhook,
-            },
+            target=tracked_fn,
             daemon=True,
             name=f"scheduler-manual-{job_id}",
         )

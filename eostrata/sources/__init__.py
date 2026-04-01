@@ -10,7 +10,7 @@ from pathlib import Path
 # @register_source decorator runs and the class enters the registry.
 _here = Path(__file__).parent
 for _mod in pkgutil.iter_modules([str(_here)]):
-    if _mod.name != "base":
+    if not _mod.name.startswith("_") and _mod.name != "base":
         importlib.import_module(f"eostrata.sources.{_mod.name}")
 
 # Expose all registered source classes at the package level so that

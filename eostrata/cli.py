@@ -59,8 +59,8 @@ def download(
     iso3: str = typer.Option(
         None, help="ISO 3166-1 alpha-3 country code (worldpop only), e.g. NGA"
     ),
-    variable: str = typer.Option(
-        "t2m", help="ERA5 variable short name (cds only): t2m, tp, u10, v10, sp"
+    variable: str | None = typer.Option(
+        None, help="ERA5 variable short name (cds only): t2m, tp, u10, v10, sp"
     ),
     year: int = typer.Option(None, help="Single year (default: latest available)"),
     years: str = typer.Option(None, help="Multiple years, comma-separated: 2020,2021,2022"),
@@ -110,7 +110,7 @@ def download(
             raise typer.Exit(1) from None
         source_params["iso3"] = iso3
     if "variable" in source_cls.ui_fields:
-        source_params["variable"] = variable
+        source_params["variable"] = variable or "t2m"
     if "years" in source_cls.ui_fields:
         source_params["years"] = _parse_int_list(year, years, latest.year)
     if "months" in source_cls.ui_fields:

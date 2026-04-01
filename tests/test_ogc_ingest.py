@@ -363,20 +363,45 @@ def _mock_ds(x=(0.0, 10.0), y=(0.0, 5.0)):
     return ds
 
 
-def _setup_source(stack, source_patch: str, zarr_group: str, mock_ds, tmp_path, **extra):
-    MockSource = stack.enter_context(patch(source_patch))
+def _setup_source(
+    stack, source_id: str, zarr_group_val: str, mock_ds, tmp_path, *, periods, **extra
+):
+    """Set up mocks for run_ingest tests.
+
+    periods: list of (label, period_kwargs) tuples, same as iter_periods() would yield.
+    """
+    from datetime import UTC, datetime
+
+    from eostrata.sources import base as src_base
+
     stack.enter_context(patch("eostrata.catalog.load_or_create", return_value=MagicMock()))
     mock_register = stack.enter_context(patch("eostrata.catalog.register_item"))
     mock_save = stack.enter_context(patch("eostrata.catalog.save"))
+    stack.enter_context(patch("eostrata.cache.check_and_evict"))
 
-    mock_source = MockSource.return_value
-    mock_source.zarr_group.return_value = zarr_group
+    mock_source = MagicMock()
+    mock_source.zarr_group.return_value = zarr_group_val
     mock_source.download.return_value = [tmp_path / "file.tif"]
     mock_source.to_zarr.return_value = mock_ds
-    mock_source.stac_item_id.return_value = zarr_group.replace("/", "_")
-    mock_source.stac_properties.return_value = {}
+    mock_source.extract_item_bbox.return_value = (0.0, 0.0, 10.0, 5.0)
+    mock_source.stac_registrations.return_value = [
+        {
+            "item_id": zarr_group_val.replace("/", "_"),
+            "datetime_": datetime(2020, 1, 1, tzinfo=UTC),
+            "variable": extra.get("VARIABLE", "var"),
+            "extra_properties": {},
+        }
+    ]
     for k, v in extra.items():
         setattr(mock_source, k, v)
+
+    MockSourceCls = MagicMock()
+    MockSourceCls.return_value = mock_source
+    MockSourceCls.skip_404 = extra.get("skip_404", False)
+    MockSourceCls.collection_id = extra.get("collection_id", source_id)
+    MockSourceCls.iter_periods.return_value = periods
+
+    stack.enter_context(patch.dict(src_base._REGISTRY, {source_id: MockSourceCls}))
 
     return mock_source, mock_register, mock_save
 
@@ -391,14 +416,17 @@ class TestIngestionFunctions:
         with ExitStack() as stack:
             src, mock_register, mock_save = _setup_source(
                 stack,
-                "eostrata.sources.WorldPopSource",
+                "worldpop",
                 "worldpop/nga",
                 _mock_ds(),
                 tmp_path,
+                periods=[("NGA/2022", {"iso3": "NGA", "year": 2022})],
                 collection_id="worldpop",
                 VARIABLE="population",
+                skip_404=True,
             )
-            ingestion.run_worldpop_ingest(
+            ingestion.run_ingest(
+                "worldpop",
                 iso3="NGA",
                 years=[2022],
                 zarr_root=tmp_path / "zarr",
@@ -418,14 +446,21 @@ class TestIngestionFunctions:
         with ExitStack() as stack:
             src, mock_register, _ = _setup_source(
                 stack,
-                "eostrata.sources.WorldPopSource",
+                "worldpop",
                 "worldpop/nga",
                 _mock_ds(),
                 tmp_path,
+                periods=[
+                    ("NGA/2021", {"iso3": "NGA", "year": 2021}),
+                    ("NGA/2022", {"iso3": "NGA", "year": 2022}),
+                    ("NGA/2023", {"iso3": "NGA", "year": 2023}),
+                ],
                 collection_id="worldpop",
                 VARIABLE="population",
+                skip_404=True,
             )
-            ingestion.run_worldpop_ingest(
+            ingestion.run_ingest(
+                "worldpop",
                 iso3="NGA",
                 years=[2021, 2022, 2023],
                 zarr_root=tmp_path / "zarr",
@@ -443,14 +478,20 @@ class TestIngestionFunctions:
         with ExitStack() as stack:
             src, mock_register, mock_save = _setup_source(
                 stack,
-                "eostrata.sources.chirps.CHIRPSSource",
+                "chirps",
                 "chirps/global",
                 _mock_ds(),
                 tmp_path,
+                periods=[
+                    ("2023-06", {"year": 2023, "month": 6}),
+                    ("2023-07", {"year": 2023, "month": 7}),
+                ],
                 collection_id="chirps",
                 VARIABLE="precipitation",
+                skip_404=True,
             )
-            ingestion.run_chirps_ingest(
+            ingestion.run_ingest(
+                "chirps",
                 years=[2023],
                 months=[6, 7],
                 zarr_root=tmp_path / "zarr",
@@ -470,15 +511,17 @@ class TestIngestionFunctions:
         with ExitStack() as stack:
             src, _, mock_save = _setup_source(
                 stack,
-                "eostrata.sources.chirps.CHIRPSSource",
+                "chirps",
                 "chirps/global",
                 _mock_ds(),
                 tmp_path,
+                periods=[("2023-06", {"year": 2023, "month": 6})],
                 collection_id="chirps",
                 VARIABLE="precipitation",
             )
             src.download.side_effect = RuntimeError("fail")
-            failed, saved = ingestion.run_chirps_ingest(
+            failed, saved = ingestion.run_ingest(
+                "chirps",
                 years=[2023],
                 months=[6],
                 zarr_root=tmp_path / "zarr",
@@ -506,19 +549,25 @@ class TestIngestionFunctions:
         with ExitStack() as stack:
             src, mock_register, mock_save = _setup_source(
                 stack,
-                "eostrata.sources.chirps.CHIRPSSource",
+                "chirps",
                 "chirps/global",
                 _mock_ds(),
                 tmp_path,
+                periods=[
+                    ("2023-06", {"year": 2023, "month": 6}),
+                    ("2023-07", {"year": 2023, "month": 7}),
+                ],
                 collection_id="chirps",
                 VARIABLE="precipitation",
+                skip_404=True,
             )
             # month 6 succeeds, month 7 returns 404
             src.download.side_effect = [
                 [tmp_path / "raw" / "chirps" / "chirps-v2.0.2023.06.tif"],
                 not_found,
             ]
-            ingestion.run_chirps_ingest(
+            ingestion.run_ingest(
+                "chirps",
                 years=[2023],
                 months=[6, 7],
                 zarr_root=tmp_path / "zarr",
@@ -546,15 +595,17 @@ class TestIngestionFunctions:
         with ExitStack() as stack:
             src, _mock_register, mock_save = _setup_source(
                 stack,
-                "eostrata.sources.chirps.CHIRPSSource",
+                "chirps",
                 "chirps/global",
                 _mock_ds(),
                 tmp_path,
+                periods=[("2023-06", {"year": 2023, "month": 6})],
                 collection_id="chirps",
                 VARIABLE="precipitation",
             )
             src.download.side_effect = server_error
-            failed, saved = ingestion.run_chirps_ingest(
+            failed, saved = ingestion.run_ingest(
+                "chirps",
                 years=[2023],
                 months=[6],
                 zarr_root=tmp_path / "zarr",
@@ -568,18 +619,37 @@ class TestIngestionFunctions:
         mock_save.assert_not_called()
 
     def test_cds_ingest_calls_source_and_catalog(self, tmp_path):
+        from datetime import UTC, datetime
+
         from eostrata import ingestion
 
         with ExitStack() as stack:
             src, mock_register, mock_save = _setup_source(
                 stack,
-                "eostrata.sources.cds.CDSSource",
+                "cds",
                 "era5/t2m",
                 _mock_ds(),
                 tmp_path,
+                periods=[("t2m/2023", {"variable": "t2m", "year": 2023, "months": [1, 2]})],
                 collection_id="cds",
             )
-            ingestion.run_cds_ingest(
+            # CDS stac_registrations returns one item per month
+            src.stac_registrations.return_value = [
+                {
+                    "item_id": "era5_t2m",
+                    "datetime_": datetime(2023, 1, 1, tzinfo=UTC),
+                    "variable": "t2m",
+                    "extra_properties": {},
+                },
+                {
+                    "item_id": "era5_t2m",
+                    "datetime_": datetime(2023, 2, 1, tzinfo=UTC),
+                    "variable": "t2m",
+                    "extra_properties": {},
+                },
+            ]
+            ingestion.run_ingest(
+                "cds",
                 variable="t2m",
                 years=[2023],
                 months=[1, 2],
@@ -607,15 +677,18 @@ class TestIngestionFunctions:
         with ExitStack() as stack:
             src, mock_register, mock_save = _setup_source(
                 stack,
-                "eostrata.sources.WorldPopSource",
+                "worldpop",
                 "worldpop/nga",
                 _mock_ds(),
                 tmp_path,
+                periods=[("NGA/2099", {"iso3": "NGA", "year": 2099})],
                 collection_id="worldpop",
                 VARIABLE="population",
+                skip_404=True,
             )
             src.download.side_effect = not_found
-            failed, saved = ingestion.run_worldpop_ingest(
+            failed, saved = ingestion.run_ingest(
+                "worldpop",
                 iso3="NGA",
                 years=[2099],
                 zarr_root=tmp_path / "zarr",
@@ -640,15 +713,18 @@ class TestIngestionFunctions:
         with ExitStack() as stack:
             src, mock_register, mock_save = _setup_source(
                 stack,
-                "eostrata.sources.WorldPopSource",
+                "worldpop",
                 "worldpop/nga",
                 _mock_ds(),
                 tmp_path,
+                periods=[("NGA/2023", {"iso3": "NGA", "year": 2023})],
                 collection_id="worldpop",
                 VARIABLE="population",
+                skip_404=True,
             )
             src.download.side_effect = server_error
-            failed, saved = ingestion.run_worldpop_ingest(
+            failed, saved = ingestion.run_ingest(
+                "worldpop",
                 iso3="NGA",
                 years=[2023],
                 zarr_root=tmp_path / "zarr",
@@ -662,21 +738,27 @@ class TestIngestionFunctions:
         mock_save.assert_not_called()
 
     def test_cds_ingest_uses_longitude_fallback(self, tmp_path):
+        """CDS extract_item_bbox falls back to longitude/latitude when x/y are absent."""
         from eostrata import ingestion
+        from eostrata.sources.cds import CDSSource
 
         mock_ds = MagicMock()
-        mock_ds.__contains__ = lambda self, key: key not in ("x", "y")
+        mock_ds.coords.__contains__ = lambda self, key: key not in ("x", "y")
 
         with ExitStack() as stack:
-            _, _, mock_save = _setup_source(
+            src, _, mock_save = _setup_source(
                 stack,
-                "eostrata.sources.cds.CDSSource",
+                "cds",
                 "era5/t2m",
                 mock_ds,
                 tmp_path,
+                periods=[("t2m/2023", {"variable": "t2m", "year": 2023, "months": [6]})],
                 collection_id="cds",
             )
-            ingestion.run_cds_ingest(
+            # Override extract_item_bbox to call the real CDS implementation
+            src.extract_item_bbox.side_effect = lambda ds: CDSSource().extract_item_bbox(ds)
+            ingestion.run_ingest(
+                "cds",
                 variable="t2m",
                 years=[2023],
                 months=[6],
@@ -964,14 +1046,16 @@ class TestSentinelNDVIIngestion:
         with ExitStack() as stack:
             src, mock_register, mock_save = _setup_source(
                 stack,
-                "eostrata.sources.sentinel_ndvi.SentinelNDVISource",
+                "sentinel_ndvi",
                 "sentinel_ndvi/global",
                 mock_ds,
                 tmp_path,
+                periods=[("2024-03-d1", {"year": 2024, "month": 3, "dekad": 1})],
                 collection_id="sentinel_ndvi",
                 VARIABLE="ndvi",
             )
-            ingestion.run_sentinel_ndvi_ingest(
+            ingestion.run_ingest(
+                "sentinel_ndvi",
                 years=[2024],
                 months=[3],
                 dekads=[1],
@@ -994,14 +1078,20 @@ class TestSentinelNDVIIngestion:
         with ExitStack() as stack:
             src, mock_register, _ = _setup_source(
                 stack,
-                "eostrata.sources.sentinel_ndvi.SentinelNDVISource",
+                "sentinel_ndvi",
                 "sentinel_ndvi/global",
                 _mock_ds(),
                 tmp_path,
+                periods=[
+                    ("2024-01-d1", {"year": 2024, "month": 1, "dekad": 1}),
+                    ("2024-01-d2", {"year": 2024, "month": 1, "dekad": 2}),
+                    ("2024-01-d3", {"year": 2024, "month": 1, "dekad": 3}),
+                ],
                 collection_id="sentinel_ndvi",
                 VARIABLE="ndvi",
             )
-            ingestion.run_sentinel_ndvi_ingest(
+            ingestion.run_ingest(
+                "sentinel_ndvi",
                 years=[2024],
                 months=[1],
                 dekads=[1, 2, 3],
@@ -1022,15 +1112,17 @@ class TestSentinelNDVIIngestion:
         with ExitStack() as stack:
             src, _, mock_save = _setup_source(
                 stack,
-                "eostrata.sources.sentinel_ndvi.SentinelNDVISource",
+                "sentinel_ndvi",
                 "sentinel_ndvi/global",
                 _mock_ds(),
                 tmp_path,
+                periods=[("2024-01-d1", {"year": 2024, "month": 1, "dekad": 1})],
                 collection_id="sentinel_ndvi",
                 VARIABLE="ndvi",
             )
             src.download.side_effect = RuntimeError("network error")
-            failed, saved = ingestion.run_sentinel_ndvi_ingest(
+            failed, saved = ingestion.run_ingest(
+                "sentinel_ndvi",
                 years=[2024],
                 months=[1],
                 dekads=[1],
@@ -1052,15 +1144,17 @@ class TestSentinelNDVIIngestion:
         with ExitStack() as stack:
             src, _, mock_save = _setup_source(
                 stack,
-                "eostrata.sources.sentinel_ndvi.SentinelNDVISource",
+                "sentinel_ndvi",
                 "sentinel_ndvi/global",
                 _mock_ds(),
                 tmp_path,
+                periods=[("2024-01-d1", {"year": 2024, "month": 1, "dekad": 1})],
                 collection_id="sentinel_ndvi",
                 VARIABLE="ndvi",
             )
             src.to_zarr.side_effect = RuntimeError("zarr error")
-            failed, saved = ingestion.run_sentinel_ndvi_ingest(
+            failed, saved = ingestion.run_ingest(
+                "sentinel_ndvi",
                 years=[2024],
                 months=[1],
                 dekads=[1],

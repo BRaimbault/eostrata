@@ -189,17 +189,13 @@ class BaseSource(ABC):
         return (float(ds.x.min()), float(ds.y.min()), float(ds.x.max()), float(ds.y.max()))
 
     @classmethod
+    @abstractmethod
     def iter_periods(cls, **source_params) -> Iterator[tuple[str, dict]]:
-        """Yield (label, period_kwargs) for each period to ingest.
+        """Yield (label, period_kwargs) for each period to ingest."""
 
-        Must be implemented by each source subclass.
-        """
-        raise NotImplementedError(f"{cls.__name__} must implement iter_periods()")
-
+    @abstractmethod
     def stac_registrations(self, ds, period_kwargs: dict) -> list[dict]:
         """Return list of STAC registration dicts for one downloaded period.
 
         Each dict has keys: item_id, datetime_, variable, extra_properties.
-        Must be implemented by each source subclass.
         """
-        raise NotImplementedError(f"{type(self).__name__} must implement stac_registrations()")

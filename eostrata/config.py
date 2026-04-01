@@ -68,5 +68,22 @@ class Settings(BaseSettings):
     # Register at https://land.copernicus.eu/global/ to obtain a token.
     cgls_api_key: str = ""
 
+    # ── CAMS (Atmosphere Data Store) ──────────────────────────────────────────
+    # ADS API URL.  Defaults to the public ADS endpoint.
+    # Override only if using a custom/mirror ADS instance.
+    ads_url: str = "https://ads.atmosphere.copernicus.eu/api"
+
+    # ADS API key in "<uid>:<api-key>" format.  Leave empty to use ~/.adsapirc.
+    # Register and obtain your key at https://ads.atmosphere.copernicus.eu/how-to-api
+    ads_key: str = ""
+
+    # ── TROPOMI / Copernicus Data Space (CDSE) ────────────────────────────────
+    # CDSE username (email address used to register).
+    # Register for free at https://dataspace.copernicus.eu
+    cdse_user: str = ""
+
+    # CDSE password.
+    cdse_password: str = ""
+
 
 settings = Settings()

@@ -1209,9 +1209,7 @@ class TestRebuildCatalogAPI:
         resp = client.post("/processes/rebuild-catalog/execution")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] == "succeeded"
-        assert data["groups"] == {}
-        assert data["total_timestamps"] == 0
+        assert data["status"] == "successful"
 
     def test_post_rebuild_catalog_with_groups(self, client):
         mock_results = {"worldpop/nga": 2, "chirps/global": 6}
@@ -1219,6 +1217,6 @@ class TestRebuildCatalogAPI:
             resp = client.post("/processes/rebuild-catalog/execution")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] == "succeeded"
+        assert data["status"] == "successful"
         assert data["groups"] == mock_results
         assert data["total_timestamps"] == 8

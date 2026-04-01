@@ -4,11 +4,14 @@
 #
 # Fields:
 #   id          — unique job identifier
-#   source      — registered source id: worldpop | chirps | cds
+#   source      — registered source id: worldpop | chirps | cds | cams | tropomi
 #   params      — keyword args forwarded to source.download() / source.to_zarr()
 #   cron        — cron expression: "minute hour day-of-month month day-of-week"
-#   auto_period — if true, year/month are derived from source.latest_available()
-#                 (overrides year/month values in params)
+#   auto_period — if true, the period (year/month/day) is derived from
+#                 source.latest_available() — the most recent period for which
+#                 data is expected to be available given the source's lag.
+#                 Overrides any year/month/day values in params.
+#                 When false (default), params must include explicit year/month/day.
 #   enabled     — set to false to disable without deleting the job (default: true)
 #
 # webhook_url (optional): POST alert when a job fails after all retries.
@@ -76,5 +79,48 @@ jobs:
   #   params:
   #     dekad: 3
   #   cron: "0 5 6 * *"    # 05:00 on the 6th of each month
+  #   auto_period: true
+  #   enabled: false
+
+  # ── CAMS EAC4 (Atmosphere Data Store) ─────────────────────────────────────
+  # CAMS monthly surface air quality — runs on the 1st of each month (~4-month lag).
+  # Requires ~/.adsapirc or EOSTRATA_ADS_URL + EOSTRATA_ADS_KEY.
+  #
+  # - id: cams_pm2p5
+  #   source: cams
+  #   params:
+  #     variable: pm2p5
+  #   cron: "0 6 1 * *"    # 06:00 on the 1st of each month
+  #   auto_period: true
+  #   enabled: false
+  #
+  # - id: cams_no2
+  #   source: cams
+  #   params:
+  #     variable: no2
+  #   cron: "0 6 1 * *"    # 06:00 on the 1st of each month
+  #   auto_period: true
+  #   enabled: false
+
+  # ── TROPOMI Sentinel-5P (Copernicus Data Space) ────────────────────────────
+  # TROPOMI daily NO2 — runs daily, 3 days after sensing (OFFLINE product lag).
+  # Requires EOSTRATA_CDSE_USER and EOSTRATA_CDSE_PASSWORD.
+  #
+  # Note: auto_period sets year/month/day from source.latest_available().
+  # To ingest a specific date, set year/month/day explicitly in params instead.
+  #
+  # - id: tropomi_no2_daily
+  #   source: tropomi
+  #   params:
+  #     variable: no2
+  #   cron: "0 7 * * *"    # 07:00 every day (picks up data from 3 days ago)
+  #   auto_period: true
+  #   enabled: false
+  #
+  # - id: tropomi_co_daily
+  #   source: tropomi
+  #   params:
+  #     variable: co
+  #   cron: "0 8 * * *"    # 08:00 every day
   #   auto_period: true
   #   enabled: false

@@ -163,9 +163,9 @@
       display: inline-block; padding: 1px 7px; border-radius: 9px;
       font-size: 11px; font-weight: 500; white-space: nowrap;
     }
-    .badge-running   { background: #dbeafe; color: #1e40af; }
-    .badge-succeeded { background: #dcfce7; color: #166534; }
-    .badge-failed    { background: #fee2e2; color: #991b1b; }
+    .badge-running    { background: #dbeafe; color: #1e40af; }
+    .badge-successful { background: #dcfce7; color: #166534; }
+    .badge-failed     { background: #fee2e2; color: #991b1b; }
 
     /* Ingest tab section headers */
     .ing-section-hdr {
@@ -208,6 +208,34 @@
       width: 100%; height: 80px; margin-top: 6px; border-radius: 4px;
       border: 1px solid #e5e7eb; background: #f9fafb;
     }
+
+    /* ── Sources table ─────────────────────────────────────────────────────── */
+    .sources-table {
+      width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 6px;
+    }
+    .sources-table th {
+      font-size: 10px; font-weight: 600; color: #6b7280; text-align: left;
+      padding: 3px 6px; border-bottom: 1px solid #e5e7eb; white-space: nowrap;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .sources-table td {
+      padding: 3px 6px; vertical-align: top; color: #111827;
+      border-bottom: 1px solid #f3f4f6;
+    }
+    .sources-table td:first-child { font-weight: 600; white-space: nowrap; }
+    .sources-table .vars { color: #6b7280; font-size: 10px; }
+
+    /* ── Tooltip helper ────────────────────────────────────────────────────── */
+    [data-tooltip] { position: relative; cursor: help; }
+    [data-tooltip]::after {
+      content: attr(data-tooltip);
+      position: absolute; bottom: 125%; left: 50%; transform: translateX(-50%);
+      background: #1f2937; color: #f9fafb; font-size: 11px; font-weight: 400;
+      white-space: normal; min-width: 180px; max-width: 260px;
+      padding: 5px 8px; border-radius: 4px; pointer-events: none;
+      opacity: 0; transition: opacity 0.15s; z-index: 9999; line-height: 1.4;
+    }
+    [data-tooltip]:hover::after { opacity: 1; }
   </style>
 </head>
 <body>
@@ -217,6 +245,7 @@
     <div class="tab-nav">
       <button id="tab-btn-map" class="active" onclick="showTab('map')">Map</button>
       <button id="tab-btn-ingest" onclick="showTab('ingest')">Ingest</button>
+      <button id="tab-btn-quota" onclick="showTab('quota')">Quota</button>
       <button id="tab-btn-config" onclick="showTab('config')">Config</button>
     </div>
 
@@ -315,13 +344,7 @@
 
       <div id="ing-var-row" style="display:none">
         <label>Variable</label>
-        <select id="ing-variable">
-          <option value="t2m">t2m — 2m temperature</option>
-          <option value="tp">tp — total precipitation</option>
-          <option value="u10">u10 — 10m u-wind</option>
-          <option value="v10">v10 — 10m v-wind</option>
-          <option value="sp">sp — surface pressure</option>
-        </select>
+        <select id="ing-variable"></select>
       </div>
 
       <label>Years (comma-separated, blank = latest)</label>
@@ -354,18 +377,45 @@
       </div>
       <div id="jobs-list"><span style="font-size:12px;color:#9ca3af">No jobs yet.</span></div>
 
-      <hr class="section-divider"/>
-
-      <!-- Catalogue tools -->
-      <div class="ing-section-hdr" style="margin-top:6px">
-        <span>Catalogue</span>
-      </div>
-      <button class="btn secondary" id="btn-rebuild" onclick="rebuildCatalog()">
-        Rebuild catalog from Zarr
-      </button>
-      <div id="rebuild-msg" class="ing-msg dim"></div>
-
     </div><!-- /tab-ingest-content -->
+
+    <!-- ── Quota tab ────────────────────────────────────────────────────────── -->
+    <div id="tab-quota-content" class="tab-panel" style="display:none">
+
+      <div class="cfg-section">
+        <div class="cfg-hdr">Disk usage</div>
+        <div class="cfg-grid">
+          <span class="cfg-key">Used</span><span id="cfg-used" class="cfg-val"></span>
+          <span class="cfg-key">Quota</span><span id="cfg-quota" class="cfg-val"></span>
+          <span class="cfg-key">Buffer</span><span id="cfg-buffer" class="cfg-val"></span>
+        </div>
+        <div id="cfg-quota-bar-wrap" style="display:none;margin-top:8px">
+          <div
+            data-tooltip="Blue = &lt;70% used · Amber = 70–90% · Red = &gt;90% — oldest timestamps are evicted first when quota is exceeded"
+            style="background:#e5e7eb;border-radius:4px;height:10px;overflow:hidden">
+            <div id="cfg-quota-bar" style="height:100%;background:#2563eb;width:0%;transition:width .4s"></div>
+          </div>
+          <div id="cfg-quota-pct" style="font-size:11px;color:#6b7280;margin-top:3px;text-align:right"></div>
+        </div>
+      </div>
+
+      <div id="cfg-groups-wrap" style="display:none;margin-top:4px;max-height:50vh;overflow-y:auto">
+        <div style="font-size:10px;color:#9ca3af;margin-bottom:4px">
+          Rows in red are oldest-accessed timestamps — they will be evicted first if quota is exceeded.
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead>
+            <tr style="color:#6b7280;text-align:left;border-bottom:1px solid #e5e7eb">
+              <th style="padding:4px 6px;font-weight:600">Group</th>
+              <th style="padding:4px 6px;font-weight:600;text-align:right">Size</th>
+              <th style="padding:4px 6px;font-weight:600;text-align:right">Last accessed</th>
+            </tr>
+          </thead>
+          <tbody id="cfg-groups-tbody"></tbody>
+        </table>
+      </div>
+
+    </div><!-- /tab-quota-content -->
 
     <!-- ── Config tab ───────────────────────────────────────────────────── -->
     <div id="tab-config-content" class="tab-panel" style="display:none">
@@ -390,30 +440,28 @@
       </div>
 
       <div class="cfg-section">
-        <div class="cfg-hdr">Cache</div>
-        <div class="cfg-grid">
-          <span class="cfg-key">Used</span><span id="cfg-used" class="cfg-val"></span>
-          <span class="cfg-key">Quota</span><span id="cfg-quota" class="cfg-val"></span>
-          <span class="cfg-key">Buffer</span><span id="cfg-buffer" class="cfg-val"></span>
-        </div>
-        <div id="cfg-quota-bar-wrap" style="display:none;margin-top:8px">
-          <div style="background:#e5e7eb;border-radius:4px;height:10px;overflow:hidden">
-            <div id="cfg-quota-bar" style="height:100%;background:#2563eb;width:0%;transition:width .4s"></div>
-          </div>
-          <div id="cfg-quota-pct" style="font-size:11px;color:#6b7280;margin-top:3px;text-align:right"></div>
-        </div>
-        <div id="cfg-groups-wrap" style="display:none;margin-top:12px;max-height:40vh;overflow-y:auto">
-          <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <div class="cfg-hdr">Sources</div>
+        <div style="max-height:28vh;overflow-y:auto">
+          <table class="sources-table" id="cfg-sources-table">
             <thead>
-              <tr style="color:#6b7280;text-align:left;border-bottom:1px solid #e5e7eb">
-                <th style="padding:4px 6px;font-weight:600">Group</th>
-                <th style="padding:4px 6px;font-weight:600;text-align:right">Size</th>
-                <th style="padding:4px 6px;font-weight:600;text-align:right">Last accessed</th>
+              <tr>
+                <th>Source</th>
+                <th>Resolution</th>
+                <th>Lag</th>
+                <th>Variables</th>
               </tr>
             </thead>
-            <tbody id="cfg-groups-tbody"></tbody>
+            <tbody id="cfg-sources-tbody"></tbody>
           </table>
         </div>
+      </div>
+
+      <div class="cfg-section" style="margin-top:10px">
+        <div class="cfg-hdr">Catalogue</div>
+        <button class="btn secondary" id="btn-rebuild" onclick="rebuildCatalog()">
+          Rebuild catalog from Zarr
+        </button>
+        <div id="rebuild-msg" class="ing-msg dim"></div>
       </div>
 
     </div><!-- /tab-config-content -->
@@ -440,7 +488,7 @@
       map.fitBounds([[s, w], [n, e]], {padding: [20, 20]});
     })();
 
-    // Populate config tab values
+    // Populate static config tab values (bbox, storage paths, sources table)
     (function populateConfig() {
       const [w, s, e, n] = CONFIG.bbox;
       document.getElementById('cfg-bbox-w').textContent = w.toFixed(4) + '°';
@@ -450,16 +498,38 @@
       document.getElementById('cfg-zarr-root').textContent = CONFIG.zarr_root;
       document.getElementById('cfg-raw-dir').textContent   = CONFIG.raw_dir;
       document.getElementById('cfg-catalog').textContent   = CONFIG.catalog_path;
+
+      // Sources table
+      const tbody = document.getElementById('cfg-sources-tbody');
+      SOURCES.forEach(function(s) {
+        const descs = s.variable_descriptions || {};
+        const varHtml = (s.variables || []).map(function(v) {
+          const d = descs[v] ? v + ' — ' + descs[v] : v;
+          return '<div class="vars">' + d + '</div>';
+        }).join('');
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td>' + s.id + '</td>' +
+          '<td style="white-space:nowrap">' + (s.temporal_resolution || '—') + '</td>' +
+          '<td style="white-space:nowrap">' + (s.lag_days != null ? s.lag_days + 'd' : '—') + '</td>' +
+          '<td>' + varHtml + '</td>';
+        tbody.appendChild(tr);
+      });
+    })();
+
+    // Populate quota tab values (fetches /store-usage — lazy, called on first tab open)
+    function populateQuota() {
+      const fmtMb = function(mb) {
+        return mb >= 1024 ? (mb / 1024).toFixed(2) + ' GB' : mb.toFixed(1) + ' MB';
+      };
+      const fmtTs = function(iso) { return iso ? iso.slice(0, 10) : '—'; };
+
       document.getElementById('cfg-quota').textContent =
         CONFIG.quota_mb > 0 ? CONFIG.quota_mb.toLocaleString() + ' MB' : 'Unlimited';
       document.getElementById('cfg-buffer').textContent =
         CONFIG.eviction_buffer_mb > 0 ? CONFIG.eviction_buffer_mb.toLocaleString() + ' MB' : 'None';
 
-      fetch('/store-usage').then(r => r.json()).then(u => {
-        const fmtMb = mb => mb >= 1024
-          ? (mb / 1024).toFixed(2) + ' GB'
-          : mb.toFixed(1) + ' MB';
-        const fmtTs = iso => iso ? iso.slice(0, 10) : '—';
+      fetch('/store-usage').then(function(r) { return r.json(); }).then(function(u) {
         document.getElementById('cfg-used').textContent = fmtMb(u.used_mb);
         if (!u.quota_unlimited && u.used_pct !== null) {
           const pct = Math.min(u.used_pct, 100);
@@ -473,7 +543,6 @@
           const tbody = document.getElementById('cfg-groups-tbody');
           tbody.innerHTML = '';
           // Mark individual timestamps at eviction risk (oldest-first across all groups).
-          // Groups are already sorted oldest-first; timestamps within each group likewise.
           const targetMb = u.quota_mb > 0 ? u.quota_mb - (CONFIG.eviction_buffer_mb || 0) : Infinity;
           const atRiskTs = new Set(); // "group|datetime" keys
           if (!u.quota_unlimited && u.used_mb > targetMb) {
@@ -486,8 +555,10 @@
               }
             }
           }
-          u.groups.forEach((g, gi) => {
-            const evictRisk = (g.timestamps || []).some(ts => atRiskTs.has(g.group + '|' + ts.datetime));
+          u.groups.forEach(function(g, gi) {
+            const evictRisk = (g.timestamps || []).some(function(ts) {
+              return atRiskTs.has(g.group + '|' + ts.datetime);
+            });
             const groupId = 'cfg-grp-' + gi;
 
             // Collapsible group header row
@@ -498,7 +569,11 @@
             trgTd.style.padding = '0';
             const btn = document.createElement('button');
             btn.className = 'cfg-group-toggle';
-            if (evictRisk) btn.style.color = '#dc2626';
+            if (evictRisk) {
+              btn.style.color = '#dc2626';
+              btn.setAttribute('data-tooltip',
+                'Contains timestamps at risk of eviction — oldest accessed, removed first when quota is exceeded');
+            }
             btn.setAttribute('aria-expanded', 'false');
             btn.setAttribute('aria-controls', groupId);
             btn.innerHTML =
@@ -510,7 +585,7 @@
               const expanded = this.getAttribute('aria-expanded') === 'true';
               this.setAttribute('aria-expanded', String(!expanded));
               this.querySelector('.cfg-arrow').textContent = expanded ? '▶' : '▼';
-              document.querySelectorAll('.' + groupId).forEach(r => {
+              document.querySelectorAll('.' + groupId).forEach(function(r) {
                 r.style.display = expanded ? 'none' : '';
               });
             };
@@ -519,12 +594,17 @@
             tbody.appendChild(trg);
 
             // Per-timestamp sub-rows, hidden by default
-            (g.timestamps || []).forEach((ts, i) => {
+            (g.timestamps || []).forEach(function(ts) {
               const tr = document.createElement('tr');
               tr.className = groupId;
               tr.style.display = 'none';
               tr.style.borderBottom = '1px solid #f3f4f6';
-              if (atRiskTs.has(g.group + '|' + ts.datetime)) tr.style.color = '#dc2626';
+              const isRisk = atRiskTs.has(g.group + '|' + ts.datetime);
+              if (isRisk) {
+                tr.style.color = '#dc2626';
+                tr.setAttribute('data-tooltip',
+                  'At risk of eviction — oldest accessed timestamp, will be removed first if quota is exceeded');
+              }
               const accessCell = ts.last_accessed
                 ? 'accessed ' + fmtTs(ts.last_accessed)
                 : ts.ingested ? '<span style="color:#9ca3af">ingested ' + fmtTs(ts.ingested) + '</span>' : '—';
@@ -537,8 +617,8 @@
           });
           document.getElementById('cfg-groups-wrap').style.display = 'block';
         }
-      }).catch(() => {});
-    })();
+      }).catch(function() {});
+    }
 
     let dataLayer = null;
     const catalog = {};
@@ -889,12 +969,15 @@
 
     // ── Tab switching ────────────────────────────────────────────────────────
 
+    let _quotaLoaded = false;
+
     function showTab(tab) {
-      ['map', 'ingest', 'config'].forEach(function(t) {
+      ['map', 'ingest', 'quota', 'config'].forEach(function(t) {
         document.getElementById('tab-' + t + '-content').style.display = t === tab ? '' : 'none';
         document.getElementById('tab-btn-' + t).classList.toggle('active', t === tab);
       });
       if (tab === 'ingest') loadJobs();
+      if (tab === 'quota' && !_quotaLoaded) { _quotaLoaded = true; populateQuota(); }
     }
 
     // ── Ingest tab ───────────────────────────────────────────────────────────
@@ -918,12 +1001,27 @@
     }
 
     function onIngSourceChange() {
-      const fields = _sourceFields();
+      const src = document.getElementById('ing-source').value;
+      const def = SOURCES.find(function(s) { return s.id === src; });
+      const fields = def ? def.fields : [];
       document.getElementById('ing-iso3-row').style.display   = fields.includes('iso3')     ? '' : 'none';
       document.getElementById('ing-var-row').style.display    = fields.includes('variable')  ? '' : 'none';
       document.getElementById('ing-months-row').style.display = fields.includes('months')    ? '' : 'none';
       document.getElementById('ing-days-row').style.display   = fields.includes('days')      ? '' : 'none';
       document.getElementById('ing-dekads-row').style.display = fields.includes('dekads')    ? '' : 'none';
+
+      // Repopulate variable dropdown for the selected source
+      if (fields.includes('variable') && def) {
+        const sel = document.getElementById('ing-variable');
+        sel.innerHTML = '';
+        const descs = def.variable_descriptions || {};
+        (def.variables || []).forEach(function(v) {
+          const opt = document.createElement('option');
+          opt.value = v;
+          opt.textContent = descs[v] ? v + ' — ' + descs[v] : v;
+          sel.appendChild(opt);
+        });
+      }
     }
 
     function _parseInts(str) {
@@ -1015,9 +1113,9 @@
       }
 
       el.innerHTML = jobs.map(j => {
-        const badgeCls = j.status === 'running'   ? 'badge-running'
-                       : j.status === 'successful' ? 'badge-succeeded'
-                       :                            'badge-failed';
+        const badgeCls = j.status === 'running'    ? 'badge-running'
+                       : j.status === 'successful' ? 'badge-successful'
+                       :                             'badge-failed';
         const params = Object.entries(j.params || {})
           .map(([k, v]) => k + '=' + (Array.isArray(v) ? v.join(',') : v))
           .join(' ');

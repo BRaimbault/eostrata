@@ -46,6 +46,10 @@ INGEST_SOURCES = [
         "id": cls.id,
         "label": f"{cls.id} — {cls.collection_title}",
         "fields": cls.ui_fields,
+        "variables": cls.VARIABLES if cls.VARIABLES else [cls.VARIABLE],
+        "variable_descriptions": cls.VARIABLE_DESCRIPTIONS,
+        "temporal_resolution": cls.temporal_resolution,
+        "lag_days": cls.default_lag_days,
     }
     for cls in _all_sources()
     if cls.ui_fields
@@ -375,7 +379,7 @@ def execute_rebuild_catalog() -> dict:
         catalog_path=settings.catalog_path,
     )
     return {
-        "status": "succeeded",
+        "status": "successful",
         "groups": results,
         "total_timestamps": sum(results.values()),
     }

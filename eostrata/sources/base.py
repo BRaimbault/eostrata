@@ -134,6 +134,12 @@ class BaseSource(ABC):
     #: Form fields shown in the ingest UI for this source.
     ui_fields: list[str] = []
 
+    #: All supported variable short names. Empty means only ``VARIABLE`` is supported.
+    VARIABLES: list[str] = []
+
+    #: Human-readable descriptions for each variable, keyed by short name.
+    VARIABLE_DESCRIPTIONS: dict[str, str] = {}
+
     @classmethod
     def catalog_meta(cls, dataset_name: str) -> dict:
         """Return catalog registration metadata for a Zarr group with this source's prefix.

@@ -23,6 +23,7 @@ The default variable is ``2m_temperature``.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -210,9 +211,22 @@ class CDSSource(BaseSource):
 
     id = "cds"
     collection_id = "cds"
+    collection_title = "CDS / ERA5 climate reanalysis"
+    collection_description = "Climate reanalysis data from the Copernicus Climate Data Store"
+    zarr_prefix = "era5"
     temporal_resolution = "monthly"
     default_lag_days = 90  # ERA5 has ~3-month production lag
     VARIABLE = "t2m"  # default variable short name
+    ui_fields = ["variable", "years", "months"]
+
+    @classmethod
+    def catalog_meta(cls, dataset_name: str) -> dict:
+        # dataset_name IS the variable (e.g. "t2m" from "era5/t2m")
+        return {
+            "item_id": f"era5_{dataset_name}",
+            "variable": dataset_name,
+            "extra": {"eostrata:variable": dataset_name},
+        }
 
     def download(
         self,
@@ -300,3 +314,36 @@ class CDSSource(BaseSource):
             month += 12
             year -= 1
         return datetime(year, month, 1, tzinfo=UTC)
+
+    @classmethod
+    def iter_periods(
+        cls, *, variable: str = "t2m", years: list[int], months: list[int], **_
+    ) -> Iterator[tuple[str, dict]]:
+        for year in years:
+            yield (f"{variable}/{year}", {"variable": variable, "year": year, "months": months})
+
+    def stac_registrations(self, ds, period_kwargs: dict) -> list[dict]:
+        from datetime import UTC, datetime
+
+        variable = period_kwargs["variable"]
+        year = period_kwargs["year"]
+        months = period_kwargs["months"]
+        return [
+            {
+                "item_id": self.stac_item_id(variable=variable),
+                "datetime_": datetime(year, month, 1, tzinfo=UTC),
+                "variable": variable,
+                "extra_properties": self.stac_properties(variable=variable, year=year),
+            }
+            for month in months
+        ]
+
+    def extract_item_bbox(self, ds) -> tuple[float, float, float, float]:
+        x_dim = "x" if "x" in ds.coords else "longitude"
+        y_dim = "y" if "y" in ds.coords else "latitude"
+        return (
+            float(ds[x_dim].min()),
+            float(ds[y_dim].min()),
+            float(ds[x_dim].max()),
+            float(ds[y_dim].max()),
+        )

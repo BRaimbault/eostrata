@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import textwrap
 from datetime import UTC
 from unittest.mock import MagicMock, patch
@@ -309,6 +310,32 @@ class TestSchedulerInit:
 
 
 class TestSchedulerStartStop:
+    @pytest.fixture(autouse=True)
+    def _mock_apscheduler(self):
+        """Inject a mock APScheduler so tests run without the package installed."""
+        mock_instance = MagicMock()
+        mock_instance.running = True  # so stop() calls shutdown()
+
+        mock_bg_cls = MagicMock(return_value=mock_instance)
+        mock_bg_module = MagicMock()
+        mock_bg_module.BackgroundScheduler = mock_bg_cls
+
+        mock_schedulers = MagicMock()
+        mock_schedulers.background = mock_bg_module
+
+        mock_aps = MagicMock()
+        mock_aps.schedulers = mock_schedulers
+
+        with patch.dict(
+            sys.modules,
+            {
+                "apscheduler": mock_aps,
+                "apscheduler.schedulers": mock_schedulers,
+                "apscheduler.schedulers.background": mock_bg_module,
+            },
+        ):
+            yield mock_bg_cls
+
     def test_start_stop_no_jobs(self, tmp_path):
         """Scheduler with no enabled jobs starts and stops cleanly."""
         f = tmp_path / "schedules.yml"
@@ -366,8 +393,6 @@ class TestSchedulerStartStop:
 
     def test_start_skip_disabled_jobs(self, tmp_path):
         """Disabled jobs are not registered with APScheduler."""
-        import textwrap
-
         f = tmp_path / "schedules.yml"
         f.write_text(
             textwrap.dedent("""\

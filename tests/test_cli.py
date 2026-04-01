@@ -101,6 +101,7 @@ class TestDownloadWorldpop:
                 [
                     "download",
                     "worldpop",
+                    "--iso3",
                     "NGA",
                     "--year",
                     "2020",
@@ -137,6 +138,7 @@ class TestDownloadWorldpop:
                 [
                     "download",
                     "worldpop",
+                    "--iso3",
                     "NGA",
                     "--years",
                     "2020,2021",
@@ -169,6 +171,7 @@ class TestDownloadWorldpop:
                 [
                     "download",
                     "worldpop",
+                    "--iso3",
                     "NGA",
                     "--year",
                     "2020",
@@ -186,12 +189,12 @@ class TestDownloadWorldpop:
         assert "NGA/2020" in result.output
 
     def test_download_worldpop_raises_exit_1(self, tmp_path):
-        """Unexpected exception from run_worldpop_ingest exits 1 with error message."""
+        """Unexpected exception from run_ingest exits 1 with error message."""
         mock_settings = _make_settings_mock(tmp_path)
         with (
             patch("eostrata.config.settings", mock_settings),
             patch(
-                "eostrata.ingestion.run_worldpop_ingest",
+                "eostrata.ingestion.run_ingest",
                 side_effect=RuntimeError("unexpected boom"),
             ),
         ):
@@ -200,6 +203,7 @@ class TestDownloadWorldpop:
                 [
                     "download",
                     "worldpop",
+                    "--iso3",
                     "NGA",
                     "--year",
                     "2020",
@@ -219,13 +223,14 @@ class TestDownloadWorldpop:
         mock_settings = _make_settings_mock(tmp_path)
         with (
             patch("eostrata.config.settings", mock_settings),
-            patch("eostrata.ingestion.run_worldpop_ingest", return_value=([], False)),
+            patch("eostrata.ingestion.run_ingest", return_value=([], False)),
         ):
             result = runner.invoke(
                 app,
                 [
                     "download",
                     "worldpop",
+                    "--iso3",
                     "NGA",
                     "--year",
                     "2020",
@@ -245,13 +250,14 @@ class TestDownloadWorldpop:
         mock_settings = _make_settings_mock(tmp_path)
         with (
             patch("eostrata.config.settings", mock_settings),
-            patch("eostrata.ingestion.run_worldpop_ingest", return_value=(["NGA/2020"], True)),
+            patch("eostrata.ingestion.run_ingest", return_value=(["NGA/2020"], True)),
         ):
             result = runner.invoke(
                 app,
                 [
                     "download",
                     "worldpop",
+                    "--iso3",
                     "NGA",
                     "--year",
                     "2020",
@@ -285,6 +291,7 @@ class TestDownloadWorldpop:
                 [
                     "download",
                     "worldpop",
+                    "--iso3",
                     "NGA",
                     "--zarr-root",
                     str(tmp_path / "zarr"),
@@ -410,12 +417,12 @@ class TestDownloadChirps:
         assert "2024-01" in result.output
 
     def test_download_chirps_raises_exit_1(self, tmp_path):
-        """Unexpected exception from run_chirps_ingest exits 1 with error message."""
+        """Unexpected exception from run_ingest exits 1 with error message."""
         mock_settings = _make_settings_mock(tmp_path)
         with (
             patch("eostrata.config.settings", mock_settings),
             patch(
-                "eostrata.ingestion.run_chirps_ingest",
+                "eostrata.ingestion.run_ingest",
                 side_effect=RuntimeError("unexpected boom"),
             ),
         ):
@@ -444,7 +451,7 @@ class TestDownloadChirps:
         mock_settings = _make_settings_mock(tmp_path)
         with (
             patch("eostrata.config.settings", mock_settings),
-            patch("eostrata.ingestion.run_chirps_ingest", return_value=([], False)),
+            patch("eostrata.ingestion.run_ingest", return_value=([], False)),
         ):
             result = runner.invoke(
                 app,
@@ -471,7 +478,7 @@ class TestDownloadChirps:
         mock_settings = _make_settings_mock(tmp_path)
         with (
             patch("eostrata.config.settings", mock_settings),
-            patch("eostrata.ingestion.run_chirps_ingest", return_value=(["2024-01"], True)),
+            patch("eostrata.ingestion.run_ingest", return_value=(["2024-01"], True)),
         ):
             result = runner.invoke(
                 app,
@@ -572,12 +579,12 @@ class TestDownloadCds:
 
 class TestDownloadCdsEdgeCases:
     def test_download_cds_raises_exit_1(self, tmp_path):
-        """Unexpected exception from run_cds_ingest exits 1 with error message."""
+        """Unexpected exception from run_ingest exits 1 with error message."""
         mock_settings = _make_settings_mock(tmp_path)
         with (
             patch("eostrata.config.settings", mock_settings),
             patch(
-                "eostrata.ingestion.run_cds_ingest",
+                "eostrata.ingestion.run_ingest",
                 side_effect=RuntimeError("unexpected boom"),
             ),
         ):
@@ -606,7 +613,7 @@ class TestDownloadCdsEdgeCases:
         mock_settings = _make_settings_mock(tmp_path)
         with (
             patch("eostrata.config.settings", mock_settings),
-            patch("eostrata.ingestion.run_cds_ingest", return_value=([], False)),
+            patch("eostrata.ingestion.run_ingest", return_value=([], False)),
         ):
             result = runner.invoke(
                 app,
@@ -633,7 +640,7 @@ class TestDownloadCdsEdgeCases:
         mock_settings = _make_settings_mock(tmp_path)
         with (
             patch("eostrata.config.settings", mock_settings),
-            patch("eostrata.ingestion.run_cds_ingest", return_value=(["t2m/2023"], True)),
+            patch("eostrata.ingestion.run_ingest", return_value=(["t2m/2023"], True)),
         ):
             result = runner.invoke(
                 app,
@@ -1131,3 +1138,149 @@ class TestRebuildCatalog:
             result = runner.invoke(app, ["rebuild-catalog"])
         assert result.exit_code == 0
         mock_rebuild.assert_called_once()
+
+
+# ── download sentinel-ndvi ────────────────────────────────────────────────────
+
+
+class TestDownloadSentinelNDVI:
+    def test_success(self, tmp_path):
+        mock_settings = _make_settings_mock(tmp_path)
+        mock_settings.store_eviction_buffer_mb = 0.0
+
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch("eostrata.ingestion.run_ingest", return_value=([], True)) as mock_ingest,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "download",
+                    "sentinel-ndvi",
+                    "--year",
+                    "2024",
+                    "--month",
+                    "3",
+                    "--dekad",
+                    "1",
+                    "--zarr-root",
+                    str(tmp_path / "zarr"),
+                    "--raw-dir",
+                    str(tmp_path / "raw"),
+                    "--catalog-path",
+                    str(tmp_path / "catalog.json"),
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert "Done" in result.output
+        kw = mock_ingest.call_args.kwargs
+        assert kw["years"] == [2024]
+        assert kw["months"] == [3]
+        assert kw["dekads"] == [1]
+
+    def test_failure_nothing_saved_exits_1(self, tmp_path):
+        mock_settings = _make_settings_mock(tmp_path)
+        mock_settings.store_eviction_buffer_mb = 0.0
+
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch(
+                "eostrata.ingestion.run_ingest",
+                return_value=(["2024-03-d1"], False),
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "download",
+                    "sentinel-ndvi",
+                    "--year",
+                    "2024",
+                    "--month",
+                    "3",
+                    "--dekad",
+                    "1",
+                ],
+            )
+
+        assert result.exit_code == 1
+        assert "failed" in result.output
+
+    def test_no_failures_no_save_exits_1(self, tmp_path):
+        """When nothing is saved but no explicit failures, exit 1 with unavailable message."""
+        mock_settings = _make_settings_mock(tmp_path)
+        mock_settings.store_eviction_buffer_mb = 0.0
+
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch(
+                "eostrata.ingestion.run_ingest",
+                return_value=([], False),
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                ["download", "sentinel-ndvi", "--year", "2024", "--month", "3", "--dekad", "1"],
+            )
+
+        assert result.exit_code == 1
+        assert "unavailable" in result.output
+
+    def test_partial_failure_shows_warning(self, tmp_path):
+        """When some but not all periods fail, exit 0 with a warning."""
+        mock_settings = _make_settings_mock(tmp_path)
+        mock_settings.store_eviction_buffer_mb = 0.0
+
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch(
+                "eostrata.ingestion.run_ingest",
+                return_value=(["2024-03-d2"], True),
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                ["download", "sentinel-ndvi", "--year", "2024", "--month", "3"],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert "Warning" in result.output
+        assert "Done" in result.output
+
+    def test_exception_exits_1(self, tmp_path):
+        mock_settings = _make_settings_mock(tmp_path)
+        mock_settings.store_eviction_buffer_mb = 0.0
+
+        with (
+            patch("eostrata.config.settings", mock_settings),
+            patch(
+                "eostrata.ingestion.run_ingest",
+                side_effect=RuntimeError("connection refused"),
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                ["download", "sentinel-ndvi", "--year", "2024", "--month", "3", "--dekad", "1"],
+            )
+
+        assert result.exit_code == 1
+        assert "Error" in result.output
+
+
+class TestDownloadErrors:
+    def test_download_unknown_source_exits_1(self, tmp_path):
+        """Passing an unknown source id exits 1 with an error message."""
+        mock_settings = _make_settings_mock(tmp_path)
+        with patch("eostrata.config.settings", mock_settings):
+            result = runner.invoke(app, ["download", "no_such_source_xyz"])
+        assert result.exit_code == 1
+        assert "Error" in result.output
+
+    def test_download_worldpop_requires_iso3(self, tmp_path):
+        """Omitting --iso3 for a source that requires it exits 1 with an error."""
+        mock_settings = _make_settings_mock(tmp_path)
+        with patch("eostrata.config.settings", mock_settings):
+            result = runner.invoke(app, ["download", "worldpop"])
+        assert result.exit_code == 1
+        assert "Error" in result.output

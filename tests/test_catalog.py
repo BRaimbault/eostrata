@@ -39,15 +39,30 @@ def _catalog_with_item(tmp_path: Path, item_id: str = "worldpop_nga") -> pystac.
 
 
 class TestMakeCatalog:
-    def test_has_three_collections(self):
+    def test_has_one_collection_per_source(self):
+        from eostrata.sources.base import all_sources
+
         cat = _make_catalog()
         colls = list(cat.get_children())
-        assert len(colls) == 3
+        expected_ids = {cls.collection_id for cls in all_sources()}
+        assert len(colls) == len(expected_ids)
 
     def test_collection_ids(self):
+        from eostrata.sources.base import all_sources
+
         cat = _make_catalog()
         ids = {c.id for c in cat.get_children()}
-        assert ids == {"worldpop", "cds", "chirps"}
+        assert ids == {cls.collection_id for cls in all_sources()}
+
+    def test_duplicate_collection_id_deduplicated(self):
+        """Two sources sharing a collection_id produce only one collection."""
+        from unittest.mock import MagicMock, patch
+
+        src_a = MagicMock(collection_id="shared", collection_title="T", collection_description="D")
+        src_b = MagicMock(collection_id="shared", collection_title="T", collection_description="D")
+        with patch("eostrata.sources.base.all_sources", return_value=[src_a, src_b]):
+            cat = _make_catalog()
+        assert len(list(cat.get_children())) == 1
 
 
 class TestLoadOrCreate:
@@ -248,9 +263,12 @@ class TestPystacClient:
         return PystacClient(catalog_path=str(tmp_path / "catalog.json"))
 
     def test_all_collections(self, tmp_path):
+        from eostrata.sources.base import all_sources
+
         client = self._client(tmp_path)
         result = client.all_collections()
-        assert len(result["collections"]) == 3
+        expected = len({cls.collection_id for cls in all_sources()})
+        assert len(result["collections"]) == expected
 
     def test_get_collection_found(self, tmp_path):
         client = self._client(tmp_path)

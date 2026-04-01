@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-from typing import Annotated, Literal
+from typing import Annotated, Literal  # Literal still used for months/dekads "ALL"
 
 from fastapi import APIRouter, HTTPException, Path, Response
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -34,6 +34,27 @@ INGEST_PROCESS_IDS = [
     {"id": "rebuild-catalog", "version": "0.1.0"},
 ]
 
+# ── Source registry for the UI ────────────────────────────────────────────────
+# Derived from the source registry — adding a new source with ui_fields defined
+# automatically makes it available here.
+
+import eostrata.sources  # noqa: E402,F401 — triggers auto-discovery of all source modules
+from eostrata.sources.base import all_sources as _all_sources  # noqa: E402
+
+INGEST_SOURCES = [
+    {
+        "id": cls.id,
+        "label": f"{cls.id} — {cls.collection_title}",
+        "fields": cls.ui_fields,
+    }
+    for cls in _all_sources()
+    if cls.ui_fields
+]
+
+# Derived from INGEST_SOURCES so we never have to update the two separately.
+_SOURCE_IDS = [s["id"] for s in INGEST_SOURCES]
+_source_list = ", ".join(f"``{sid}``" for sid in _SOURCE_IDS)
+
 # ── Process description ───────────────────────────────────────────────────────
 
 _INGEST_DESCRIPTION = {
@@ -41,16 +62,16 @@ _INGEST_DESCRIPTION = {
     "title": "Data ingestion",
     "description": (
         "Download earth observation data, clip to the configured bounding box, "
-        "write to the Zarr store, and register a STAC item. "
-        "Set ``source`` to select the dataset: ``worldpop``, ``chirps``, or ``cds``."
+        f"write to the Zarr store, and register a STAC item. "
+        f"Set ``source`` to select the dataset: {_source_list}."
     ),
     "version": "0.1.0",
     "jobControlOptions": ["async-execute"],
     "inputs": {
         "source": {
             "title": "Source",
-            "description": "Dataset to ingest: worldpop, chirps, or cds.",
-            "schema": {"type": "string", "enum": ["worldpop", "chirps", "cds"]},
+            "description": f"Dataset to ingest: {', '.join(_SOURCE_IDS)}.",
+            "schema": {"type": "string", "enum": _SOURCE_IDS},
         },
         "iso3": {
             "title": "ISO3 country code",
@@ -71,11 +92,37 @@ _INGEST_DESCRIPTION = {
             "title": "Months",
             "description": (
                 "List of months 1-12, or the string 'ALL' for every month "
-                "(chirps/cds only; default: latest available)."
+                "(chirps/cds/sentinel_ndvi only; default: latest available)."
             ),
             "schema": {
                 "oneOf": [
                     {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 12}},
+                    {"type": "string", "enum": ["ALL"]},
+                ]
+            },
+        },
+        "dekads": {
+            "title": "Dekads",
+            "description": (
+                "List of dekads 1-3, or the string 'ALL' for all three dekads "
+                "(sentinel_ndvi only; default: latest available)."
+            ),
+            "schema": {
+                "oneOf": [
+                    {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 3}},
+                    {"type": "string", "enum": ["ALL"]},
+                ]
+            },
+        },
+        "days": {
+            "title": "Days",
+            "description": (
+                "List of days 1-31, or the string 'ALL' for every day of the month "
+                "(daily sources only; default: latest available)."
+            ),
+            "schema": {
+                "oneOf": [
+                    {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 31}},
                     {"type": "string", "enum": ["ALL"]},
                 ]
             },
@@ -87,12 +134,24 @@ _INGEST_DESCRIPTION = {
 # ── Pydantic model ────────────────────────────────────────────────────────────
 
 Month = Annotated[int, Field(ge=1, le=12)]
+Dekad = Annotated[int, Field(ge=1, le=3)]
+Day = Annotated[int, Field(ge=1, le=31)]
 
 _ALL_MONTHS = list(range(1, 13))
+_ALL_DEKADS = [1, 2, 3]
+_ALL_DAYS = list(range(1, 32))
 
 
 class IngestInputs(BaseModel):
-    source: Literal["worldpop", "chirps", "cds"]
+    source: Annotated[str, Field(json_schema_extra={"enum": _SOURCE_IDS})]
+
+    @field_validator("source")
+    @classmethod
+    def validate_source(cls, v: str) -> str:
+        if v not in _SOURCE_IDS:
+            raise ValueError(f"must be one of {_SOURCE_IDS}")
+        return v
+
     iso3: Annotated[str, Field(min_length=3, max_length=3)] | None = Field(
         None, description="ISO 3166-1 alpha-3 country code (worldpop only)"
     )
@@ -101,7 +160,15 @@ class IngestInputs(BaseModel):
     )
     years: list[int] | None = Field(None, description="Years to ingest")
     months: list[Month] | Literal["ALL"] | None = Field(
-        None, description="Months 1-12 to ingest, or 'ALL' for every month (chirps/cds only)"
+        None,
+        description="Months 1-12 to ingest, or 'ALL' for every month (chirps/cds/sentinel_ndvi)",
+    )
+    dekads: list[Dekad] | Literal["ALL"] | None = Field(
+        None, description="Dekads 1-3 to ingest, or 'ALL' for all three (sentinel_ndvi only)"
+    )
+    days: list[Day] | Literal["ALL"] | None = Field(
+        None,
+        description="Days 1-31 to ingest, or 'ALL' for every day of the month (daily sources only)",
     )
 
     @field_validator("months", mode="before")
@@ -111,10 +178,30 @@ class IngestInputs(BaseModel):
             return _ALL_MONTHS
         return v
 
+    @field_validator("dekads", mode="before")
+    @classmethod
+    def expand_all_dekads(cls, v):
+        if isinstance(v, str) and v.strip().upper() == "ALL":
+            return _ALL_DEKADS
+        return v
+
+    @field_validator("days", mode="before")
+    @classmethod
+    def expand_all_days(cls, v):
+        if isinstance(v, str) and v.strip().upper() == "ALL":
+            return _ALL_DAYS
+        return v
+
     @model_validator(mode="after")
     def check_source_fields(self) -> IngestInputs:
-        if self.source == "worldpop" and self.iso3 is None:
-            raise ValueError("iso3 is required when source is 'worldpop'")
+        from eostrata.sources.base import get_source
+
+        try:
+            source_cls = get_source(self.source)
+        except ValueError:  # pragma: no cover
+            return self  # Invalid source already caught by validate_source
+        if "iso3" in source_cls.ui_fields and self.iso3 is None:
+            raise ValueError(f"iso3 is required when source is '{self.source}'")
         return self
 
 
@@ -125,6 +212,14 @@ class IngestExecutionRequest(BaseModel):
                 {"inputs": {"source": "worldpop", "iso3": "NGA", "years": [2023]}},
                 {"inputs": {"source": "chirps", "years": [2024], "months": [1, 2, 3]}},
                 {"inputs": {"source": "cds", "variable": "t2m", "years": [2023]}},
+                {
+                    "inputs": {
+                        "source": "sentinel_ndvi",
+                        "years": [2024],
+                        "months": [1],
+                        "dekads": [1, 2, 3],
+                    }
+                },
             ]
         }
     }
@@ -207,82 +302,48 @@ def describe_ingest() -> dict:
 
 @router.post("/ingest/execution", status_code=201, summary="Start an ingestion job")
 def execute_ingest(body: IngestExecutionRequest, response: Response) -> dict:
-    """
-    Start a data ingestion job for WorldPop, CHIRPS, or CDS/ERA5.
+    """Start a data ingestion job for any registered source.
 
     Returns a ``job_id`` immediately. Poll ``GET /processes/jobs/{job_id}`` for status.
-
-    **source = worldpop** — requires ``iso3``
-    **source = chirps** — uses ``years`` and ``months``
-    **source = cds** — uses ``variable`` (default ``t2m``), ``years``, and ``months``
-
-    All year/month values default to the latest available when omitted.
     """
     inp = body.inputs
     logger.info("API POST /processes/ingest/execution %s", inp.model_dump(exclude_none=True))
 
-    if inp.source == "worldpop":
-        from eostrata.sources import WorldPopSource
+    from eostrata.sources.base import get_source
 
-        years = inp.years or [WorldPopSource().latest_available().year]
-        job = jobs.create_job("worldpop", {"iso3": inp.iso3.upper(), "years": years})
-        _executor.submit(
-            _run_job,
-            job.job_id,
-            ingestion.run_worldpop_ingest,
-            iso3=inp.iso3,
-            years=years,
-            zarr_root=settings.zarr_root,
-            raw_dir=settings.raw_dir,
-            catalog_path=settings.catalog_path,
-            bbox=settings.bbox,
-            quota_mb=settings.store_quota_mb,
-            eviction_buffer_mb=settings.store_eviction_buffer_mb,
-        )
+    source_cls = get_source(inp.source)
+    source = source_cls()
+    latest = source.latest_available()
 
-    elif inp.source == "chirps":
-        from eostrata.sources.chirps import CHIRPSSource
+    source_params: dict = {}
+    if "iso3" in source_cls.ui_fields:
+        source_params["iso3"] = inp.iso3.upper()
+    if "variable" in source_cls.ui_fields:
+        source_params["variable"] = inp.variable or "t2m"
+    if "years" in source_cls.ui_fields:
+        source_params["years"] = inp.years or [latest.year]
+    if "months" in source_cls.ui_fields:
+        source_params["months"] = inp.months or [latest.month]
+    if "dekads" in source_cls.ui_fields:
+        default_dekad = 1 if latest.day < 11 else (2 if latest.day < 21 else 3)
+        source_params["dekads"] = inp.dekads or [default_dekad]
+    if "days" in source_cls.ui_fields:  # pragma: no cover
+        source_params["days"] = inp.days or [latest.day]
 
-        latest = CHIRPSSource().latest_available()
-        years = inp.years or [latest.year]
-        months = inp.months or [latest.month]
-        job = jobs.create_job("chirps", {"years": years, "months": months})
-        _executor.submit(
-            _run_job,
-            job.job_id,
-            ingestion.run_chirps_ingest,
-            years=years,
-            months=months,
-            zarr_root=settings.zarr_root,
-            raw_dir=settings.raw_dir,
-            catalog_path=settings.catalog_path,
-            bbox=settings.bbox,
-            quota_mb=settings.store_quota_mb,
-            eviction_buffer_mb=settings.store_eviction_buffer_mb,
-        )
-
-    else:  # cds
-        from eostrata.sources.cds import CDSSource
-
-        variable = inp.variable or "t2m"
-        latest = CDSSource().latest_available()
-        years = inp.years or [latest.year]
-        months = inp.months or [latest.month]
-        job = jobs.create_job("cds", {"variable": variable, "years": years, "months": months})
-        _executor.submit(
-            _run_job,
-            job.job_id,
-            ingestion.run_cds_ingest,
-            variable=variable,
-            years=years,
-            months=months,
-            zarr_root=settings.zarr_root,
-            raw_dir=settings.raw_dir,
-            catalog_path=settings.catalog_path,
-            bbox=settings.bbox,
-            quota_mb=settings.store_quota_mb,
-            eviction_buffer_mb=settings.store_eviction_buffer_mb,
-        )
+    job = jobs.create_job(inp.source, source_params)
+    _executor.submit(
+        _run_job,
+        job.job_id,
+        ingestion.run_ingest,
+        source_id=inp.source,
+        zarr_root=settings.zarr_root,
+        raw_dir=settings.raw_dir,
+        catalog_path=settings.catalog_path,
+        bbox=settings.bbox,
+        quota_mb=settings.store_quota_mb,
+        eviction_buffer_mb=settings.store_eviction_buffer_mb,
+        **source_params,
+    )
 
     response.headers["Location"] = f"/processes/jobs/{job.job_id}"
     return _job_response(job)

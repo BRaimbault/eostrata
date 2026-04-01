@@ -27,11 +27,11 @@ class TestRegistry:
     def test_all_sources_returns_list(self):
         sources = all_sources()
         assert isinstance(sources, list)
-        assert len(sources) >= 3
+        assert len(sources) >= 1
 
     def test_all_sources_ids(self):
         ids = {s.id for s in all_sources()}
-        assert {"worldpop", "chirps", "cds"}.issubset(ids)
+        assert {"worldpop", "chirps", "cds", "sentinel_ndvi"}.issubset(ids)
 
     def test_register_source_decorator(self):
         """A dynamically-registered source should appear in the registry."""

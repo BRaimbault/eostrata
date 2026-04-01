@@ -14,6 +14,7 @@ from __future__ import annotations
 import gzip
 import logging
 import shutil
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -52,9 +53,14 @@ class CHIRPSSource(BaseSource):
 
     id = "chirps"
     collection_id = "chirps"
+    collection_title = "CHIRPS precipitation"
+    collection_description = "Climate Hazards Group InfraRed Precipitation with Station data"
+    zarr_prefix = "chirps"
     temporal_resolution = "monthly"
     default_lag_days = 45
     VARIABLE = "precipitation"
+    skip_404 = True
+    ui_fields = ["years", "months"]
 
     def download(
         self,
@@ -130,3 +136,24 @@ class CHIRPSSource(BaseSource):
             month += 12
             year -= 1
         return datetime(year, month, 1, tzinfo=UTC)
+
+    @classmethod
+    def iter_periods(
+        cls, *, years: list[int], months: list[int], **_
+    ) -> Iterator[tuple[str, dict]]:
+        for year in years:
+            for month in months:
+                yield (f"{year}-{month:02d}", {"year": year, "month": month})
+
+    def stac_registrations(self, ds, period_kwargs: dict) -> list[dict]:
+        from datetime import UTC, datetime
+
+        year, month = period_kwargs["year"], period_kwargs["month"]
+        return [
+            {
+                "item_id": self.stac_item_id(),
+                "datetime_": datetime(year, month, 1, tzinfo=UTC),
+                "variable": self.VARIABLE,
+                "extra_properties": self.stac_properties(**period_kwargs),
+            }
+        ]

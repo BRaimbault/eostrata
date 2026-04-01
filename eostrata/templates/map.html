@@ -303,15 +303,11 @@
     <!-- ── Ingest tab ────────────────────────────────────────────────────── -->
     <div id="tab-ingest-content" class="tab-panel" style="display:none">
 
-      <!-- Start job form -->
+      <!-- Start job form — options populated from SOURCES by initIngestForm() -->
       <label>Source</label>
-      <select id="ing-source" onchange="onIngSourceChange()">
-        <option value="worldpop">worldpop — population rasters</option>
-        <option value="chirps">chirps — precipitation</option>
-        <option value="cds">cds — ERA5 reanalysis</option>
-      </select>
+      <select id="ing-source" onchange="onIngSourceChange()"></select>
 
-      <div id="ing-iso3-row">
+      <div id="ing-iso3-row" style="display:none">
         <label>ISO3 country code</label>
         <input id="ing-iso3" type="text" placeholder="e.g. NGA" maxlength="3"
                style="text-transform:uppercase"/>
@@ -334,6 +330,16 @@
       <div id="ing-months-row" style="display:none">
         <label>Months (comma-separated, blank = latest)</label>
         <input id="ing-months" type="text" placeholder="e.g. 1,2,3 or ALL"/>
+      </div>
+
+      <div id="ing-days-row" style="display:none">
+        <label>Days (comma-separated, blank = latest)</label>
+        <input id="ing-days" type="text" placeholder="e.g. 1,2,3 or ALL"/>
+      </div>
+
+      <div id="ing-dekads-row" style="display:none">
+        <label>Dekads (comma-separated, blank = latest)</label>
+        <input id="ing-dekads" type="text" placeholder="e.g. 1,2,3 or ALL"/>
       </div>
 
       <button class="btn" id="btn-ingest" onclick="startIngest()">Start ingestion job</button>
@@ -415,6 +421,7 @@
   <script>
     const PRESELECT = __PRESELECT__;
     const CONFIG    = __CONFIG__;
+    const SOURCES   = __SOURCES__;
 
     const map = L.map('map').setView([5, 20], 4);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -878,6 +885,7 @@
     }
 
     loadCatalog();
+    initIngestForm();
 
     // ── Tab switching ────────────────────────────────────────────────────────
 
@@ -891,11 +899,31 @@
 
     // ── Ingest tab ───────────────────────────────────────────────────────────
 
-    function onIngSourceChange() {
+    function _sourceFields() {
       const src = document.getElementById('ing-source').value;
-      document.getElementById('ing-iso3-row').style.display    = src === 'worldpop' ? '' : 'none';
-      document.getElementById('ing-var-row').style.display     = src === 'cds'      ? '' : 'none';
-      document.getElementById('ing-months-row').style.display  = src !== 'worldpop' ? '' : 'none';
+      const def = SOURCES.find(s => s.id === src);
+      return def ? def.fields : [];
+    }
+
+    function initIngestForm() {
+      const sel = document.getElementById('ing-source');
+      sel.innerHTML = '';
+      SOURCES.forEach(function(s) {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = s.label;
+        sel.appendChild(opt);
+      });
+      onIngSourceChange();
+    }
+
+    function onIngSourceChange() {
+      const fields = _sourceFields();
+      document.getElementById('ing-iso3-row').style.display   = fields.includes('iso3')     ? '' : 'none';
+      document.getElementById('ing-var-row').style.display    = fields.includes('variable')  ? '' : 'none';
+      document.getElementById('ing-months-row').style.display = fields.includes('months')    ? '' : 'none';
+      document.getElementById('ing-days-row').style.display   = fields.includes('days')      ? '' : 'none';
+      document.getElementById('ing-dekads-row').style.display = fields.includes('dekads')    ? '' : 'none';
     }
 
     function _parseInts(str) {
@@ -904,21 +932,29 @@
 
     async function startIngest() {
       const src    = document.getElementById('ing-source').value;
+      const fields = _sourceFields();
       const years  = document.getElementById('ing-years').value.trim();
       const months = document.getElementById('ing-months').value.trim();
+      const dekads = document.getElementById('ing-dekads').value.trim();
+      const ddays  = document.getElementById('ing-days').value.trim();
       const iso3   = document.getElementById('ing-iso3').value.trim().toUpperCase();
       const varbl  = document.getElementById('ing-variable').value;
 
       const inputs = { source: src };
-      if (src === 'worldpop') {
+      if (fields.includes('iso3')) {
         if (!iso3 || iso3.length !== 3) {
           setIngMsg('ISO3 must be 3 characters.', 'err'); return;
         }
         inputs.iso3 = iso3;
       }
-      if (src === 'cds') inputs.variable = varbl;
+      if (fields.includes('variable')) inputs.variable = varbl;
       if (years)  inputs.years  = _parseInts(years);
-      if (months) inputs.months = months.toUpperCase() === 'ALL' ? 'ALL' : _parseInts(months);
+      if (months && fields.includes('months'))
+        inputs.months = months.toUpperCase() === 'ALL' ? 'ALL' : _parseInts(months);
+      if (ddays && fields.includes('days'))
+        inputs.days = ddays.toUpperCase() === 'ALL' ? 'ALL' : _parseInts(ddays);
+      if (dekads && fields.includes('dekads'))
+        inputs.dekads = dekads.toUpperCase() === 'ALL' ? 'ALL' : _parseInts(dekads);
 
       const btn = document.getElementById('btn-ingest');
       btn.disabled = true;

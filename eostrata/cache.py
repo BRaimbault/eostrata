@@ -18,7 +18,11 @@ as the "last access" timestamp for the group, giving a correct LRU order.
 
 Per-timestamp sentinels live at::
 
-    <zarr_root>/<group_path>/.eostrata_access/<timestamp_iso>
+    <zarr_root.parent>/.<zarr_root.name>/access/<group_path>/<timestamp_iso>
+
+This location is **outside** the zarr store so the zarr hierarchy stays clean
+— zarr 3's ``consolidate_metadata`` no longer finds foreign directories and
+emits spurious "Object not recognised" warnings.
 
 Configuration
 -------------
@@ -32,14 +36,14 @@ Concurrency
 -----------
 Two FileLock types protect the store against concurrent access:
 
-Per-group lock  (``.eostrata_locks/<group>__<name>.lock``)
+Per-group lock  (``.<zarr_root.name>/locks/<group>__<name>.lock``)
     Held by *both* ingest writes (``geotiff_to_zarr``, ``_write_daily_grid``,
     ``_netcdf_to_zarr``) and ``evict_timestamp``.  Ensures that an eviction
     cannot rename a group directory out from under a concurrent ingest write,
     and that two concurrent evictions of the same group cannot produce
     interleaved renames that silently drop timestamps.
 
-Store-wide eviction lock (``.eostrata_locks/__eviction__.lock``)
+Store-wide eviction lock (``.<zarr_root.name>/locks/__eviction__.lock``)
     Held for the entire duration of a ``check_and_evict`` pass.  Ensures
     that when several ingest jobs start simultaneously, only one of them
     performs the quota check + eviction loop.  Without this lock, all N jobs
@@ -81,17 +85,34 @@ logger = logging.getLogger(__name__)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-_ACCESS_DIR = ".eostrata_access"
 _DEBOUNCE_S = 60  # minimum seconds between sentinel touches for the same timestamp
 
-# Lock directory shared with store.py
-_LOCK_DIR_NAME = ".eostrata_locks"
+
+def _meta_root(zarr_root: Path) -> Path:
+    """Hidden state directory *alongside* the zarr store (not inside it).
+
+    Placing lock files and access sentinels here keeps the zarr store a clean
+    zarr hierarchy — no foreign directories that zarr 3 would warn about during
+    ``consolidate_metadata``.
+
+    Convention: if ``zarr_root`` is ``data/zarr``, the meta directory is
+    ``data/.zarr`` (same parent, dot-prefixed name).
+    """
+    zarr_root = Path(zarr_root)
+    meta = zarr_root.parent / f".{zarr_root.name}"
+    meta.mkdir(parents=True, exist_ok=True)
+    return meta
 
 
 def _lock_dir(zarr_root: Path) -> Path:
-    d = Path(zarr_root) / _LOCK_DIR_NAME
+    d = _meta_root(zarr_root) / "locks"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _access_dir(zarr_root: Path, group_path: str) -> Path:
+    """Per-group access-sentinel directory, outside the zarr store."""
+    return _meta_root(zarr_root) / "access" / group_path
 
 
 def _group_lock(zarr_root: Path, group_path: str) -> FileLock:
@@ -118,23 +139,15 @@ def _consolidate_metadata_with_timeout(zarr_root: Path, timeout_s: int = 30) -> 
     is restricted to the main thread of the main interpreter).
     The consolidation thread is allowed to finish naturally in the background if
     it exceeds the timeout — the caller simply stops waiting.
+
+    Because the zarr store is a clean hierarchy (no lock/access directories),
+    zarr 3 consolidation runs without spurious ZarrUserWarnings.
     """
-    import warnings
     from concurrent.futures import ThreadPoolExecutor
     from concurrent.futures import TimeoutError as FuturesTimeoutError
 
-    from zarr.errors import ZarrUserWarning
-
-    def _consolidate() -> None:
-        # Suppress the "Object at <non-zarr-file> is not recognised" noise that
-        # zarr 3 emits when the store root contains intentional non-zarr files
-        # (catalog.json, collection.json, .eostrata_locks, …).
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=ZarrUserWarning)
-            zarr.consolidate_metadata(str(zarr_root), zarr_format=2)
-
     with ThreadPoolExecutor(max_workers=1, thread_name_prefix="zarr_consolidate") as ex:
-        future = ex.submit(_consolidate)
+        future = ex.submit(zarr.consolidate_metadata, str(zarr_root))
         try:
             future.result(timeout=timeout_s)
         except FuturesTimeoutError:
@@ -196,12 +209,12 @@ def record_access(zarr_root: Path, group_path: str, timestamps: list) -> None:
     if not settings.track_access:
         return
 
-    access_dir = Path(zarr_root) / group_path / _ACCESS_DIR
     try:
-        access_dir.mkdir(parents=True, exist_ok=True)
+        adir = _access_dir(Path(zarr_root), group_path)
+        adir.mkdir(parents=True, exist_ok=True)
         for ts in timestamps:
             ts_iso = _ts_to_iso(ts)
-            sentinel = access_dir / ts_iso
+            sentinel = adir / ts_iso
             if sentinel.exists() and time.time() - sentinel.stat().st_mtime < _DEBOUNCE_S:
                 continue
             sentinel.touch()
@@ -258,16 +271,22 @@ def list_groups(zarr_root: Path) -> list[tuple[str, float, float]]:
             if not dataset_dir.is_dir():
                 continue
             group_path = f"{source_dir.name}/{dataset_dir.name}"
-            # Exclude sentinel files from size calculation
-            size_mb = sum(
-                f.stat().st_size
-                for f in dataset_dir.rglob("*")
-                if f.is_file() and f.parent.name != _ACCESS_DIR
-            ) / (1024**2)
-            # Use the latest modification time of any file (including sentinels)
-            # as a proxy for last access.
-            mtimes = [f.stat().st_mtime for f in dataset_dir.rglob("*") if f.is_file()]
-            last_access = max(mtimes) if mtimes else 0.0
+
+            # Size: only zarr data files (pure zarr hierarchy — no sentinel dirs)
+            size_mb = sum(f.stat().st_size for f in dataset_dir.rglob("*") if f.is_file()) / (
+                1024**2
+            )
+
+            # Last access: max mtime across zarr data files AND access sentinels.
+            # Sentinels live in the sibling meta directory, outside the zarr store.
+            data_mtimes = [f.stat().st_mtime for f in dataset_dir.rglob("*") if f.is_file()]
+            adir = _access_dir(zarr_root, group_path)
+            sentinel_mtimes = (
+                [f.stat().st_mtime for f in adir.rglob("*") if f.is_file()] if adir.exists() else []
+            )
+            last_access = (
+                max(data_mtimes + sentinel_mtimes) if (data_mtimes or sentinel_mtimes) else 0.0
+            )
 
             groups.append((group_path, size_mb, last_access))
 
@@ -331,20 +350,21 @@ def list_timestamps(zarr_root: Path, group_path: str) -> list[tuple[str, float, 
 
     group_dir = Path(zarr_root) / group_path
 
-    # Compute per-timestamp estimated size (sentinel files excluded)
-    data_files = [f for f in group_dir.rglob("*") if f.is_file() and f.parent.name != _ACCESS_DIR]
+    # Zarr data files only — no sentinel directories in the store
+    data_files = list(group_dir.rglob("*") if group_dir.exists() else [])
+    data_files = [f for f in data_files if f.is_file()]
     total_size_bytes = sum(f.stat().st_size for f in data_files)
     total_group_size_mb = total_size_bytes / (1024**2)
     per_ts_mb = total_group_size_mb / len(unique_times) if unique_times else 0.0
 
-    # Ingestion time proxy: earliest mtime of zarr data files (= when the
-    # group was first written to disk).
+    # Ingestion time proxy: earliest mtime of zarr data files
     ingestion_time = min((f.stat().st_mtime for f in data_files), default=0.0)
 
-    access_dir = group_dir / _ACCESS_DIR
+    # Access sentinels live in the sibling meta directory
+    adir = _access_dir(Path(zarr_root), group_path)
     result: list[tuple[str, float, float, float]] = []
     for ts_iso, _ts in unique_times:
-        sentinel = access_dir / ts_iso
+        sentinel = adir / ts_iso
         last_access = sentinel.stat().st_mtime if sentinel.exists() else 0.0
         result.append((ts_iso, per_ts_mb, last_access, ingestion_time))
 
@@ -366,6 +386,12 @@ def evict_group(zarr_root: Path, group_path: str) -> float:
     size_mb = sum(f.stat().st_size for f in target.rglob("*") if f.is_file()) / (1024**2)
 
     shutil.rmtree(target)
+
+    # Remove access sentinels for this group from the meta directory
+    adir = _access_dir(zarr_root, group_path)
+    if adir.exists():
+        shutil.rmtree(adir)
+
     logger.info("Evicted Zarr group '%s' (freed %.1f MB)", group_path, size_mb)
     return size_mb
 
@@ -427,44 +453,48 @@ def evict_timestamp(
             # Timestamp not found (already evicted by a concurrent call)
             return 0.0
 
-        # Estimate freed size (sentinel files excluded from calculation)
+        # Estimate freed size (pure zarr data files only)
         group_dir = zarr_root / group_path
-        total_size_bytes = sum(
-            f.stat().st_size
-            for f in group_dir.rglob("*")
-            if f.is_file() and f.parent.name != _ACCESS_DIR
-        )
+        total_size_bytes = sum(f.stat().st_size for f in group_dir.rglob("*") if f.is_file())
         freed_mb = (total_size_bytes / (1024**2)) / n_times
 
         # Select remaining timestamps by position to avoid issues with duplicate time values
         remaining = ds.isel(time=np.where(mask)[0])
 
-        # Write to a temp group path in the same parent dir (same filesystem)
+        # Write to a temp group path in the same parent dir (same filesystem).
+        # drop_encoding() clears format-specific codec keys so the zarr default
+        # compressor is applied cleanly regardless of the store's existing format.
         tmp_name = f"._tmp_{Path(group_path).name}_{uuid.uuid4().hex[:8]}"
         tmp_group_path = str(Path(group_path).parent / tmp_name)
-        # drop_encoding strips any zarr-format-3-specific keys (e.g. 'serializer')
-        # so the temp group can always be written as zarr format 2.
-        remaining.drop_encoding().to_zarr(
-            str(zarr_root), group=tmp_group_path, mode="w", zarr_format=2
-        )
+        remaining.drop_encoding().to_zarr(str(zarr_root), group=tmp_group_path, mode="w")
 
         target = zarr_root / group_path
         tmp_target = zarr_root / tmp_group_path
 
-        # Copy access sentinels from original to tmp, then remove the evicted one
-        src_access = target / _ACCESS_DIR
-        dst_access = tmp_target / _ACCESS_DIR
+        # Copy access sentinels for remaining timestamps into a parallel tmp dir,
+        # then atomically swap both the zarr group and the sentinel directory.
+        src_access = _access_dir(zarr_root, group_path)
+        dst_access = _access_dir(zarr_root, tmp_group_path)
         if src_access.exists():
             shutil.copytree(str(src_access), str(dst_access))
             evicted_sentinel = dst_access / timestamp_iso
             if evicted_sentinel.exists():
                 evicted_sentinel.unlink()
 
-        # Atomic swap: old → ._old_*, tmp → original
+        # Atomic swap for zarr data: old → ._old_*, tmp → original
         old = target.parent / f"._old_{uuid.uuid4().hex[:8]}"
         target.rename(old)
         tmp_target.rename(target)
         shutil.rmtree(old)
+
+        # Atomic swap for access sentinels: old_access → gone, tmp_access → original
+        old_access = src_access.parent / f"._old_{uuid.uuid4().hex[:8]}"
+        if src_access.exists():
+            src_access.rename(old_access)
+        if dst_access.exists():
+            dst_access.rename(src_access)
+        if old_access.exists():
+            shutil.rmtree(old_access)
 
     # Refresh the root consolidated metadata so tile requests don't read stale
     # time encoding from before the eviction.

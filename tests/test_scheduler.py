@@ -104,7 +104,7 @@ class TestRunJob:
             {"population": (("y", "x"), np.ones((4, 4), dtype="float32"))},
             coords={"y": np.arange(4.0), "x": np.arange(4.0)},
         )
-        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w", zarr_format=2)
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
 
         src = MagicMock()
         src.collection_id = "worldpop"
@@ -464,7 +464,7 @@ class TestRunJobReturnValue:
             {"population": (("y", "x"), np.ones((4, 4), dtype="float32"))},
             coords={"y": np.arange(4.0), "x": np.arange(4.0)},
         )
-        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w", zarr_format=2)
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
         src = MagicMock()
         src.collection_id = "worldpop"
         src.temporal_resolution = "annual"
@@ -723,7 +723,7 @@ class TestSchedulerTracking:
             {"population": (("y", "x"), np.ones((2, 2), dtype="float32"))},
             coords={"y": [0.0, 1.0], "x": [0.0, 1.0]},
         )
-        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w", zarr_format=2)
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
 
         src = MagicMock()
         src.collection_id = "worldpop"

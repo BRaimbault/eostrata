@@ -91,9 +91,6 @@ indent-style = "space"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 filterwarnings = [
-    # zarr 3 warns about non-zarr files in the store root (catalog.json, lock dirs, …).
-    # These are intentional in eostrata's store layout — suppress the noise.
-    "ignore:Object at .* is not recognized as a component of a Zarr hierarchy:zarr.errors.ZarrUserWarning",
     # zarr 3 consolidated metadata is not yet in the zarr-format-3 spec; acknowledged.
     "ignore:Consolidated metadata is currently not part in the Zarr format 3:zarr.errors.ZarrUserWarning",
 ]

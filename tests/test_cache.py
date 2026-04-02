@@ -12,8 +12,8 @@ import pytest
 import xarray as xr
 
 from eostrata.cache import (
-    _ACCESS_DIR,
     _DEBOUNCE_S,
+    _access_dir,
     check_and_evict,
     evict_group,
     evict_timestamp,
@@ -28,7 +28,7 @@ def _write_fake_group(zarr_root: Path, group: str, size_kb: int = 10) -> None:
     """Write a dummy Zarr group with no time dimension."""
     data = np.random.rand(size_kb, 8).astype("float32")
     ds = xr.Dataset({"data": (("y", "x"), data)})
-    ds.to_zarr(str(zarr_root), group=group, mode="w", zarr_format=2)
+    ds.to_zarr(str(zarr_root), group=group, mode="w")
 
 
 def _write_fake_group_with_times(
@@ -42,7 +42,7 @@ def _write_fake_group_with_times(
         {"data": (("time", "y", "x"), data)},
         coords={"time": times},
     )
-    ds.to_zarr(str(zarr_root), group=group, mode="w", zarr_format=2)
+    ds.to_zarr(str(zarr_root), group=group, mode="w")
 
 
 class TestRecordAccess:
@@ -50,7 +50,7 @@ class TestRecordAccess:
         _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021])
         ts = [np.datetime64("2020-01-01"), np.datetime64("2021-01-01")]
         record_access(tmp_path, "worldpop/nga", ts)
-        access_dir = tmp_path / "worldpop" / "nga" / _ACCESS_DIR
+        access_dir = _access_dir(tmp_path, "worldpop/nga")
         assert (access_dir / "2020-01-01T00:00:00").exists()
         assert (access_dir / "2021-01-01T00:00:00").exists()
 
@@ -58,7 +58,7 @@ class TestRecordAccess:
         _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020])
         ts = [np.datetime64("2020-01-01")]
         record_access(tmp_path, "worldpop/nga", ts)
-        sentinel = tmp_path / "worldpop" / "nga" / _ACCESS_DIR / "2020-01-01T00:00:00"
+        sentinel = _access_dir(tmp_path, "worldpop/nga") / "2020-01-01T00:00:00"
         mtime_first = sentinel.stat().st_mtime
         with patch("eostrata.cache.time.time", return_value=mtime_first + _DEBOUNCE_S - 1):
             record_access(tmp_path, "worldpop/nga", ts)
@@ -68,7 +68,7 @@ class TestRecordAccess:
         _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020])
         ts = [np.datetime64("2020-01-01")]
         record_access(tmp_path, "worldpop/nga", ts)
-        sentinel = tmp_path / "worldpop" / "nga" / _ACCESS_DIR / "2020-01-01T00:00:00"
+        sentinel = _access_dir(tmp_path, "worldpop/nga") / "2020-01-01T00:00:00"
         mtime_first = sentinel.stat().st_mtime
         with patch("eostrata.cache.time.time", return_value=mtime_first + _DEBOUNCE_S + 1):
             record_access(tmp_path, "worldpop/nga", ts)
@@ -79,7 +79,7 @@ class TestRecordAccess:
         with patch("eostrata.config.settings") as mock_settings:
             mock_settings.track_access = False
             record_access(tmp_path, "worldpop/nga", [np.datetime64("2020-01-01")])
-        access_dir = tmp_path / "worldpop" / "nga" / _ACCESS_DIR
+        access_dir = _access_dir(tmp_path, "worldpop/nga")
         assert not access_dir.exists()
 
     def test_oserror_is_silenced(self, tmp_path):
@@ -185,20 +185,22 @@ class TestEvictGroup:
 
 class TestEvictTimestamp:
     def test_removes_one_timestamp(self, tmp_path):
+        zarr_root = tmp_path
         _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021, 2022])
-        freed = evict_timestamp(tmp_path, "worldpop/nga", "2021-01-01T00:00:00")
+        freed = evict_timestamp(zarr_root, "worldpop/nga", "2021-01-01T00:00:00")
         assert freed > 0
-        ds = xr.open_zarr(str(tmp_path), group="worldpop/nga", consolidated=False)
+        ds = xr.open_zarr(str(zarr_root), group="worldpop/nga", consolidated=False)
         years = [t.astype("datetime64[Y]").item().year for t in ds["time"].values]
         assert 2021 not in years
         assert 2020 in years
         assert 2022 in years
 
     def test_preserves_access_sentinels(self, tmp_path):
+        zarr_root = tmp_path
         _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021])
         record_access(tmp_path, "worldpop/nga", [np.datetime64("2020-01-01")])
-        evict_timestamp(tmp_path, "worldpop/nga", "2021-01-01T00:00:00")
-        access_dir = tmp_path / "worldpop" / "nga" / _ACCESS_DIR
+        evict_timestamp(zarr_root, "worldpop/nga", "2021-01-01T00:00:00")
+        access_dir = _access_dir(tmp_path, "worldpop/nga")
         names = [f.name for f in access_dir.iterdir()]
         assert any("2020" in n for n in names)
         assert not any("2021" in n for n in names)
@@ -221,18 +223,19 @@ class TestEvictTimestamp:
             {"v": (("time", "y", "x"), np.zeros((0, 4, 4)))},
             coords={"time": np.array([], dtype="datetime64[ns]")},
         )
-        ds.to_zarr(str(tmp_path), group="worldpop/nga", mode="w", zarr_format=2)
+        ds.to_zarr(str(tmp_path), group="worldpop/nga", mode="w")
         assert evict_timestamp(tmp_path, "worldpop/nga", "2020-01-01T00:00:00") == 0.0
 
     def test_evicts_sentinel_for_removed_timestamp(self, tmp_path):
         """When the evicted timestamp has its own sentinel, that sentinel is removed."""
+        zarr_root = tmp_path
         _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021])
         # Record access for both timestamps so both sentinels exist
         record_access(
             tmp_path, "worldpop/nga", [np.datetime64("2020-01-01"), np.datetime64("2021-01-01")]
         )
-        evict_timestamp(tmp_path, "worldpop/nga", "2020-01-01T00:00:00")
-        access_dir = tmp_path / "worldpop" / "nga" / _ACCESS_DIR
+        evict_timestamp(zarr_root, "worldpop/nga", "2020-01-01T00:00:00")
+        access_dir = _access_dir(tmp_path, "worldpop/nga")
         names = [f.name for f in access_dir.iterdir()]
         assert not any("2020" in n for n in names)
         assert any("2021" in n for n in names)
@@ -241,6 +244,7 @@ class TestEvictTimestamp:
         """If zarr.consolidate_metadata raises during eviction, the eviction still succeeds."""
         import zarr as _zarr
 
+        zarr_root = tmp_path
         _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021])
         _original = _zarr.consolidate_metadata
 
@@ -252,9 +256,9 @@ class TestEvictTimestamp:
             return _original(path, **kwargs)
 
         with patch("eostrata.cache.zarr.consolidate_metadata", side_effect=_raise_for_our_call):
-            freed = evict_timestamp(tmp_path, "worldpop/nga", "2020-01-01T00:00:00")
+            freed = evict_timestamp(zarr_root, "worldpop/nga", "2020-01-01T00:00:00")
         assert freed > 0
-        ds = xr.open_zarr(str(tmp_path), group="worldpop/nga", consolidated=False)
+        ds = xr.open_zarr(str(zarr_root), group="worldpop/nga", consolidated=False)
         years = [t.astype("datetime64[Y]").item().year for t in ds["time"].values]
         assert 2020 not in years
         assert 2021 in years
@@ -264,16 +268,17 @@ class TestEvictTimestamp:
 
         from eostrata import catalog as cat
 
-        catalog_path = tmp_path / "catalog.json"
+        zarr_root = tmp_path / "zarr"
+        catalog_path = tmp_path / "stac" / "catalog.json"
         catalogue = cat.load_or_create(catalog_path)
-        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021])
+        _write_fake_group_with_times(zarr_root, "worldpop/nga", [2020, 2021])
         cat.register_item(
             catalogue,
             collection_id="worldpop",
             item_id="worldpop_nga",
             bbox=(2.0, 4.0, 15.0, 14.0),
             datetime_=datetime(2020, 1, 1, tzinfo=UTC),
-            zarr_root=tmp_path,
+            zarr_root=zarr_root,
             zarr_group="worldpop/nga",
             variable="data",
         )
@@ -283,13 +288,13 @@ class TestEvictTimestamp:
             item_id="worldpop_nga",
             bbox=(2.0, 4.0, 15.0, 14.0),
             datetime_=datetime(2021, 1, 1, tzinfo=UTC),
-            zarr_root=tmp_path,
+            zarr_root=zarr_root,
             zarr_group="worldpop/nga",
             variable="data",
         )
         cat.save(catalogue, catalog_path)
 
-        evict_timestamp(tmp_path, "worldpop/nga", "2021-01-01T00:00:00", catalog_path=catalog_path)
+        evict_timestamp(zarr_root, "worldpop/nga", "2021-01-01T00:00:00", catalog_path=catalog_path)
 
         updated = cat.load_or_create(catalog_path)
         item = updated.get_child("worldpop").get_item("worldpop_nga")
@@ -414,7 +419,7 @@ class TestListTimestampsEdgeCases:
             {"v": (("time", "y", "x"), np.zeros((0, 4, 4)))},
             coords={"time": np.array([], dtype="datetime64[ns]")},
         )
-        ds.to_zarr(str(tmp_path), group="worldpop/nga", mode="w", zarr_format=2)
+        ds.to_zarr(str(tmp_path), group="worldpop/nga", mode="w")
         assert list_timestamps(tmp_path, "worldpop/nga") == []
 
     def test_sort_key_zero_access_and_ingestion(self, tmp_path):
@@ -442,12 +447,13 @@ class TestConcurrentEviction:
         Without the per-group lock, the rename sequence in evict_timestamp can interleave,
         leaving the group in an undefined state.
         """
+        zarr_root = tmp_path
         _write_fake_group_with_times(tmp_path, "worldpop/nga", [2019, 2020, 2021])
         errors: list[Exception] = []
 
         def _evict():
             try:
-                evict_timestamp(tmp_path, "worldpop/nga", "2019-01-01T00:00:00")
+                evict_timestamp(zarr_root, "worldpop/nga", "2019-01-01T00:00:00")
             except Exception as exc:  # noqa: BLE001
                 errors.append(exc)
 
@@ -458,7 +464,7 @@ class TestConcurrentEviction:
             t.join()
 
         assert not errors, f"Thread(s) raised: {errors}"
-        ds = xr.open_zarr(str(tmp_path), group="worldpop/nga", consolidated=False)
+        ds = xr.open_zarr(str(zarr_root), group="worldpop/nga", consolidated=False)
         years = sorted(t.astype("datetime64[Y]").item().year for t in ds["time"].values)
         assert years == [2020, 2021], f"Expected [2020, 2021], got {years}"
 
@@ -474,18 +480,19 @@ class TestConcurrentEviction:
           B: rmtree(old_B) — A's {2018, 2020} gone
           Final: {2019, 2020} — 2019 was NOT evicted, 2018 was lost silently.
         """
+        zarr_root = tmp_path
         _write_fake_group_with_times(tmp_path, "worldpop/nga", [2018, 2019, 2020])
         errors: list[Exception] = []
 
         def _evict_2019():
             try:
-                evict_timestamp(tmp_path, "worldpop/nga", "2019-01-01T00:00:00")
+                evict_timestamp(zarr_root, "worldpop/nga", "2019-01-01T00:00:00")
             except Exception as exc:  # noqa: BLE001
                 errors.append(exc)
 
         def _evict_2018():
             try:
-                evict_timestamp(tmp_path, "worldpop/nga", "2018-01-01T00:00:00")
+                evict_timestamp(zarr_root, "worldpop/nga", "2018-01-01T00:00:00")
             except Exception as exc:  # noqa: BLE001
                 errors.append(exc)
 
@@ -497,7 +504,7 @@ class TestConcurrentEviction:
         t2.join()
 
         assert not errors, f"Thread(s) raised: {errors}"
-        ds = xr.open_zarr(str(tmp_path), group="worldpop/nga", consolidated=False)
+        ds = xr.open_zarr(str(zarr_root), group="worldpop/nga", consolidated=False)
         years = sorted(t.astype("datetime64[Y]").item().year for t in ds["time"].values)
         assert years == [2020], f"Expected only [2020] to remain, got {years}"
 
@@ -514,6 +521,7 @@ class TestConcurrentEviction:
         first finishes and immediately see the store is within quota.
         """
         # Large data so per-timestamp size dominates zarr metadata overhead.
+        zarr_root = tmp_path
         _write_fake_group_with_times(tmp_path, "worldpop/nga", [2019, 2020], size_kb=500)
         total_mb = sum(f.stat().st_size for f in tmp_path.rglob("*") if f.is_file()) / (1024**2)
         # With 2 equal timestamps: after evicting 1, size drops to ~50% of original.
@@ -534,7 +542,7 @@ class TestConcurrentEviction:
             t.join()
 
         assert not errors, f"Thread(s) raised: {errors}"
-        ds = xr.open_zarr(str(tmp_path), group="worldpop/nga", consolidated=False)
+        ds = xr.open_zarr(str(zarr_root), group="worldpop/nga", consolidated=False)
         remaining = len(ds["time"].values)
         # Exactly 1 timestamp should remain — if both were evicted it means the
         # store-level lock failed to prevent a second thread from re-measuring
@@ -555,8 +563,11 @@ class TestConcurrentEviction:
 
         from eostrata.store import geotiff_to_zarr
 
-        # Prepare a real GeoTIFF for geotiff_to_zarr
-        tif = tmp_path / "test.tif"
+        # Prepare a real GeoTIFF — keep raw files outside the zarr root
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        zarr_root = tmp_path / "zarr"
+        tif = raw_dir / "test.tif"
         bbox = (0.0, 0.0, 5.0, 5.0)
         transform = from_bounds(*bbox, width=8, height=8)
         data = np.ones((8, 8), dtype="float32")
@@ -576,7 +587,7 @@ class TestConcurrentEviction:
         # Seed the group using geotiff_to_zarr so the schema is consistent
         for year in [2018, 2019]:
             tc = np.datetime64(f"{year}-01-01", "ns")
-            geotiff_to_zarr(tif, tmp_path, "col/d", variable_name="v", time_coord=tc)
+            geotiff_to_zarr(tif, zarr_root, "col/d", variable_name="v", time_coord=tc)
 
         errors: list[Exception] = []
 
@@ -584,14 +595,14 @@ class TestConcurrentEviction:
             for year in [2020, 2021, 2022]:
                 tc = np.datetime64(f"{year}-01-01", "ns")
                 try:
-                    geotiff_to_zarr(tif, tmp_path, "col/d", variable_name="v", time_coord=tc)
+                    geotiff_to_zarr(tif, zarr_root, "col/d", variable_name="v", time_coord=tc)
                 except Exception as exc:  # noqa: BLE001
                     errors.append(exc)
 
         def _evict():
             for ts in ["2018-01-01T00:00:00", "2019-01-01T00:00:00"]:
                 try:
-                    evict_timestamp(tmp_path, "col/d", ts)
+                    evict_timestamp(zarr_root, "col/d", ts)
                 except Exception as exc:  # noqa: BLE001
                     errors.append(exc)
 
@@ -604,6 +615,6 @@ class TestConcurrentEviction:
 
         assert not errors, f"Thread(s) raised: {errors}"
         # The group must still be a valid zarr store after concurrent access
-        ds = xr.open_zarr(str(tmp_path), group="col/d", consolidated=False)
+        ds = xr.open_zarr(str(zarr_root), group="col/d", consolidated=False)
         assert "time" in ds
         assert len(ds["time"]) > 0

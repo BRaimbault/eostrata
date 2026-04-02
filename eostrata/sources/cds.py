@@ -205,7 +205,6 @@ def _netcdf_to_zarr(
                     mode="a",
                     append_dim="time",
                     consolidated=True,
-                    zarr_format=2,
                 )
             else:
                 logger.info("Writing new ERA5 Zarr group '%s'", zarr_group)
@@ -215,7 +214,6 @@ def _netcdf_to_zarr(
                     mode="w",
                     encoding=encoding,
                     consolidated=True,
-                    zarr_format=2,
                 )
     finally:
         ds.close()

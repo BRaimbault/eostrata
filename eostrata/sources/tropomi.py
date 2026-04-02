@@ -367,7 +367,6 @@ def _write_daily_grid(
                 mode="a",
                 append_dim="time",
                 consolidated=True,
-                zarr_format=2,
             )
         else:
             logger.info("Writing new TROPOMI Zarr group '%s'", zarr_group)
@@ -377,7 +376,6 @@ def _write_daily_grid(
                 mode="w",
                 encoding=encoding,
                 consolidated=True,
-                zarr_format=2,
             )
 
     return ds

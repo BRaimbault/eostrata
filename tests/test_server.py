@@ -271,7 +271,7 @@ class TestStoreUsage:
         zarr_root = tmp_path / "zarr"
         times = np.array([np.datetime64("2020-01-01"), np.datetime64("2021-01-01")])
         ds = xr.Dataset({"v": (("time", "y", "x"), np.zeros((2, 4, 4)))}, coords={"time": times})
-        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w", zarr_format=2)
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
 
         mock_settings = MagicMock()
         mock_settings.store_quota_mb = 0
@@ -300,7 +300,7 @@ class TestStoreUsage:
         zarr_root = tmp_path / "zarr"
         # Write a group with no time dimension
         ds = xr.Dataset({"v": (("y", "x"), np.zeros((4, 4)))})
-        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w", zarr_format=2)
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
 
         mock_settings = MagicMock()
         mock_settings.store_quota_mb = 0

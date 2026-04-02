@@ -99,29 +99,38 @@ def geotiff_to_zarr(
     var_name = variable_name or zarr_group.split("/")[-1]
     da = xr.DataArray(arr, dims=dims, coords=coords, name=var_name)
     da.attrs.update(
+        # CF-1.8 / GeoZarr: link data variable to its grid mapping (CRS) variable
         grid_mapping="crs",
         long_name=zarr_group,
     )
 
     ds = da.to_dataset()
+
+    # GeoZarr CRS variable: scalar holding the coordinate reference system.
+    # Stores WKT2 in 'crs_wkt' (CF-1.8) and 'spatial_ref' (GDAL/PROJ compatibility).
+    # zarr 3 writes this as dimension-less array metadata in zarr.json.
     ds["crs"] = xr.DataArray(
         np.int32(0),
         attrs={
             "grid_mapping_name": "latitude_longitude",
-            "crs_wkt": crs.to_wkt(),
-            "spatial_ref": crs.to_wkt(),
+            "crs_wkt": crs.to_wkt(version="WKT2_2019"),
+            "spatial_ref": crs.to_wkt(version="WKT2_2019"),
         },
     )
+
+    # CF-1.8 Conventions; zarr 3 stores these in zarr.json group attributes,
+    # making the store self-describing for GeoZarr-compatible readers.
     ds.attrs["Conventions"] = "CF-1.8"
     ds.attrs["source"] = str(tif_path.name)
 
-    # Build per-variable chunk encoding — no dask required
+    # Chunk encoding: zarr 3 uses zstd by default (superior to zarr 2's lz4/blosc).
+    # Chunk shape follows the (time, y, x) or (y, x) layout with 512-tile spatial tiles —
+    # a good default for typical earth-observation resolutions (~0.01°).
     cy = chunk_sizes.get("y", 512)
     cx = chunk_sizes.get("x", 512)
     encoding: dict = {
         var_name: {
             "chunks": (1, cy, cx) if time_coord is not None else (cy, cx),
-            "_FillValue": float("nan"),
         },
     }
 
@@ -153,7 +162,6 @@ def geotiff_to_zarr(
                 mode="a",
                 append_dim="time",
                 consolidated=True,
-                zarr_format=2,
             )
         else:
             logger.info("Writing new Zarr dataset '%s'", zarr_group)
@@ -163,7 +171,6 @@ def geotiff_to_zarr(
                 mode="w",
                 encoding=encoding,
                 consolidated=True,
-                zarr_format=2,
             )
 
     logger.info("Done: %s", zarr_group)

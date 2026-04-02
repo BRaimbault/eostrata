@@ -862,7 +862,7 @@ class TestList:
         zarr_root = tmp_path / "zarr"
         # Write a minimal zarr group
         ds = xr.Dataset({"v": (("y", "x"), np.ones((4, 4)))})
-        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w", zarr_format=2)
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
 
         result = runner.invoke(
             app,
@@ -879,15 +879,15 @@ class TestList:
         assert "MB" in result.output
 
     def test_list_shows_last_accessed_when_sentinel_exists(self, tmp_path):
-        from eostrata.cache import _ACCESS_DIR
+        from eostrata.cache import _access_dir
 
         zarr_root = tmp_path / "zarr"
         ds = xr.Dataset({"v": (("y", "x"), np.ones((4, 4)))})
-        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w", zarr_format=2)
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
         # Create a sentinel file so the "last accessed" branch is exercised
-        access_dir = zarr_root / "worldpop" / "nga" / _ACCESS_DIR
-        access_dir.mkdir(parents=True)
-        (access_dir / "2020-01-01T00:00:00").touch()
+        adir = _access_dir(zarr_root, "worldpop/nga")
+        adir.mkdir(parents=True, exist_ok=True)
+        (adir / "2020-01-01T00:00:00").touch()
 
         result = runner.invoke(
             app,
@@ -906,7 +906,7 @@ class TestList:
         """When no quota is configured, list shows size without percentage."""
         zarr_root = tmp_path / "zarr"
         ds = xr.Dataset({"v": (("y", "x"), np.ones((4, 4)))})
-        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w", zarr_format=2)
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
 
         mock_settings = _make_settings_mock(tmp_path)
         mock_settings.zarr_root = zarr_root
@@ -933,7 +933,7 @@ class TestList:
         """When a quota is configured, list shows usage percentage."""
         zarr_root = tmp_path / "zarr"
         ds = xr.Dataset({"v": (("y", "x"), np.ones((4, 4)))})
-        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w", zarr_format=2)
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
 
         mock_settings = _make_settings_mock(tmp_path)
         mock_settings.zarr_root = zarr_root

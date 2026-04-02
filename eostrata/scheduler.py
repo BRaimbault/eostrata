@@ -367,9 +367,7 @@ class Scheduler:
             for job_id, job_def in self._job_defs.items():
                 apjob = self._scheduler.get_job(job_id)
                 next_run = (
-                    apjob.next_run_time.isoformat()
-                    if apjob and apjob.next_run_time
-                    else None
+                    apjob.next_run_time.isoformat() if apjob and apjob.next_run_time else None
                 )
                 last_run = self._job_runs.get(job_id)
                 result.append({**job_def, "next_run_time": next_run, "last_run": last_run})

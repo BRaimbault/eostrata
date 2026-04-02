@@ -39,6 +39,7 @@ def client(tmp_path, monkeypatch, mock_scheduler):
     monkeypatch.setenv("EOSTRATA_ZARR_ROOT", str(tmp_path / "zarr"))
 
     import eostrata.config as cfg_mod
+
     importlib.reload(cfg_mod)
 
     from eostrata.server import app
@@ -53,6 +54,7 @@ def client_no_scheduler(tmp_path, monkeypatch):
     monkeypatch.setenv("EOSTRATA_ZARR_ROOT", str(tmp_path / "zarr"))
 
     import eostrata.config as cfg_mod
+
     importlib.reload(cfg_mod)
 
     from eostrata.server import app

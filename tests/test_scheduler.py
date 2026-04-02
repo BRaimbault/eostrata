@@ -589,8 +589,12 @@ class TestSchedulerTracking:
         from datetime import datetime
 
         scheduler._job_defs["j1"] = {
-            "id": "j1", "source": "chirps", "params": {}, "cron": "0 3 15 * *",
-            "auto_period": True, "enabled": True,
+            "id": "j1",
+            "source": "chirps",
+            "params": {},
+            "cron": "0 3 15 * *",
+            "auto_period": True,
+            "enabled": True,
         }
         mock_apjob = MagicMock()
         mock_apjob.next_run_time = datetime(2026, 4, 15, 3, 0, tzinfo=UTC)
@@ -603,8 +607,12 @@ class TestSchedulerTracking:
 
     def test_get_jobs_next_run_none_when_no_apjob(self, scheduler):
         scheduler._job_defs["j1"] = {
-            "id": "j1", "source": "chirps", "params": {}, "cron": "0 3 15 * *",
-            "auto_period": True, "enabled": False,
+            "id": "j1",
+            "source": "chirps",
+            "params": {},
+            "cron": "0 3 15 * *",
+            "auto_period": True,
+            "enabled": False,
         }
         scheduler._scheduler.get_job.return_value = None
         jobs = scheduler.get_jobs()
@@ -612,8 +620,12 @@ class TestSchedulerTracking:
 
     def test_save_job_adds_to_defs_and_schedules_if_enabled(self, scheduler):
         job_def = {
-            "id": "new_job", "source": "chirps", "params": {},
-            "cron": "0 3 15 * *", "auto_period": True, "enabled": True,
+            "id": "new_job",
+            "source": "chirps",
+            "params": {},
+            "cron": "0 3 15 * *",
+            "auto_period": True,
+            "enabled": True,
         }
         scheduler.save_job(job_def)
 
@@ -622,8 +634,12 @@ class TestSchedulerTracking:
 
     def test_save_job_disabled_does_not_call_add_job(self, scheduler):
         job_def = {
-            "id": "new_job", "source": "chirps", "params": {},
-            "cron": "0 3 15 * *", "auto_period": True, "enabled": False,
+            "id": "new_job",
+            "source": "chirps",
+            "params": {},
+            "cron": "0 3 15 * *",
+            "auto_period": True,
+            "enabled": False,
         }
         scheduler.save_job(job_def)
 
@@ -632,8 +648,12 @@ class TestSchedulerTracking:
 
     def test_save_job_replaces_existing_apscheduler_entry(self, scheduler):
         job_def = {
-            "id": "existing", "source": "chirps", "params": {},
-            "cron": "0 3 15 * *", "auto_period": True, "enabled": True,
+            "id": "existing",
+            "source": "chirps",
+            "params": {},
+            "cron": "0 3 15 * *",
+            "auto_period": True,
+            "enabled": True,
         }
         scheduler._job_defs["existing"] = job_def
         scheduler.save_job({**job_def, "cron": "0 4 15 * *"})
@@ -644,8 +664,12 @@ class TestSchedulerTracking:
 
     def test_remove_job_clears_defs_and_apscheduler(self, scheduler):
         scheduler._job_defs["to_remove"] = {
-            "id": "to_remove", "source": "chirps", "params": {},
-            "cron": "0 3 15 * *", "auto_period": True, "enabled": True,
+            "id": "to_remove",
+            "source": "chirps",
+            "params": {},
+            "cron": "0 3 15 * *",
+            "auto_period": True,
+            "enabled": True,
         }
         scheduler.remove_job("to_remove")
 
@@ -655,8 +679,12 @@ class TestSchedulerTracking:
     def test_remove_job_tolerates_missing_apscheduler_entry(self, scheduler):
         """remove_job on a disabled (unscheduled) job doesn't raise."""
         scheduler._job_defs["disabled"] = {
-            "id": "disabled", "source": "chirps", "params": {},
-            "cron": "0 3 15 * *", "auto_period": False, "enabled": False,
+            "id": "disabled",
+            "source": "chirps",
+            "params": {},
+            "cron": "0 3 15 * *",
+            "auto_period": False,
+            "enabled": False,
         }
         scheduler._scheduler.remove_job.side_effect = Exception("not found")
         scheduler.remove_job("disabled")  # must not raise
@@ -670,8 +698,12 @@ class TestSchedulerTracking:
         from unittest.mock import patch
 
         scheduler._job_defs["j1"] = {
-            "id": "j1", "source": "chirps", "params": {},
-            "cron": "0 3 15 * *", "auto_period": False, "enabled": True,
+            "id": "j1",
+            "source": "chirps",
+            "params": {},
+            "cron": "0 3 15 * *",
+            "auto_period": False,
+            "enabled": True,
         }
         with patch("threading.Thread") as mock_thread_cls:
             mock_t = MagicMock()
@@ -801,13 +833,18 @@ class TestSchedulerWriteSchedules:
             s = Scheduler(schedules_path=f)
             s._scheduler = mock_instance
             s._job_defs["j1"] = {
-                "id": "j1", "source": "chirps", "params": {},
-                "cron": "0 3 15 * *", "auto_period": True, "enabled": True,
+                "id": "j1",
+                "source": "chirps",
+                "params": {},
+                "cron": "0 3 15 * *",
+                "auto_period": True,
+                "enabled": True,
             }
             yield s, f
 
     def test_write_persists_jobs_to_yaml(self, scheduler_with_jobs):
         import yaml
+
         s, f = scheduler_with_jobs
         s._write_schedules()
         data = yaml.safe_load(f.read_text())
@@ -815,6 +852,7 @@ class TestSchedulerWriteSchedules:
 
     def test_write_includes_webhook_if_set(self, scheduler_with_jobs):
         import yaml
+
         s, f = scheduler_with_jobs
         s._global_webhook = "https://example.com/hook"
         s._write_schedules()
@@ -824,6 +862,7 @@ class TestSchedulerWriteSchedules:
     def test_write_schedules_no_yaml_warns_and_returns(self, scheduler_with_jobs):
         import sys
         from unittest.mock import patch
+
         s, _ = scheduler_with_jobs
         with patch.dict(sys.modules, {"yaml": None}):
             s._write_schedules()  # must not raise

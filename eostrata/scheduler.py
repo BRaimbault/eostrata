@@ -31,6 +31,7 @@ Usage in server.py
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 import time
@@ -379,10 +380,8 @@ class Scheduler:
         job_id: str = job_def["id"]
         with self._lock:
             # Remove existing APScheduler entry if present
-            try:
+            with contextlib.suppress(Exception):
                 self._scheduler.remove_job(job_id)
-            except Exception:  # noqa: BLE001
-                pass  # wasn't scheduled (disabled or new)
 
             self._job_defs[job_id] = job_def
 
@@ -396,10 +395,8 @@ class Scheduler:
     def remove_job(self, job_id: str) -> None:
         """Remove a job from memory, APScheduler, and schedules.yml."""
         with self._lock:
-            try:
+            with contextlib.suppress(Exception):
                 self._scheduler.remove_job(job_id)
-            except Exception:  # noqa: BLE001
-                pass  # wasn't in APScheduler (disabled job)
 
             self._job_defs.pop(job_id, None)
             self._write_schedules()

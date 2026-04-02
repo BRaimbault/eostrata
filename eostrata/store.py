@@ -9,20 +9,16 @@ import numpy as np
 import rasterio
 import rasterio.mask
 import xarray as xr
-from filelock import FileLock
 from rasterio.crs import CRS
 from rasterio.transform import array_bounds
 from shapely.geometry import box
 
+# _group_lock is defined in cache.py (single source of truth for the lock path).
+# Imported here so tropomi.py and cds.py can also import it from store.py without
+# creating a circular dependency (cache → store would be circular; store → cache is fine).
+from eostrata.cache import _group_lock  # noqa: F401 — re-exported
+
 logger = logging.getLogger(__name__)
-
-
-def _group_lock(zarr_root: Path, zarr_group: str) -> FileLock:
-    """Return a FileLock for the given zarr group to serialise check-and-append."""
-    lock_dir = zarr_root / ".eostrata_locks"
-    lock_dir.mkdir(parents=True, exist_ok=True)
-    lock_name = zarr_group.replace("/", "__") + ".lock"
-    return FileLock(str(lock_dir / lock_name))
 
 
 def geotiff_to_zarr(

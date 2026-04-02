@@ -28,6 +28,24 @@ Add to your .env file (all sizes in megabytes):
     EOSTRATA_STORE_EVICTION_BUFFER_MB=1000 # keep 1 GB headroom (optional, recommend ~10%)
     EOSTRATA_TRACK_ACCESS=true             # false → last_access = ingestion time only
 
+Concurrency
+-----------
+Two FileLock types protect the store against concurrent access:
+
+Per-group lock  (``.eostrata_locks/<group>__<name>.lock``)
+    Held by *both* ingest writes (``geotiff_to_zarr``, ``_write_daily_grid``,
+    ``_netcdf_to_zarr``) and ``evict_timestamp``.  Ensures that an eviction
+    cannot rename a group directory out from under a concurrent ingest write,
+    and that two concurrent evictions of the same group cannot produce
+    interleaved renames that silently drop timestamps.
+
+Store-wide eviction lock (``.eostrata_locks/__eviction__.lock``)
+    Held for the entire duration of a ``check_and_evict`` pass.  Ensures
+    that when several ingest jobs start simultaneously, only one of them
+    performs the quota check + eviction loop.  Without this lock, all N jobs
+    would independently measure an over-quota store, each building a full
+    eviction list and collectively evicting N times as much data as needed.
+
 Public API
 ----------
     from eostrata.cache import (
@@ -56,6 +74,7 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 import zarr
+from filelock import FileLock
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +83,56 @@ logger = logging.getLogger(__name__)
 
 _ACCESS_DIR = ".eostrata_access"
 _DEBOUNCE_S = 60  # minimum seconds between sentinel touches for the same timestamp
+
+# Lock directory shared with store.py
+_LOCK_DIR_NAME = ".eostrata_locks"
+
+
+def _lock_dir(zarr_root: Path) -> Path:
+    d = Path(zarr_root) / _LOCK_DIR_NAME
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _group_lock(zarr_root: Path, group_path: str) -> FileLock:
+    """Per-group FileLock — shared with store.py to serialise ingest vs eviction."""
+    lock_name = group_path.replace("/", "__") + ".lock"
+    return FileLock(str(_lock_dir(zarr_root) / lock_name))
+
+
+def _store_eviction_lock(zarr_root: Path) -> FileLock:
+    """Store-wide FileLock that serialises concurrent check_and_evict calls.
+
+    Held for the full duration of a quota check + eviction pass so that only
+    one pass runs at a time.  This prevents:
+      - Two jobs both measuring an over-quota store and evicting the same data.
+      - Two jobs evicting more combined data than necessary.
+    """
+    return FileLock(str(_lock_dir(zarr_root) / "__eviction__.lock"))
+
+
+def _consolidate_metadata_with_timeout(zarr_root: Path, timeout_s: int = 30) -> None:
+    """Call zarr.consolidate_metadata with a timeout, logging a warning if it hangs.
+
+    Uses concurrent.futures so the timeout works from any thread (signal.SIGALRM
+    is restricted to the main thread of the main interpreter).
+    The consolidation thread is allowed to finish naturally in the background if
+    it exceeds the timeout — the caller simply stops waiting.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FuturesTimeoutError
+
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="zarr_consolidate") as ex:
+        future = ex.submit(zarr.consolidate_metadata, str(zarr_root))
+        try:
+            future.result(timeout=timeout_s)
+        except FuturesTimeoutError:
+            logger.warning(
+                "zarr.consolidate_metadata timed out after %d s — metadata may be stale",
+                timeout_s,
+            )
+        except OSError as exc:
+            logger.warning("Could not consolidate zarr metadata after eviction: %s", exc)
 
 
 def _eviction_sort_key(ts_iso: str, last_access: float, ingestion_time: float) -> tuple:
@@ -319,84 +388,74 @@ def evict_timestamp(
     Estimated megabytes freed (``total_group_size / n_timestamps``).
     Returns 0.0 if the group or timestamp was not found.
     """
-    try:
-        ds = xr.open_zarr(str(zarr_root), group=group_path, consolidated=False)
-    except Exception:
-        return 0.0
+    zarr_root = Path(zarr_root)
 
-    if "time" not in ds:
-        return 0.0
+    with _group_lock(zarr_root, group_path):
+        # Re-open inside the lock so we see the latest committed state.
+        # Any concurrent ingest that held this lock before us has already
+        # finished its to_zarr() call by the time we get here.
+        try:
+            ds = xr.open_zarr(str(zarr_root), group=group_path, consolidated=False)
+        except Exception:
+            return 0.0
 
-    times = ds["time"].values
-    n_times = len(times)
-    if n_times == 0:
-        return 0.0
+        if "time" not in ds:
+            return 0.0
 
-    # Compare at second precision
-    target_np = np.datetime64(timestamp_iso, "s")
-    times_s = times.astype("datetime64[s]")
-    mask = times_s != target_np
+        times = ds["time"].values
+        n_times = len(times)
+        if n_times == 0:
+            return 0.0
 
-    if mask.all():
-        # Timestamp not found
-        return 0.0
+        # Compare at second precision
+        target_np = np.datetime64(timestamp_iso, "s")
+        times_s = times.astype("datetime64[s]")
+        mask = times_s != target_np
 
-    # Estimate freed size (sentinel files excluded from calculation)
-    group_dir = Path(zarr_root) / group_path
-    total_size_bytes = sum(
-        f.stat().st_size
-        for f in group_dir.rglob("*")
-        if f.is_file() and f.parent.name != _ACCESS_DIR
-    )
-    freed_mb = (total_size_bytes / (1024**2)) / n_times
+        if mask.all():
+            # Timestamp not found (already evicted by a concurrent call)
+            return 0.0
 
-    # Select remaining timestamps by position to avoid issues with duplicate time values
-    remaining = ds.isel(time=np.where(mask)[0])
+        # Estimate freed size (sentinel files excluded from calculation)
+        group_dir = zarr_root / group_path
+        total_size_bytes = sum(
+            f.stat().st_size
+            for f in group_dir.rglob("*")
+            if f.is_file() and f.parent.name != _ACCESS_DIR
+        )
+        freed_mb = (total_size_bytes / (1024**2)) / n_times
 
-    # Write to a temp group path in the same parent dir (same filesystem)
-    tmp_name = f"._tmp_{Path(group_path).name}_{uuid.uuid4().hex[:8]}"
-    tmp_group_path = str(Path(group_path).parent / tmp_name)
-    remaining.to_zarr(str(zarr_root), group=tmp_group_path, mode="w")
+        # Select remaining timestamps by position to avoid issues with duplicate time values
+        remaining = ds.isel(time=np.where(mask)[0])
 
-    target = Path(zarr_root) / group_path
-    tmp_target = Path(zarr_root) / tmp_group_path
+        # Write to a temp group path in the same parent dir (same filesystem)
+        tmp_name = f"._tmp_{Path(group_path).name}_{uuid.uuid4().hex[:8]}"
+        tmp_group_path = str(Path(group_path).parent / tmp_name)
+        remaining.to_zarr(str(zarr_root), group=tmp_group_path, mode="w")
 
-    # Copy access sentinels from original to tmp, then remove the evicted one
-    src_access = target / _ACCESS_DIR
-    dst_access = tmp_target / _ACCESS_DIR
-    if src_access.exists():
-        shutil.copytree(str(src_access), str(dst_access))
-        evicted_sentinel = dst_access / timestamp_iso
-        if evicted_sentinel.exists():
-            evicted_sentinel.unlink()
+        target = zarr_root / group_path
+        tmp_target = zarr_root / tmp_group_path
 
-    # Atomic swap: old → ._old_*, tmp → original
-    old = target.parent / f"._old_{uuid.uuid4().hex[:8]}"
-    target.rename(old)
-    tmp_target.rename(target)
-    shutil.rmtree(old)
+        # Copy access sentinels from original to tmp, then remove the evicted one
+        src_access = target / _ACCESS_DIR
+        dst_access = tmp_target / _ACCESS_DIR
+        if src_access.exists():
+            shutil.copytree(str(src_access), str(dst_access))
+            evicted_sentinel = dst_access / timestamp_iso
+            if evicted_sentinel.exists():
+                evicted_sentinel.unlink()
+
+        # Atomic swap: old → ._old_*, tmp → original
+        old = target.parent / f"._old_{uuid.uuid4().hex[:8]}"
+        target.rename(old)
+        tmp_target.rename(target)
+        shutil.rmtree(old)
 
     # Refresh the root consolidated metadata so tile requests don't read stale
     # time encoding from before the eviction.
-    try:
-        import signal
-
-        def _timeout_handler(signum, frame):
-            raise TimeoutError("zarr.consolidate_metadata timed out")
-
-        old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
-        signal.alarm(30)
-        try:
-            zarr.consolidate_metadata(str(zarr_root))
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old_handler)
-    except TimeoutError:
-        logger.warning(
-            "zarr.consolidate_metadata timed out after 30 s — metadata may be stale"
-        )
-    except OSError as exc:
-        logger.warning("Could not consolidate zarr metadata after eviction: %s", exc)
+    # Uses a thread + Future so the 30-second timeout works from any thread
+    # (signal.SIGALRM is restricted to the main thread).
+    _consolidate_metadata_with_timeout(zarr_root)
 
     logger.info(
         "Evicted timestamp '%s' from group '%s' (freed ~%.1f MB)",
@@ -446,71 +505,86 @@ def check_and_evict(
     if quota_mb <= 0:
         return  # Unlimited — nothing to do
 
-    # Ignore the buffer if it equals or exceeds the quota (misconfiguration guard)
-    effective_required_mb = required_mb if required_mb < quota_mb else 0.0
+    zarr_root = Path(zarr_root)
 
-    current_mb = store_size_mb(zarr_root)
-    target_mb = quota_mb - effective_required_mb
+    # Acquire the store-wide eviction lock before measuring size.
+    # This ensures that only one check_and_evict pass runs at a time, preventing:
+    #   • Two concurrent jobs both measuring an over-quota store and each
+    #     independently evicting a full pass worth of data (double-eviction).
+    #   • Two concurrent passes trying to evict the same timestamp simultaneously
+    #     (which would corrupt the group via conflicting renames).
+    # evict_timestamp also holds the per-group lock, so ingest jobs that happen
+    # to be writing to a group being evicted are safely serialised.
+    with _store_eviction_lock(zarr_root):
+        # Ignore the buffer if it equals or exceeds the quota (misconfiguration guard)
+        effective_required_mb = required_mb if required_mb < quota_mb else 0.0
 
-    if current_mb <= target_mb:
-        logger.debug(
-            "Store size %.1f MB is within quota %.1f MB — no eviction needed.",
-            current_mb,
-            quota_mb,
-        )
-        return
+        current_mb = store_size_mb(zarr_root)
+        target_mb = quota_mb - effective_required_mb
 
-    logger.info(
-        "Store size %.1f MB exceeds target %.1f MB — evicting oldest timestamps.",
-        current_mb,
-        target_mb,
-    )
-
-    # Build flat list of all (group_path, ts_iso, ts_size_mb, last_access, ingestion_time)
-    all_timestamps: list[tuple[str, str, float, float, float]] = []
-    for group_path, _group_size_mb, _last_access in list_groups(zarr_root):
-        for ts_iso, ts_size_mb, ts_last_access, ts_ingestion in list_timestamps(
-            zarr_root, group_path
-        ):
-            all_timestamps.append((group_path, ts_iso, ts_size_mb, ts_last_access, ts_ingestion))
-
-    if not all_timestamps:
-        raise RuntimeError(
-            f"Store exceeds quota ({current_mb:.1f} MB > {quota_mb:.1f} MB) "
-            "but no timestamps found to evict."
-        )
-
-    # Sort oldest-first using same priority as list_timestamps:
-    # unaccessed first, then by last_access ascending, then ts_iso
-    all_timestamps.sort(key=lambda t: _eviction_sort_key(t[1], t[3], t[4]))
-
-    for group_path, ts_iso, ts_size_mb, last_access, ingestion_time in all_timestamps:
-        current_mb = store_size_mb(zarr_root)  # re-measure after each eviction
         if current_mb <= target_mb:
-            break
-        if last_access:
-            age_desc = f"last accessed {(time.time() - last_access) / 3600:.1f} h ago"
-        elif ingestion_time:
-            age_desc = f"ingested {(time.time() - ingestion_time) / 3600:.1f} h ago, never accessed"
-        else:
-            age_desc = "no access or ingestion time recorded"
+            logger.debug(
+                "Store size %.1f MB is within quota %.1f MB — no eviction needed.",
+                current_mb,
+                quota_mb,
+            )
+            return
+
         logger.info(
-            "Evicting timestamp '%s' from '%s' (~%.1f MB, %s)",
-            ts_iso,
-            group_path,
-            ts_size_mb,
-            age_desc,
-        )
-        evict_timestamp(zarr_root, group_path, ts_iso, catalog_path=catalog_path)
-
-    remaining = store_size_mb(zarr_root)
-    if remaining > quota_mb:
-        raise RuntimeError(
-            f"Could not reduce store to quota ({remaining:.1f} MB > {quota_mb:.1f} MB) "
-            "after evicting all available timestamps."
+            "Store size %.1f MB exceeds target %.1f MB — evicting oldest timestamps.",
+            current_mb,
+            target_mb,
         )
 
-    logger.info(
-        "Eviction complete — estimated store size now %.1f MB.",
-        remaining,
-    )
+        # Build flat list of all (group_path, ts_iso, ts_size_mb, last_access, ingestion_time)
+        all_timestamps: list[tuple[str, str, float, float, float]] = []
+        for group_path, _group_size_mb, _last_access in list_groups(zarr_root):
+            for ts_iso, ts_size_mb, ts_last_access, ts_ingestion in list_timestamps(
+                zarr_root, group_path
+            ):
+                all_timestamps.append(
+                    (group_path, ts_iso, ts_size_mb, ts_last_access, ts_ingestion)
+                )
+
+        if not all_timestamps:
+            raise RuntimeError(
+                f"Store exceeds quota ({current_mb:.1f} MB > {quota_mb:.1f} MB) "
+                "but no timestamps found to evict."
+            )
+
+        # Sort oldest-first using same priority as list_timestamps:
+        # unaccessed first, then by last_access ascending, then ts_iso
+        all_timestamps.sort(key=lambda t: _eviction_sort_key(t[1], t[3], t[4]))
+
+        for group_path, ts_iso, ts_size_mb, last_access, ingestion_time in all_timestamps:
+            current_mb = store_size_mb(zarr_root)  # re-measure after each eviction
+            if current_mb <= target_mb:
+                break
+            if last_access:
+                age_desc = f"last accessed {(time.time() - last_access) / 3600:.1f} h ago"
+            elif ingestion_time:
+                age_desc = (
+                    f"ingested {(time.time() - ingestion_time) / 3600:.1f} h ago, never accessed"
+                )
+            else:
+                age_desc = "no access or ingestion time recorded"
+            logger.info(
+                "Evicting timestamp '%s' from '%s' (~%.1f MB, %s)",
+                ts_iso,
+                group_path,
+                ts_size_mb,
+                age_desc,
+            )
+            evict_timestamp(zarr_root, group_path, ts_iso, catalog_path=catalog_path)
+
+        remaining = store_size_mb(zarr_root)
+        if remaining > quota_mb:
+            raise RuntimeError(
+                f"Could not reduce store to quota ({remaining:.1f} MB > {quota_mb:.1f} MB) "
+                "after evicting all available timestamps."
+            )
+
+        logger.info(
+            "Eviction complete — estimated store size now %.1f MB.",
+            remaining,
+        )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -430,3 +431,174 @@ class TestListTimestampsEdgeCases:
         assert len(ts_list) == 2
         # Should still sort by ts_iso when both times are 0
         assert ts_list[0][0] < ts_list[1][0]
+
+
+class TestConcurrentEviction:
+    """Race condition tests — verify locking prevents data corruption under concurrency."""
+
+    def test_concurrent_evict_same_timestamp_no_corruption(self, tmp_path):
+        """Two threads evicting the same timestamp must leave exactly the other timestamps.
+
+        Without the per-group lock, the rename sequence in evict_timestamp can interleave,
+        leaving the group in an undefined state.
+        """
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2019, 2020, 2021])
+        errors: list[Exception] = []
+
+        def _evict():
+            try:
+                evict_timestamp(tmp_path, "worldpop/nga", "2019-01-01T00:00:00")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_evict) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"Thread(s) raised: {errors}"
+        ds = xr.open_zarr(str(tmp_path), group="worldpop/nga", consolidated=False)
+        years = sorted(t.astype("datetime64[Y]").item().year for t in ds["time"].values)
+        assert years == [2020, 2021], f"Expected [2020, 2021], got {years}"
+
+    def test_concurrent_evict_different_timestamps_no_data_loss(self, tmp_path):
+        """Two threads evicting DIFFERENT timestamps must both succeed without losing data.
+
+        Without the per-group lock, the interleaved rename sequence produces:
+          Thread A evicts 2019 → writes {2018, 2020} to tmp_A
+          Thread B evicts 2018 → writes {2019, 2020} to tmp_B
+          A renames: target→old_A, tmp_A→target
+          B renames: target→old_B (= A's result!), tmp_B→target
+          A: rmtree(old_A) — original gone
+          B: rmtree(old_B) — A's {2018, 2020} gone
+          Final: {2019, 2020} — 2019 was NOT evicted, 2018 was lost silently.
+        """
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2018, 2019, 2020])
+        errors: list[Exception] = []
+
+        def _evict_2019():
+            try:
+                evict_timestamp(tmp_path, "worldpop/nga", "2019-01-01T00:00:00")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        def _evict_2018():
+            try:
+                evict_timestamp(tmp_path, "worldpop/nga", "2018-01-01T00:00:00")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        t1 = threading.Thread(target=_evict_2019)
+        t2 = threading.Thread(target=_evict_2018)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert not errors, f"Thread(s) raised: {errors}"
+        ds = xr.open_zarr(str(tmp_path), group="worldpop/nga", consolidated=False)
+        years = sorted(t.astype("datetime64[Y]").item().year for t in ds["time"].values)
+        assert years == [2020], f"Expected only [2020] to remain, got {years}"
+
+    def test_concurrent_check_and_evict_does_not_double_evict(self, tmp_path):
+        """Concurrent check_and_evict calls evict exactly the required amount, not more.
+
+        Without the store-level eviction lock, all N concurrent callers would
+        each independently see an over-quota store and each run a full eviction
+        pass, collectively removing far more data than necessary.
+
+        We set a quota that requires evicting exactly 1 of 2 timestamps.
+        Four threads race to call check_and_evict; with the store lock, only 1
+        thread performs the eviction — the other 3 acquire the lock after the
+        first finishes and immediately see the store is within quota.
+        """
+        # Large data so per-timestamp size dominates zarr metadata overhead.
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2019, 2020], size_kb=500)
+        total_mb = sum(
+            f.stat().st_size for f in tmp_path.rglob("*") if f.is_file()
+        ) / (1024**2)
+        # With 2 equal timestamps: after evicting 1, size drops to ~50% of original.
+        # Set quota between 50% and 100% so exactly 1 eviction is needed.
+        quota_mb = total_mb * 0.70
+        errors: list[Exception] = []
+
+        def _check():
+            try:
+                check_and_evict(tmp_path, quota_mb=quota_mb)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_check) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"Thread(s) raised: {errors}"
+        ds = xr.open_zarr(str(tmp_path), group="worldpop/nga", consolidated=False)
+        remaining = len(ds["time"].values)
+        # Exactly 1 timestamp should remain — if both were evicted it means the
+        # store-level lock failed to prevent a second thread from re-measuring
+        # an over-quota store and running a second pass.
+        assert remaining == 1, (
+            f"Expected exactly 1 timestamp after 1 eviction pass, got {remaining}. "
+            "Store-level lock may not be preventing double-eviction."
+        )
+
+    def test_concurrent_ingest_and_evict_same_group(self, tmp_path):
+        """An eviction must not corrupt a group that an ingest is actively writing to.
+
+        Without the per-group lock held by both sides, evict_timestamp could
+        rename the group directory out from under geotiff_to_zarr's to_zarr() call.
+        """
+        import rasterio
+        from rasterio.transform import from_bounds
+
+        from eostrata.store import geotiff_to_zarr
+
+        # Prepare a real GeoTIFF for geotiff_to_zarr
+        tif = tmp_path / "test.tif"
+        bbox = (0.0, 0.0, 5.0, 5.0)
+        transform = from_bounds(*bbox, width=8, height=8)
+        data = np.ones((8, 8), dtype="float32")
+        with rasterio.open(
+            tif, "w", driver="GTiff", height=8, width=8, count=1,
+            dtype="float32", crs="EPSG:4326", transform=transform,
+        ) as dst:
+            dst.write(data, 1)
+
+        # Seed the group using geotiff_to_zarr so the schema is consistent
+        for year in [2018, 2019]:
+            tc = np.datetime64(f"{year}-01-01", "ns")
+            geotiff_to_zarr(tif, tmp_path, "col/d", variable_name="v", time_coord=tc)
+
+        errors: list[Exception] = []
+
+        def _ingest():
+            for year in [2020, 2021, 2022]:
+                tc = np.datetime64(f"{year}-01-01", "ns")
+                try:
+                    geotiff_to_zarr(tif, tmp_path, "col/d", variable_name="v", time_coord=tc)
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(exc)
+
+        def _evict():
+            for ts in ["2018-01-01T00:00:00", "2019-01-01T00:00:00"]:
+                try:
+                    evict_timestamp(tmp_path, "col/d", ts)
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(exc)
+
+        t_ingest = threading.Thread(target=_ingest)
+        t_evict = threading.Thread(target=_evict)
+        t_ingest.start()
+        t_evict.start()
+        t_ingest.join()
+        t_evict.join()
+
+        assert not errors, f"Thread(s) raised: {errors}"
+        # The group must still be a valid zarr store after concurrent access
+        ds = xr.open_zarr(str(tmp_path), group="col/d", consolidated=False)
+        assert "time" in ds
+        assert len(ds["time"]) > 0

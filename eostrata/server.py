@@ -37,7 +37,6 @@ from stac_fastapi.api.app import StacApi
 from stac_fastapi.types.config import ApiSettings
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from titiler.core.errors import DEFAULT_STATUS_CODES, add_exception_handlers
-from titiler.xarray.extensions import VariablesExtension
 from titiler.xarray.factory import TilerFactory
 
 from eostrata.aggregate import AggregatingReader
@@ -46,6 +45,7 @@ from eostrata.config import settings
 from eostrata.ogc.ingest import router as ingest_router
 from eostrata.ogc.processes import router as processes_router
 from eostrata.ogc.scheduler_router import router as scheduler_router
+from eostrata.ogc.tiles import _VariablesExtension
 from eostrata.ogc.tiles import router as collection_tiles_router
 
 logger = logging.getLogger(__name__)
@@ -237,7 +237,7 @@ app.include_router(collection_tiles_router)
 _raw_tiler = TilerFactory(
     reader=AggregatingReader,
     router_prefix="/tiles",
-    extensions=[VariablesExtension()],
+    extensions=[_VariablesExtension()],
 )
 app.include_router(
     _raw_tiler.router, prefix="/tiles", tags=["Tiles (direct)"], include_in_schema=False

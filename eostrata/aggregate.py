@@ -106,10 +106,21 @@ def apply_temporal_aggregation(
     # non-monotonic DatetimeIndex, causing pandas to reject label-based slices.
     if not da.indexes["time"].is_monotonic_increasing:
         da = da.sortby("time")
+        if not da.indexes["time"].is_monotonic_increasing:
+            raise ValueError(
+                "Time axis is not monotonic increasing even after sort — "
+                "the dataset may be corrupt."
+            )
 
     # Deduplicate the time axis — re-ingesting the same year produces duplicate
     # timestamps that cause .sel(method="nearest") to raise InvalidIndexError.
     if not da.indexes["time"].is_unique:
+        n_dups = len(da.indexes["time"]) - da.indexes["time"].nunique()
+        logger.warning(
+            "Found %d duplicate timestamp(s) in time axis — keeping first occurrence. "
+            "Re-ingest may have produced duplicates; consider rebuilding the catalogue.",
+            n_dups,
+        )
         _, first_occurrence = np.unique(da.indexes["time"], return_index=True)
         da = da.isel(time=first_occurrence)
 

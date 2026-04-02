@@ -43,7 +43,7 @@ import httpx
 import numpy as np
 
 from eostrata.sources.base import BaseSource, register_source
-from eostrata.store import geotiff_to_zarr  # noqa: F401 — imported for type hints only
+from eostrata.store import _group_lock, geotiff_to_zarr  # noqa: F401 — imported for type hints only
 
 logger = logging.getLogger(__name__)
 
@@ -269,8 +269,9 @@ def _grid_swath_data(
     if ny == 0 or nx == 0:
         return np.full((1, 1), np.nan, dtype="float32"), lats, lons
 
-    # Filter pixels to bbox
-    in_bbox = (lat >= south) & (lat < north) & (lon >= west) & (lon < east)
+    # Filter pixels to bbox — inclusive on all sides so edge pixels are not lost.
+    # np.clip below ensures computed grid indices stay in [0, n-1].
+    in_bbox = (lat >= south) & (lat <= north) & (lon >= west) & (lon <= east)
     lat_b, lon_b, val_b = lat[in_bbox], lon[in_bbox], values[in_bbox]
 
     if lat_b.size == 0:
@@ -336,7 +337,6 @@ def _write_daily_grid(
     zarr_root = Path(zarr_root)
     zarr_root.mkdir(parents=True, exist_ok=True)
     store_path = str(zarr_root)
-    group_exists = (zarr_root / zarr_group).exists()
 
     encoding = {
         variable_name: {
@@ -345,21 +345,26 @@ def _write_daily_grid(
         },
     }
 
-    if group_exists:
-        try:
-            existing = xr.open_zarr(store_path, group=zarr_group, consolidated=False)
-            if "time" in existing and time_coord in existing["time"].values:
-                logger.info(
-                    "Timestamp %s already exists in '%s' — skipping", time_coord, zarr_group
+    with _group_lock(zarr_root, zarr_group):
+        group_exists = (zarr_root / zarr_group).exists()
+
+        if group_exists:
+            try:
+                existing = xr.open_zarr(store_path, group=zarr_group, consolidated=False)
+                if "time" in existing and time_coord in existing["time"].values:
+                    logger.info(
+                        "Timestamp %s already exists in '%s' — skipping", time_coord, zarr_group
+                    )
+                    return ds
+            except (OSError, KeyError, ValueError):
+                logger.debug(
+                    "Could not read existing Zarr group '%s', proceeding with append", zarr_group
                 )
-                return ds
-        except Exception:
-            pass
-        logger.info("Appending TROPOMI '%s' daily grid", zarr_group)
-        ds.to_zarr(store_path, group=zarr_group, mode="a", append_dim="time", consolidated=True)
-    else:
-        logger.info("Writing new TROPOMI Zarr group '%s'", zarr_group)
-        ds.to_zarr(store_path, group=zarr_group, mode="w", encoding=encoding, consolidated=True)
+            logger.info("Appending TROPOMI '%s' daily grid", zarr_group)
+            ds.to_zarr(store_path, group=zarr_group, mode="a", append_dim="time", consolidated=True)
+        else:
+            logger.info("Writing new TROPOMI Zarr group '%s'", zarr_group)
+            ds.to_zarr(store_path, group=zarr_group, mode="w", encoding=encoding, consolidated=True)
 
     return ds
 

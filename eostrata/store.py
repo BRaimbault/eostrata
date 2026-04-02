@@ -9,11 +9,20 @@ import numpy as np
 import rasterio
 import rasterio.mask
 import xarray as xr
+from filelock import FileLock
 from rasterio.crs import CRS
 from rasterio.transform import array_bounds
 from shapely.geometry import box
 
 logger = logging.getLogger(__name__)
+
+
+def _group_lock(zarr_root: Path, zarr_group: str) -> FileLock:
+    """Return a FileLock for the given zarr group to serialise check-and-append."""
+    lock_dir = zarr_root / ".eostrata_locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_name = zarr_group.replace("/", "__") + ".lock"
+    return FileLock(str(lock_dir / lock_name))
 
 
 def geotiff_to_zarr(
@@ -121,29 +130,31 @@ def geotiff_to_zarr(
     }
 
     store_path = str(zarr_root)
-    group_exists = (zarr_root / zarr_group).exists()
 
-    if group_exists and time_coord is not None:
-        # Check whether this timestamp is already in the store — skip if so
-        try:
-            existing = xr.open_zarr(store_path, group=zarr_group, consolidated=False)
-            if "time" in existing and time_coord in existing["time"].values:
-                logger.info(
-                    "Timestamp %s already exists in '%s' — skipping duplicate write",
-                    time_coord,
-                    zarr_group,
+    with _group_lock(zarr_root, zarr_group):
+        group_exists = (zarr_root / zarr_group).exists()
+
+        if group_exists and time_coord is not None:
+            # Check whether this timestamp is already in the store — skip if so
+            try:
+                existing = xr.open_zarr(store_path, group=zarr_group, consolidated=False)
+                if "time" in existing and time_coord in existing["time"].values:
+                    logger.info(
+                        "Timestamp %s already exists in '%s' — skipping duplicate write",
+                        time_coord,
+                        zarr_group,
+                    )
+                    return ds
+            except (OSError, KeyError, ValueError):
+                logger.debug(
+                    "Could not read existing Zarr group '%s', proceeding with append", zarr_group
                 )
-                return ds
-        except Exception:
-            logger.debug(
-                "Could not read existing Zarr group '%s', proceeding with append", zarr_group
-            )
-        # Append new timestep along the time dimension
-        logger.info("Appending to existing Zarr dataset '%s'", zarr_group)
-        ds.to_zarr(store_path, group=zarr_group, mode="a", append_dim="time", consolidated=True)
-    else:
-        logger.info("Writing new Zarr dataset '%s'", zarr_group)
-        ds.to_zarr(store_path, group=zarr_group, mode="w", encoding=encoding, consolidated=True)
+            # Append new timestep along the time dimension
+            logger.info("Appending to existing Zarr dataset '%s'", zarr_group)
+            ds.to_zarr(store_path, group=zarr_group, mode="a", append_dim="time", consolidated=True)
+        else:
+            logger.info("Writing new Zarr dataset '%s'", zarr_group)
+            ds.to_zarr(store_path, group=zarr_group, mode="w", encoding=encoding, consolidated=True)
 
     logger.info("Done: %s", zarr_group)
     return ds

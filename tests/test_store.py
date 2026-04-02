@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 import rasterio
 import xarray as xr
@@ -173,7 +175,66 @@ class TestGeotiffToZarr:
         t1 = np.datetime64("2020-01-01", "ns")
         geotiff_to_zarr(tif, zarr_root, "col/d", variable_name="v", time_coord=t1)
         t2 = np.datetime64("2021-01-01", "ns")
-        with patch("eostrata.store.xr.open_zarr", side_effect=Exception("corrupted")):
+        with patch("eostrata.store.xr.open_zarr", side_effect=OSError("corrupted")):
             geotiff_to_zarr(tif, zarr_root, "col/d", variable_name="v", time_coord=t2)
         ds = xr.open_zarr(str(zarr_root), group="col/d", consolidated=False)
         assert len(ds["time"]) >= 1
+
+    def test_concurrent_writes_no_duplicate_timestamps(self, tmp_path):
+        """Concurrent writes of the same timestamp must not produce duplicates.
+
+        Launches N threads that all try to write the same time_coord simultaneously.
+        The file-based lock in geotiff_to_zarr ensures only one write succeeds and
+        subsequent calls detect the existing timestamp and skip.
+        """
+        tif = tmp_path / "test.tif"
+        _write_tif(tif, (0.0, 0.0, 5.0, 5.0))
+        zarr_root = tmp_path / "zarr"
+        t = np.datetime64("2020-06-01", "ns")
+        n_threads = 5
+        errors: list[Exception] = []
+
+        def _write():
+            try:
+                geotiff_to_zarr(tif, zarr_root, "col/d", variable_name="v", time_coord=t)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_write) for _ in range(n_threads)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
+
+        assert not errors, f"Thread(s) raised errors: {errors}"
+        ds = xr.open_zarr(str(zarr_root), group="col/d", consolidated=False)
+        assert len(ds["time"]) == 1, (
+            f"Expected exactly 1 timestamp, got {len(ds['time'])}. "
+            "Concurrent writes produced duplicates."
+        )
+
+    def test_concurrent_writes_different_timestamps(self, tmp_path):
+        """Concurrent writes of N different timestamps must all be appended exactly once."""
+        tif = tmp_path / "test.tif"
+        _write_tif(tif, (0.0, 0.0, 5.0, 5.0))
+        zarr_root = tmp_path / "zarr"
+        timestamps = [np.datetime64(f"202{i}-01-01", "ns") for i in range(5)]
+        errors: list[Exception] = []
+
+        def _write(tc):
+            try:
+                geotiff_to_zarr(tif, zarr_root, "col/d", variable_name="v", time_coord=tc)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_write, args=(tc,)) for tc in timestamps]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
+
+        assert not errors, f"Thread(s) raised errors: {errors}"
+        ds = xr.open_zarr(str(zarr_root), group="col/d", consolidated=False)
+        assert len(ds["time"]) == len(timestamps), (
+            f"Expected {len(timestamps)} timestamps, got {len(ds['time'])}."
+        )

@@ -25,7 +25,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/processes", tags=["Data Ingestion"])
 
-_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ingest")
+_executor = ThreadPoolExecutor(
+    max_workers=settings.ingest_max_workers, thread_name_prefix="ingest"
+)
 
 # ── Process IDs (imported by processes.py for the unified list) ───────────────
 
@@ -310,6 +312,19 @@ def execute_ingest(body: IngestExecutionRequest, response: Response) -> dict:
 
     Returns a ``job_id`` immediately. Poll ``GET /processes/jobs/{job_id}`` for status.
     """
+    pending_count = sum(
+        1 for j in jobs.list_jobs() if j.status in ("accepted", "running")
+    )
+    if pending_count >= settings.ingest_max_queued:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Too many ingestion jobs queued ({pending_count}). "
+                f"Maximum is {settings.ingest_max_queued}. "
+                "Poll /processes/jobs and retry when existing jobs have completed."
+            ),
+        )
+
     inp = body.inputs
     logger.info("API POST /processes/ingest/execution %s", inp.model_dump(exclude_none=True))
 

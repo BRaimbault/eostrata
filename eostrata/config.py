@@ -30,6 +30,14 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_bbox(self) -> Settings:
+        if not (-180.0 <= self.bbox_west <= 180.0):
+            raise ValueError("bbox_west must be in [-180, 180]")
+        if not (-180.0 <= self.bbox_east <= 180.0):
+            raise ValueError("bbox_east must be in [-180, 180]")
+        if not (-90.0 <= self.bbox_south <= 90.0):
+            raise ValueError("bbox_south must be in [-90, 90]")
+        if not (-90.0 <= self.bbox_north <= 90.0):
+            raise ValueError("bbox_north must be in [-90, 90]")
         if self.bbox_west >= self.bbox_east:
             raise ValueError("bbox_west must be less than bbox_east")
         if self.bbox_south >= self.bbox_north:
@@ -53,6 +61,21 @@ class Settings(BaseSettings):
     # Whether to update per-timestamp access sentinels on tile/zonal-stats requests.
     # When False, last_access reflects the ingestion time only.
     track_access: bool = True
+
+    # ── Ingestion ─────────────────────────────────────────────────────────────
+    # Maximum number of concurrent ingestion jobs.  Increase for deployments
+    # that serve many users submitting ingest requests simultaneously.
+    ingest_max_workers: int = 3
+
+    # Maximum number of queued + running ingestion jobs.  Requests submitted
+    # when this limit is reached receive a 429 Too Many Requests response.
+    ingest_max_queued: int = 20
+
+    # ── CORS ──────────────────────────────────────────────────────────────────
+    # Allowed origins for CORS.  Use ["*"] for public servers.  Restrict to
+    # specific origins (e.g. ["https://app.example.com"]) for internal
+    # deployments to prevent cross-site requests from untrusted origins.
+    cors_origins: list[str] = ["*"]
 
     # ── Logging ───────────────────────────────────────────────────────────────
     # Log file path. Rotates daily; 30 days of history kept automatically.

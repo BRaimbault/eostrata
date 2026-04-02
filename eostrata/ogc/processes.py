@@ -88,7 +88,7 @@ _PROCESS_DESCRIPTION = {
 
 
 class ZonalStatsInputs(BaseModel):
-    url: str = Field(
+    url: str | None = Field(
         default=None, description="Zarr store root path (leave blank to use the server default)"
     )
     variable: str = Field(

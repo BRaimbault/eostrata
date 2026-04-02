@@ -379,9 +379,24 @@ def evict_timestamp(
     # Refresh the root consolidated metadata so tile requests don't read stale
     # time encoding from before the eviction.
     try:
-        zarr.consolidate_metadata(str(zarr_root))
-    except Exception as exc:
-        logger.debug("Could not consolidate zarr metadata after eviction: %s", exc)
+        import signal
+
+        def _timeout_handler(signum, frame):
+            raise TimeoutError("zarr.consolidate_metadata timed out")
+
+        old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(30)
+        try:
+            zarr.consolidate_metadata(str(zarr_root))
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+    except TimeoutError:
+        logger.warning(
+            "zarr.consolidate_metadata timed out after 30 s — metadata may be stale"
+        )
+    except OSError as exc:
+        logger.warning("Could not consolidate zarr metadata after eviction: %s", exc)
 
     logger.info(
         "Evicted timestamp '%s' from group '%s' (freed ~%.1f MB)",

@@ -247,7 +247,7 @@ class TestEvictTimestamp:
             # cache.py calls consolidate_metadata(str(zarr_root)) — string path
             # xarray calls it with a Store object during to_zarr; let those through
             if isinstance(path, str):
-                raise Exception("no meta")
+                raise OSError("no meta")
             return _original(path, **kwargs)
 
         with patch("eostrata.cache.zarr.consolidate_metadata", side_effect=_raise_for_our_call):

@@ -59,6 +59,29 @@ async def lifespan(app: FastAPI):
 
     setup_logging(rich_console=False)  # file-only; uvicorn owns the console
 
+    # Validate that required storage directories exist and are writable.
+    # The isinstance guard lets test suites substitute mock settings without
+    # tripping over this check.
+    import os
+
+    for label, path in [
+        ("zarr_root", settings.zarr_root),
+        ("raw_dir", settings.raw_dir),
+    ]:
+        if not isinstance(path, Path):
+            continue
+        path.mkdir(parents=True, exist_ok=True)
+        if not os.access(path, os.W_OK):
+            raise RuntimeError(
+                f"Storage directory '{label}' is not writable: {path}. "
+                "Check permissions before starting the server."
+            )
+    logger.info(
+        "Storage directories OK — zarr_root=%s raw_dir=%s",
+        settings.zarr_root,
+        settings.raw_dir,
+    )
+
     scheduler = None
     try:
         from eostrata.scheduler import Scheduler, set_scheduler
@@ -170,7 +193,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )

@@ -28,6 +28,7 @@ dependencies = [
     "attrs>=26.1.0",
     "h5py>=3.16.0",
     "cdsapi>=0.7.7",
+    "filelock>=3.12",
 ]
 
 [project.optional-dependencies]
@@ -35,7 +36,7 @@ scheduler = [
     "apscheduler>=3.10",
     "pyyaml>=6.0",
 ]
-cds = ["cdsapi>=0.7"]
+cds = ["cdsapi>=0.7.7"]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",

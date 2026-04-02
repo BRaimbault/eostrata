@@ -51,7 +51,7 @@ def run_ingest(
             paths = source.download(raw_dir, bbox, **period_kwargs)
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404 and source_cls.skip_404:
-                logger.warning("%s: %s not available (404), skipping", source_id, label)
+                logger.debug("%s: %s not available (404) — skipping as expected", source_id, label)
                 continue
             logger.error("%s: HTTP error for %s: %s", source_id, label, exc)
             failed.append(label)

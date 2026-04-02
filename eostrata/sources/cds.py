@@ -32,6 +32,7 @@ import numpy as np
 import xarray as xr
 
 from eostrata.sources.base import BaseSource, register_source
+from eostrata.store import _group_lock
 
 logger = logging.getLogger(__name__)
 
@@ -169,36 +170,43 @@ def _netcdf_to_zarr(
     }
 
     try:
-        if group_exists:
-            # Filter out timestamps already present to avoid duplicate time values
-            try:
-                existing = xr.open_zarr(store_path, group=zarr_group, consolidated=False)
-                existing_times = set(existing["time"].values.astype("datetime64[s]").tolist())
-                existing.close()
-                new_times_s = ds["time"].values.astype("datetime64[s]")
-                new_mask = np.array([t not in existing_times for t in new_times_s])
-                if not new_mask.any():
-                    logger.info(
-                        "All timestamps already present in '%s' — skipping append", zarr_group
+        with _group_lock(zarr_root_path, zarr_group):
+            if group_exists:
+                # Filter out timestamps already present to avoid duplicate time values
+                try:
+                    existing = xr.open_zarr(store_path, group=zarr_group, consolidated=False)
+                    existing_times = set(existing["time"].values.astype("datetime64[s]").tolist())
+                    existing.close()
+                    new_times_s = ds["time"].values.astype("datetime64[s]")
+                    new_mask = np.array([t not in existing_times for t in new_times_s])
+                    if not new_mask.any():
+                        logger.info(
+                            "All timestamps already present in '%s' — skipping append", zarr_group
+                        )
+                        return ds
+                    if not new_mask.all():
+                        skipped = (~new_mask).sum()
+                        logger.info(
+                            "Skipping %d already-present timestamp(s) for '%s'",
+                            skipped,
+                            zarr_group,
+                        )
+                        ds = ds.isel(time=np.where(new_mask)[0])
+                except (OSError, KeyError, ValueError) as exc:
+                    logger.debug(
+                        "Could not check existing timestamps in '%s', appending anyway: %s",
+                        zarr_group,
+                        exc,
                     )
-                    return ds
-                if not new_mask.all():
-                    skipped = (~new_mask).sum()
-                    logger.info(
-                        "Skipping %d already-present timestamp(s) for '%s'", skipped, zarr_group
-                    )
-                    ds = ds.isel(time=np.where(new_mask)[0])
-            except Exception as exc:
-                logger.debug(
-                    "Could not check existing timestamps in '%s', appending anyway: %s",
-                    zarr_group,
-                    exc,
+                logger.info("Appending ERA5 '%s' to existing Zarr group", zarr_group)
+                ds.to_zarr(
+                    store_path, group=zarr_group, mode="a", append_dim="time", consolidated=True
                 )
-            logger.info("Appending ERA5 '%s' to existing Zarr group", zarr_group)
-            ds.to_zarr(store_path, group=zarr_group, mode="a", append_dim="time", consolidated=True)
-        else:
-            logger.info("Writing new ERA5 Zarr group '%s'", zarr_group)
-            ds.to_zarr(store_path, group=zarr_group, mode="w", encoding=encoding, consolidated=True)
+            else:
+                logger.info("Writing new ERA5 Zarr group '%s'", zarr_group)
+                ds.to_zarr(
+                    store_path, group=zarr_group, mode="w", encoding=encoding, consolidated=True
+                )
     finally:
         ds.close()
 

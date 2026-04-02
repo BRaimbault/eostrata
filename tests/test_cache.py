@@ -515,9 +515,7 @@ class TestConcurrentEviction:
         """
         # Large data so per-timestamp size dominates zarr metadata overhead.
         _write_fake_group_with_times(tmp_path, "worldpop/nga", [2019, 2020], size_kb=500)
-        total_mb = sum(
-            f.stat().st_size for f in tmp_path.rglob("*") if f.is_file()
-        ) / (1024**2)
+        total_mb = sum(f.stat().st_size for f in tmp_path.rglob("*") if f.is_file()) / (1024**2)
         # With 2 equal timestamps: after evicting 1, size drops to ~50% of original.
         # Set quota between 50% and 100% so exactly 1 eviction is needed.
         quota_mb = total_mb * 0.70
@@ -563,8 +561,15 @@ class TestConcurrentEviction:
         transform = from_bounds(*bbox, width=8, height=8)
         data = np.ones((8, 8), dtype="float32")
         with rasterio.open(
-            tif, "w", driver="GTiff", height=8, width=8, count=1,
-            dtype="float32", crs="EPSG:4326", transform=transform,
+            tif,
+            "w",
+            driver="GTiff",
+            height=8,
+            width=8,
+            count=1,
+            dtype="float32",
+            crs="EPSG:4326",
+            transform=transform,
         ) as dst:
             dst.write(data, 1)
 

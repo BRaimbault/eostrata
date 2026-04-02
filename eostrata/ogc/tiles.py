@@ -51,6 +51,7 @@ class _VariablesExtension(FactoryExtension):
             with open_zarr(src_path, **io_params.as_dict()) as ds:
                 return list(ds.data_vars)
 
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Tiles"])

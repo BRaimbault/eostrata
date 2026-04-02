@@ -361,10 +361,24 @@ def _write_daily_grid(
                     "Could not read existing Zarr group '%s', proceeding with append", zarr_group
                 )
             logger.info("Appending TROPOMI '%s' daily grid", zarr_group)
-            ds.to_zarr(store_path, group=zarr_group, mode="a", append_dim="time", consolidated=True)
+            ds.to_zarr(
+                store_path,
+                group=zarr_group,
+                mode="a",
+                append_dim="time",
+                consolidated=True,
+                zarr_format=2,
+            )
         else:
             logger.info("Writing new TROPOMI Zarr group '%s'", zarr_group)
-            ds.to_zarr(store_path, group=zarr_group, mode="w", encoding=encoding, consolidated=True)
+            ds.to_zarr(
+                store_path,
+                group=zarr_group,
+                mode="w",
+                encoding=encoding,
+                consolidated=True,
+                zarr_format=2,
+            )
 
     return ds
 

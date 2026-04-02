@@ -862,7 +862,7 @@ class TestList:
         zarr_root = tmp_path / "zarr"
         # Write a minimal zarr group
         ds = xr.Dataset({"v": (("y", "x"), np.ones((4, 4)))})
-        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w", zarr_format=2)
 
         result = runner.invoke(
             app,
@@ -883,7 +883,7 @@ class TestList:
 
         zarr_root = tmp_path / "zarr"
         ds = xr.Dataset({"v": (("y", "x"), np.ones((4, 4)))})
-        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w", zarr_format=2)
         # Create a sentinel file so the "last accessed" branch is exercised
         access_dir = zarr_root / "worldpop" / "nga" / _ACCESS_DIR
         access_dir.mkdir(parents=True)
@@ -906,7 +906,7 @@ class TestList:
         """When no quota is configured, list shows size without percentage."""
         zarr_root = tmp_path / "zarr"
         ds = xr.Dataset({"v": (("y", "x"), np.ones((4, 4)))})
-        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w", zarr_format=2)
 
         mock_settings = _make_settings_mock(tmp_path)
         mock_settings.zarr_root = zarr_root
@@ -933,7 +933,7 @@ class TestList:
         """When a quota is configured, list shows usage percentage."""
         zarr_root = tmp_path / "zarr"
         ds = xr.Dataset({"v": (("y", "x"), np.ones((4, 4)))})
-        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w", zarr_format=2)
 
         mock_settings = _make_settings_mock(tmp_path)
         mock_settings.zarr_root = zarr_root

@@ -200,12 +200,22 @@ def _netcdf_to_zarr(
                     )
                 logger.info("Appending ERA5 '%s' to existing Zarr group", zarr_group)
                 ds.to_zarr(
-                    store_path, group=zarr_group, mode="a", append_dim="time", consolidated=True
+                    store_path,
+                    group=zarr_group,
+                    mode="a",
+                    append_dim="time",
+                    consolidated=True,
+                    zarr_format=2,
                 )
             else:
                 logger.info("Writing new ERA5 Zarr group '%s'", zarr_group)
                 ds.to_zarr(
-                    store_path, group=zarr_group, mode="w", encoding=encoding, consolidated=True
+                    store_path,
+                    group=zarr_group,
+                    mode="w",
+                    encoding=encoding,
+                    consolidated=True,
+                    zarr_format=2,
                 )
     finally:
         ds.close()

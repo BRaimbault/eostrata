@@ -39,7 +39,7 @@ def _write_zarr(zarr_root: Path) -> None:
         {"population": (("time", "y", "x"), data)},
         coords={"time": times, "y": y, "x": x},
     )
-    ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w", consolidated=True)
+    ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w", consolidated=True, zarr_format=2)
 
 
 @pytest.fixture()

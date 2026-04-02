@@ -28,7 +28,7 @@ def _write_fake_group(zarr_root: Path, group: str, size_kb: int = 10) -> None:
     """Write a dummy Zarr group with no time dimension."""
     data = np.random.rand(size_kb, 8).astype("float32")
     ds = xr.Dataset({"data": (("y", "x"), data)})
-    ds.to_zarr(str(zarr_root), group=group, mode="w")
+    ds.to_zarr(str(zarr_root), group=group, mode="w", zarr_format=2)
 
 
 def _write_fake_group_with_times(
@@ -42,7 +42,7 @@ def _write_fake_group_with_times(
         {"data": (("time", "y", "x"), data)},
         coords={"time": times},
     )
-    ds.to_zarr(str(zarr_root), group=group, mode="w")
+    ds.to_zarr(str(zarr_root), group=group, mode="w", zarr_format=2)
 
 
 class TestRecordAccess:
@@ -221,7 +221,7 @@ class TestEvictTimestamp:
             {"v": (("time", "y", "x"), np.zeros((0, 4, 4)))},
             coords={"time": np.array([], dtype="datetime64[ns]")},
         )
-        ds.to_zarr(str(tmp_path), group="worldpop/nga", mode="w")
+        ds.to_zarr(str(tmp_path), group="worldpop/nga", mode="w", zarr_format=2)
         assert evict_timestamp(tmp_path, "worldpop/nga", "2020-01-01T00:00:00") == 0.0
 
     def test_evicts_sentinel_for_removed_timestamp(self, tmp_path):
@@ -414,7 +414,7 @@ class TestListTimestampsEdgeCases:
             {"v": (("time", "y", "x"), np.zeros((0, 4, 4)))},
             coords={"time": np.array([], dtype="datetime64[ns]")},
         )
-        ds.to_zarr(str(tmp_path), group="worldpop/nga", mode="w")
+        ds.to_zarr(str(tmp_path), group="worldpop/nga", mode="w", zarr_format=2)
         assert list_timestamps(tmp_path, "worldpop/nga") == []
 
     def test_sort_key_zero_access_and_ingestion(self, tmp_path):

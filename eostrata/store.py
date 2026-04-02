@@ -147,10 +147,24 @@ def geotiff_to_zarr(
                 )
             # Append new timestep along the time dimension
             logger.info("Appending to existing Zarr dataset '%s'", zarr_group)
-            ds.to_zarr(store_path, group=zarr_group, mode="a", append_dim="time", consolidated=True)
+            ds.to_zarr(
+                store_path,
+                group=zarr_group,
+                mode="a",
+                append_dim="time",
+                consolidated=True,
+                zarr_format=2,
+            )
         else:
             logger.info("Writing new Zarr dataset '%s'", zarr_group)
-            ds.to_zarr(store_path, group=zarr_group, mode="w", encoding=encoding, consolidated=True)
+            ds.to_zarr(
+                store_path,
+                group=zarr_group,
+                mode="w",
+                encoding=encoding,
+                consolidated=True,
+                zarr_format=2,
+            )
 
     logger.info("Done: %s", zarr_group)
     return ds

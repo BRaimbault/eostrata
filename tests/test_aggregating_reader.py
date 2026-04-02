@@ -31,7 +31,7 @@ def _make_zarr_with_time(tmp_path: Path) -> Path:
             "x": np.linspace(2.0, 15.0, 8),
         },
     )
-    ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w", consolidated=True)
+    ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w", consolidated=True, zarr_format=2)
     return zarr_root
 
 
@@ -136,7 +136,7 @@ class TestAggregatingReader:
                 "x": np.linspace(2.0, 15.0, 8),
             },
         )
-        ds.to_zarr(str(zarr_root), group="era5/t2m", mode="w", consolidated=True)
+        ds.to_zarr(str(zarr_root), group="era5/t2m", mode="w", consolidated=True, zarr_format=2)
 
         reader = AggregatingReader(str(zarr_root), variable="t2m", group="era5/t2m")
         # After renaming valid_time → time and aggregating to last timestep,
@@ -150,7 +150,7 @@ class TestAggregatingReader:
             {"v": (("y", "x"), np.ones((4, 4), dtype="float32"))},
             coords={"y": np.arange(4.0), "x": np.arange(4.0)},
         )
-        ds_2d.to_zarr(str(zarr_root), group="test/v", mode="w", consolidated=True)
+        ds_2d.to_zarr(str(zarr_root), group="test/v", mode="w", consolidated=True, zarr_format=2)
 
         reader = AggregatingReader(str(zarr_root), variable="v", group="test/v")
         reader._agg_method = "mean"

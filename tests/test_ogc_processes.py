@@ -20,7 +20,7 @@ def _write_zarr(zarr_root: Path, group: str = "worldpop/nga") -> None:
     da = xr.DataArray(data, dims=("y", "x"), coords={"y": y, "x": x}, name="population")
     da = da.rio.write_crs("EPSG:4326")
     ds = da.to_dataset()
-    ds.to_zarr(str(zarr_root), group=group, mode="w", consolidated=True)
+    ds.to_zarr(str(zarr_root), group=group, mode="w", consolidated=True, zarr_format=2)
 
 
 def _write_zarr_with_time(zarr_root: Path, group: str = "chirps/global") -> None:
@@ -38,7 +38,7 @@ def _write_zarr_with_time(zarr_root: Path, group: str = "chirps/global") -> None
         {"precipitation": (("time", "y", "x"), data)},
         coords={"time": times, "y": y, "x": x},
     )
-    ds.to_zarr(str(zarr_root), group=group, mode="w", consolidated=True)
+    ds.to_zarr(str(zarr_root), group=group, mode="w", consolidated=True, zarr_format=2)
 
 
 @pytest.fixture()
@@ -424,7 +424,7 @@ class TestPrepareDaEdgeCases:
             {"t2m": (("valid_time", "y", "x"), data)},
             coords={"valid_time": times, "y": y, "x": x},
         )
-        ds.to_zarr(str(zarr_root), group="era5/t2m", mode="w", consolidated=True)
+        ds.to_zarr(str(zarr_root), group="era5/t2m", mode="w", consolidated=True, zarr_format=2)
 
         payload = {
             "inputs": {
@@ -465,7 +465,9 @@ class TestPrepareDaEdgeCases:
 
         crs_obj = CRS.from_epsg(4326)
         ds["crs"] = xr.DataArray(0, attrs={"crs_wkt": crs_obj.to_wkt()})
-        ds.to_zarr(str(zarr_root), group="worldpop/test", mode="w", consolidated=True)
+        ds.to_zarr(
+            str(zarr_root), group="worldpop/test", mode="w", consolidated=True, zarr_format=2
+        )
 
         payload = {
             "inputs": {

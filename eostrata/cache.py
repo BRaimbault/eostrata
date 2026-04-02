@@ -119,11 +119,22 @@ def _consolidate_metadata_with_timeout(zarr_root: Path, timeout_s: int = 30) -> 
     The consolidation thread is allowed to finish naturally in the background if
     it exceeds the timeout — the caller simply stops waiting.
     """
+    import warnings
     from concurrent.futures import ThreadPoolExecutor
     from concurrent.futures import TimeoutError as FuturesTimeoutError
 
+    from zarr.errors import ZarrUserWarning
+
+    def _consolidate() -> None:
+        # Suppress the "Object at <non-zarr-file> is not recognised" noise that
+        # zarr 3 emits when the store root contains intentional non-zarr files
+        # (catalog.json, collection.json, .eostrata_locks, …).
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=ZarrUserWarning)
+            zarr.consolidate_metadata(str(zarr_root), zarr_format=2)
+
     with ThreadPoolExecutor(max_workers=1, thread_name_prefix="zarr_consolidate") as ex:
-        future = ex.submit(zarr.consolidate_metadata, str(zarr_root))
+        future = ex.submit(_consolidate)
         try:
             future.result(timeout=timeout_s)
         except FuturesTimeoutError:
@@ -431,7 +442,11 @@ def evict_timestamp(
         # Write to a temp group path in the same parent dir (same filesystem)
         tmp_name = f"._tmp_{Path(group_path).name}_{uuid.uuid4().hex[:8]}"
         tmp_group_path = str(Path(group_path).parent / tmp_name)
-        remaining.to_zarr(str(zarr_root), group=tmp_group_path, mode="w")
+        # drop_encoding strips any zarr-format-3-specific keys (e.g. 'serializer')
+        # so the temp group can always be written as zarr format 2.
+        remaining.drop_encoding().to_zarr(
+            str(zarr_root), group=tmp_group_path, mode="w", zarr_format=2
+        )
 
         target = zarr_root / group_path
         tmp_target = zarr_root / tmp_group_path

@@ -286,7 +286,6 @@ class AggregatingReader(Reader):
             self.ds,
             self.variable,
             sel=non_time_sel or None,
-            method=self.method,
         )
 
         # Let XarrayReader set bounds, CRS, _dims from self.input
@@ -311,7 +310,6 @@ class AggregatingReader(Reader):
         ds: xr.Dataset,
         variable: str,
         sel: list[str] | None = None,
-        method: str | None = None,
     ) -> xr.DataArray:
         """
         Select *variable* from *ds* and apply temporal aggregation.
@@ -319,7 +317,7 @@ class AggregatingReader(Reader):
         Respects ``_agg_datetime``, ``_agg_method``, and ``_agg_baseline``
         instance attributes set by callers (e.g. tests, zonal-stats endpoint).
         """
-        da = _base_get_variable(ds, variable, sel=sel, method=method)
+        da = _base_get_variable(ds, variable, sel=sel)
 
         datetime_str: str | None = getattr(self, "_agg_datetime", None)
         agg: str | None = getattr(self, "_agg_method", None)

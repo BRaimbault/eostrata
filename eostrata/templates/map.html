@@ -26,8 +26,17 @@
       box-shadow: 0 2px 10px rgba(0,0,0,0.18); min-width: 290px; max-width: 310px;
     }
     #controls h3 {
-      margin: 0 0 10px; font-size: 14px; font-weight: 600; color: #111827;
+      margin: 0; font-size: 14px; font-weight: 600; color: #111827;
     }
+    #controls-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    #controls-header nav { display: flex; gap: 8px; }
+    #controls-header nav a {
+      font-size: 11px; color: #6b7280; text-decoration: none;
+    }
+    #controls-header nav a:hover { color: #2563eb; }
 
     /* Tab nav — proper tab appearance */
     .tab-nav {
@@ -241,7 +250,13 @@
 <body>
   <div id="map"></div>
   <div id="controls">
-    <h3>eostrata viewer</h3>
+    <div id="controls-header">
+      <h3>eostrata viewer</h3>
+      <nav>
+        <a href="/scheduler">scheduler</a>
+        <a href="/docs">docs</a>
+      </nav>
+    </div>
     <div class="tab-nav">
       <button id="tab-btn-map" class="active" onclick="showTab('map')">Map</button>
       <button id="tab-btn-ingest" onclick="showTab('ingest')">Ingest</button>

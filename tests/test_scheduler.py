@@ -452,10 +452,11 @@ class TestRunJobReturnValue:
     """_run_job returns (bool, error_str_or_none)."""
 
     def _make_source(self, tmp_path):
-        import numpy as np
-        import xarray as xr
         from datetime import datetime
         from unittest.mock import MagicMock
+
+        import numpy as np
+        import xarray as xr
 
         zarr_root = tmp_path / "zarr"
         zarr_root.mkdir(parents=True, exist_ok=True)
@@ -478,6 +479,7 @@ class TestRunJobReturnValue:
 
     def test_returns_true_none_on_success(self, tmp_path):
         from unittest.mock import MagicMock, patch
+
         from eostrata.scheduler import _run_job
 
         src, zarr_root = self._make_source(tmp_path)
@@ -506,6 +508,7 @@ class TestRunJobReturnValue:
 
     def test_returns_false_and_error_on_all_retries_failed(self, tmp_path):
         from unittest.mock import MagicMock, patch
+
         from eostrata.scheduler import _run_job
 
         failing_src = MagicMock()
@@ -532,6 +535,7 @@ class TestRunJobReturnValue:
 class TestSchedulerSingleton:
     def test_set_get_clear(self):
         from unittest.mock import MagicMock
+
         from eostrata.scheduler import get_scheduler, set_scheduler
 
         mock_s = MagicMock()
@@ -549,8 +553,8 @@ class TestSchedulerTracking:
     @pytest.fixture()
     def scheduler(self, tmp_path):
         """A Scheduler backed by a mock APScheduler."""
-        from unittest.mock import MagicMock, patch
         import sys
+        from unittest.mock import MagicMock, patch
 
         mock_instance = MagicMock()
         mock_instance.running = True
@@ -582,14 +586,14 @@ class TestSchedulerTracking:
         assert scheduler.get_jobs() == []
 
     def test_get_jobs_includes_next_run_and_last_run(self, scheduler):
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         scheduler._job_defs["j1"] = {
             "id": "j1", "source": "chirps", "params": {}, "cron": "0 3 15 * *",
             "auto_period": True, "enabled": True,
         }
         mock_apjob = MagicMock()
-        mock_apjob.next_run_time = datetime(2026, 4, 15, 3, 0, tzinfo=timezone.utc)
+        mock_apjob.next_run_time = datetime(2026, 4, 15, 3, 0, tzinfo=UTC)
         scheduler._scheduler.get_job.return_value = mock_apjob
 
         jobs = scheduler.get_jobs()
@@ -676,7 +680,8 @@ class TestSchedulerTracking:
         mock_t.start.assert_called_once()
 
     def test_wrap_for_tracking_records_success(self, scheduler, tmp_path):
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         import numpy as np
         import xarray as xr
 
@@ -742,7 +747,6 @@ class TestSchedulerTracking:
 
     def test_wrap_for_tracking_sets_running_before_executing(self, scheduler):
         """While the job is in-flight, status should be 'running'."""
-        import threading
         from unittest.mock import MagicMock, patch
 
         observed_status = []
@@ -769,8 +773,8 @@ class TestSchedulerTracking:
 class TestSchedulerWriteSchedules:
     @pytest.fixture()
     def scheduler_with_jobs(self, tmp_path):
-        from unittest.mock import MagicMock, patch
         import sys
+        from unittest.mock import MagicMock, patch
 
         mock_instance = MagicMock()
         mock_instance.running = False

@@ -19,11 +19,14 @@ from __future__ import annotations
 import logging
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, FastAPI, HTTPException, Path, Query, Request
+from attrs import define
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Path, Query, Request
 from fastapi.responses import HTMLResponse, Response
 from httpx import ASGITransport, AsyncClient
-from titiler.xarray.extensions import VariablesExtension
+from titiler.core.factory import FactoryExtension
+from titiler.xarray.dependencies import XarrayIOParams
 from titiler.xarray.factory import TilerFactory
+from titiler.xarray.io import open_zarr
 
 from eostrata.aggregate import (
     _CTX_AGG_BASELINE,
@@ -32,6 +35,23 @@ from eostrata.aggregate import (
     AggregatingReader,
 )
 from eostrata.config import settings
+from eostrata.constants import PROP_VARIABLE, PROP_ZARR_GROUP, PROP_ZARR_ROOT
+
+
+@define
+class _VariablesExtension(FactoryExtension):
+    """Add /variables endpoint — replaces deprecated titiler VariablesExtension."""
+
+    def register(self, factory: TilerFactory) -> None:  # type: ignore[override]
+        @factory.router.get("/variables", response_model=list[str])
+        def variables(
+            src_path=Depends(factory.path_dependency),
+            io_params=Depends(XarrayIOParams),
+        ) -> list[str]:
+            """Return available dataset variables."""
+            with open_zarr(src_path, **io_params.as_dict()) as ds:
+                return list(ds.data_vars)
+
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +61,7 @@ router = APIRouter(tags=["Tiles"])
 _tiler = TilerFactory(
     reader=AggregatingReader,
     router_prefix="/internal",
-    extensions=[VariablesExtension()],
+    extensions=[_VariablesExtension()],
 )
 _internal_app = FastAPI()
 _internal_app.include_router(_tiler.router, prefix="/internal")
@@ -70,9 +90,9 @@ def _resolve(collection_id: str, item_id: str | None) -> dict:
         raise HTTPException(422, detail=f"Item '{item.id}' has no zarr asset.")
 
     return {
-        "zarr_root": item.properties.get("eostrata:zarr_root", str(settings.zarr_root)),
-        "zarr_group": item.properties["eostrata:zarr_group"],
-        "variable": item.properties["eostrata:variable"],
+        "zarr_root": item.properties.get(PROP_ZARR_ROOT, str(settings.zarr_root)),
+        "zarr_group": item.properties[PROP_ZARR_GROUP],
+        "variable": item.properties[PROP_VARIABLE],
     }
 
 

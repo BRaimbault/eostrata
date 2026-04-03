@@ -17,6 +17,7 @@ from eostrata.catalog import (
     resolve_item,
     save,
 )
+from eostrata.constants import PROP_DATETIMES, PROP_VARIABLE, PROP_ZARR_GROUP, PROP_ZARR_ROOT
 
 _BBOX = (2.0, 4.0, 6.0, 8.0)
 _DT = datetime(2020, 1, 1, tzinfo=UTC)
@@ -54,14 +55,16 @@ class TestMakeCatalog:
         ids = {c.id for c in cat.get_children()}
         assert ids == {cls.collection_id for cls in all_sources()}
 
-    def test_duplicate_collection_id_deduplicated(self):
+    def test_duplicate_collection_id_deduplicated(self, mocker):
         """Two sources sharing a collection_id produce only one collection."""
-        from unittest.mock import MagicMock, patch
-
-        src_a = MagicMock(collection_id="shared", collection_title="T", collection_description="D")
-        src_b = MagicMock(collection_id="shared", collection_title="T", collection_description="D")
-        with patch("eostrata.sources.base.all_sources", return_value=[src_a, src_b]):
-            cat = _make_catalog()
+        src_a = mocker.MagicMock(
+            collection_id="shared", collection_title="T", collection_description="D"
+        )
+        src_b = mocker.MagicMock(
+            collection_id="shared", collection_title="T", collection_description="D"
+        )
+        mocker.patch("eostrata.sources.base.all_sources", return_value=[src_a, src_b])
+        cat = _make_catalog()
         assert len(list(cat.get_children())) == 1
 
 
@@ -111,7 +114,7 @@ class TestRegisterItem:
     def test_item_has_datetimes_property(self, tmp_path):
         cat = _catalog_with_item(tmp_path)
         item = cat.get_child("worldpop").get_item("worldpop_nga")
-        assert item.properties["eostrata:datetimes"] == [_DT.isoformat()]
+        assert item.properties[PROP_DATETIMES] == [_DT.isoformat()]
 
     def test_extending_existing_item_expands_interval(self, tmp_path):
         cat = _catalog_with_item(tmp_path)
@@ -145,7 +148,7 @@ class TestRegisterItem:
             variable="population",
         )
         item = cat.get_child("worldpop").get_item("worldpop_nga")
-        datetimes = item.properties["eostrata:datetimes"]
+        datetimes = item.properties[PROP_DATETIMES]
         assert len(datetimes) == 2
         assert _DT.isoformat() in datetimes
         assert dt2022.isoformat() in datetimes
@@ -167,7 +170,7 @@ class TestRegisterItem:
             variable="population",
         )
         item = cat.get_child("worldpop").get_item("worldpop_nga")
-        assert item.properties["eostrata:datetimes"].count(_DT.isoformat()) == 1
+        assert item.properties[PROP_DATETIMES].count(_DT.isoformat()) == 1
 
     def test_existing_item_with_null_datetimes_uses_new_datetime(self, tmp_path):
         """When existing item has no start/end/datetime, new values are used (lines 156-157)."""
@@ -183,9 +186,9 @@ class TestRegisterItem:
                 "start_datetime": None,
                 "end_datetime": None,
                 "datetime": None,
-                "eostrata:variable": "population",
-                "eostrata:zarr_group": "worldpop/nga",
-                "eostrata:zarr_root": str(tmp_path / "zarr"),
+                PROP_VARIABLE: "population",
+                PROP_ZARR_GROUP: "worldpop/nga",
+                PROP_ZARR_ROOT: str(tmp_path / "zarr"),
             },
         )
         coll.add_item(item)
@@ -246,8 +249,8 @@ class TestResolveItem:
             bbox=list(_BBOX),
             datetime=_DT,
             properties={
-                "eostrata:variable": "population",
-                "eostrata:zarr_group": "worldpop/nga",
+                PROP_VARIABLE: "population",
+                PROP_ZARR_GROUP: "worldpop/nga",
             },
         )
         coll.add_item(item)
@@ -351,7 +354,7 @@ class TestRemoveTimestamp:
         assert changed
         item = cat.get_child("worldpop").get_item("worldpop_nga")
         assert item is not None
-        dts = item.properties["eostrata:datetimes"]
+        dts = item.properties[PROP_DATETIMES]
         assert len(dts) == 1
         assert dts[0].startswith("2020")
 

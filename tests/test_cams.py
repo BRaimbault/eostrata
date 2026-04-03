@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 import xarray as xr
 
+from eostrata.constants import PROP_RESOLUTION, PROP_VARIABLE
 from eostrata.sources.cams import (
     _MULTI_LEVEL_VARS,
     _VARIABLE_MAP,
@@ -56,8 +56,8 @@ class TestCAMSSource:
 
     def test_stac_properties_multi_level(self):
         props = self.source.stac_properties(variable="no2", year=2022)
-        assert props["eostrata:variable"] == "no2"
-        assert props["eostrata:resolution"] == "0.75deg"
+        assert props[PROP_VARIABLE] == "no2"
+        assert props[PROP_RESOLUTION] == "0.75deg"
         assert props["eostrata:dataset"] == "cams-global-reanalysis-eac4-monthly"
         assert "1000hPa" in props["eostrata:pressure_level"]
 
@@ -81,12 +81,12 @@ class TestCAMSSource:
         # Should be roughly 90–150 days in the past
         assert 60 <= delta_days <= 180
 
-    def test_latest_available_wraps_year(self):
+    def test_latest_available_wraps_year(self, mocker):
         """Month calculation should not produce month <= 0."""
-        with patch("eostrata.sources.cams.datetime") as mock_dt:
-            mock_dt.now.return_value = datetime(2024, 3, 15, tzinfo=UTC)
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-            result = CAMSSource().latest_available()
+        mock_dt = mocker.patch("eostrata.sources.cams.datetime")
+        mock_dt.now.return_value = datetime(2024, 3, 15, tzinfo=UTC)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        result = CAMSSource().latest_available()
         # March - 4 months = November of previous year
         assert result.year == 2023
         assert result.month == 11
@@ -128,24 +128,24 @@ class TestCAMSStacRegistrations:
     def setup_method(self):
         self.source = CAMSSource()
 
-    def test_returns_one_item_per_month(self):
-        ds = MagicMock()
+    def test_returns_one_item_per_month(self, mocker):
+        ds = mocker.MagicMock()
         period_kwargs = {"variable": "no2", "year": 2022, "months": [1, 2, 3]}
         items = self.source.stac_registrations(ds, period_kwargs)
         assert len(items) == 3
 
-    def test_item_structure(self):
-        ds = MagicMock()
+    def test_item_structure(self, mocker):
+        ds = mocker.MagicMock()
         period_kwargs = {"variable": "pm2p5", "year": 2021, "months": [6]}
         items = self.source.stac_registrations(ds, period_kwargs)
         item = items[0]
         assert item["item_id"] == "cams_pm2p5"
         assert item["datetime_"] == datetime(2021, 6, 1, tzinfo=UTC)
         assert item["variable"] == "pm2p5"
-        assert "eostrata:variable" in item["extra_properties"]
+        assert PROP_VARIABLE in item["extra_properties"]
 
-    def test_datetimes_are_month_starts(self):
-        ds = MagicMock()
+    def test_datetimes_are_month_starts(self, mocker):
+        ds = mocker.MagicMock()
         period_kwargs = {"variable": "o3", "year": 2020, "months": [3, 4, 5]}
         items = self.source.stac_registrations(ds, period_kwargs)
         for i, item in enumerate(items, start=3):
@@ -160,14 +160,12 @@ class TestGetCdsapi:
 
         assert result is cdsapi
 
-    def test_raises_import_error_when_missing(self):
+    def test_raises_import_error_when_missing(self, mocker):
         import sys
 
-        with (
-            patch.dict(sys.modules, {"cdsapi": None}),
-            pytest.raises((ImportError, AttributeError)),
-            patch("builtins.__import__", side_effect=ImportError("no module")),
-        ):
+        mocker.patch.dict(sys.modules, {"cdsapi": None})
+        mocker.patch("builtins.__import__", side_effect=ImportError("no module"))
+        with pytest.raises((ImportError, AttributeError)):
             _get_cdsapi()
 
 
@@ -182,20 +180,18 @@ class TestDownloadCams:
 
         assert result == dest
 
-    def test_download_multi_level_var_with_key(self, tmp_path):
+    def test_download_multi_level_var_with_key(self, tmp_path, mocker):
         """Multi-level variable request includes pressure_level; key triggers keyed client."""
         dest = tmp_path / "cams" / "cams_no2_2022_01.nc"
-        mock_client = MagicMock()
-        mock_cdsapi = MagicMock()
+        mock_client = mocker.MagicMock()
+        mock_cdsapi = mocker.MagicMock()
         mock_cdsapi.Client.return_value = mock_client
 
-        with (
-            patch("eostrata.sources.cams._get_cdsapi", return_value=mock_cdsapi),
-            patch("eostrata.config.settings") as mock_settings,
-        ):
-            mock_settings.ads_url = "https://ads.example.com/api"
-            mock_settings.ads_key = "uid:secret"
-            _download_cams(dest, variable="no2", year=2022, months=[1, 2], bbox=(0, 0, 10, 10))
+        mocker.patch("eostrata.sources.cams._get_cdsapi", return_value=mock_cdsapi)
+        mock_settings = mocker.patch("eostrata.config.settings")
+        mock_settings.ads_url = "https://ads.example.com/api"
+        mock_settings.ads_key = "uid:secret"
+        _download_cams(dest, variable="no2", year=2022, months=[1, 2], bbox=(0, 0, 10, 10))
 
         mock_cdsapi.Client.assert_called_once_with(
             url="https://ads.example.com/api", key="uid:secret", quiet=True
@@ -206,56 +202,52 @@ class TestDownloadCams:
         assert "pressure_level" in request
         assert request["pressure_level"] == ["1000"]
 
-    def test_download_single_level_var_without_key(self, tmp_path):
+    def test_download_single_level_var_without_key(self, tmp_path, mocker):
         """Single-level variable (aod550) omits pressure_level; no key uses keyless client."""
         dest = tmp_path / "cams" / "cams_aod550_2022_06.nc"
-        mock_client = MagicMock()
-        mock_cdsapi = MagicMock()
+        mock_client = mocker.MagicMock()
+        mock_cdsapi = mocker.MagicMock()
         mock_cdsapi.Client.return_value = mock_client
 
-        with (
-            patch("eostrata.sources.cams._get_cdsapi", return_value=mock_cdsapi),
-            patch("eostrata.config.settings") as mock_settings,
-        ):
-            mock_settings.ads_url = "https://ads.example.com/api"
-            mock_settings.ads_key = ""
-            _download_cams(dest, variable="aod550", year=2022, months=[6], bbox=(0, 0, 10, 10))
+        mocker.patch("eostrata.sources.cams._get_cdsapi", return_value=mock_cdsapi)
+        mock_settings = mocker.patch("eostrata.config.settings")
+        mock_settings.ads_url = "https://ads.example.com/api"
+        mock_settings.ads_key = ""
+        _download_cams(dest, variable="aod550", year=2022, months=[6], bbox=(0, 0, 10, 10))
 
         # No key → client created without key argument
         mock_cdsapi.Client.assert_called_once_with(url="https://ads.example.com/api", quiet=True)
         request = mock_client.retrieve.call_args[0][1]
         assert "pressure_level" not in request
 
-    def test_download_uses_default_ads_url_when_settings_url_empty(self, tmp_path):
+    def test_download_uses_default_ads_url_when_settings_url_empty(self, tmp_path, mocker):
         """Falls back to _DEFAULT_ADS_URL when ads_url is empty string."""
         from eostrata.sources.cams import _DEFAULT_ADS_URL
 
         dest = tmp_path / "cams" / "cams_co_2022_01.nc"
-        mock_client = MagicMock()
-        mock_cdsapi = MagicMock()
+        mock_client = mocker.MagicMock()
+        mock_cdsapi = mocker.MagicMock()
         mock_cdsapi.Client.return_value = mock_client
 
-        with (
-            patch("eostrata.sources.cams._get_cdsapi", return_value=mock_cdsapi),
-            patch("eostrata.config.settings") as mock_settings,
-        ):
-            mock_settings.ads_url = ""  # falsy → should fall back
-            mock_settings.ads_key = ""
-            _download_cams(dest, variable="co", year=2022, months=[1], bbox=(0, 0, 10, 10))
+        mocker.patch("eostrata.sources.cams._get_cdsapi", return_value=mock_cdsapi)
+        mock_settings = mocker.patch("eostrata.config.settings")
+        mock_settings.ads_url = ""  # falsy → should fall back
+        mock_settings.ads_key = ""
+        _download_cams(dest, variable="co", year=2022, months=[1], bbox=(0, 0, 10, 10))
 
         mock_cdsapi.Client.assert_called_once_with(url=_DEFAULT_ADS_URL, quiet=True)
 
 
 class TestCAMSSourceDownload:
-    def test_download_calls_download_cams(self, tmp_path):
+    def test_download_calls_download_cams(self, tmp_path, mocker):
         """CAMSSource.download() constructs the right filename and delegates."""
         source = CAMSSource()
         fake_path = tmp_path / "cams" / "cams_pm2p5_2021_01-02-03.nc"
 
-        with patch("eostrata.sources.cams._download_cams", return_value=fake_path) as mock_dl:
-            result = source.download(
-                tmp_path, (0, 0, 10, 10), variable="pm2p5", year=2021, months=[1, 2, 3]
-            )
+        mock_dl = mocker.patch("eostrata.sources.cams._download_cams", return_value=fake_path)
+        result = source.download(
+            tmp_path, (0, 0, 10, 10), variable="pm2p5", year=2021, months=[1, 2, 3]
+        )
 
         assert result == [fake_path]
         mock_dl.assert_called_once()
@@ -264,12 +256,12 @@ class TestCAMSSourceDownload:
         assert kwargs["year"] == 2021
         assert kwargs["months"] == [1, 2, 3]
 
-    def test_download_defaults_to_all_12_months(self, tmp_path):
+    def test_download_defaults_to_all_12_months(self, tmp_path, mocker):
         source = CAMSSource()
-        with patch(
+        mock_dl = mocker.patch(
             "eostrata.sources.cams._download_cams", return_value=tmp_path / "x.nc"
-        ) as mock_dl:
-            source.download(tmp_path, (0, 0, 10, 10), variable="no2", year=2021)
+        )
+        source.download(tmp_path, (0, 0, 10, 10), variable="no2", year=2021)
 
         _, kwargs = mock_dl.call_args
         assert kwargs["months"] == list(range(1, 13))
@@ -448,7 +440,7 @@ class TestCAMSNetcdfToZarr:
 
         assert "expver" not in ds
 
-    def test_zarr_append_falls_back_when_existing_read_fails(self, tmp_path):
+    def test_zarr_append_falls_back_when_existing_read_fails(self, tmp_path, mocker):
         """If open_zarr raises while checking existing timestamps, append proceeds anyway."""
         nc_path = self._make_cams_netcdf(tmp_path, "pm2p5", has_pressure_level=False)
         zarr_root = tmp_path / "zarr"
@@ -461,9 +453,9 @@ class TestCAMSNetcdfToZarr:
         def _raise_once(store, **kwargs):
             raise OSError("simulated read failure")
 
-        with patch("xarray.open_zarr", side_effect=_raise_once):
-            # Should not raise — falls back to appending
-            _cams_netcdf_to_zarr(nc_path, zarr_root, "cams/pm2p5", variable="pm2p5", bbox=bbox)
+        mocker.patch("xarray.open_zarr", side_effect=_raise_once)
+        # Should not raise — falls back to appending
+        _cams_netcdf_to_zarr(nc_path, zarr_root, "cams/pm2p5", variable="pm2p5", bbox=bbox)
 
     def test_zarr_append_skips_duplicate_timestamps(self, tmp_path):
         """Writing the same period twice must not create duplicate time entries."""

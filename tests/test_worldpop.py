@@ -8,6 +8,7 @@ import numpy as np
 import rasterio
 from rasterio.transform import from_bounds
 
+from eostrata.constants import PROP_VARIABLE
 from eostrata.sources.worldpop import WorldPopSource, _build_url
 
 
@@ -50,7 +51,7 @@ class TestWorldPopSource:
     def test_stac_properties(self):
         props = self.source.stac_properties(iso3="NGA", year=2020)
         assert props["eostrata:iso3"] == "NGA"
-        assert props["eostrata:variable"] == "population"
+        assert props[PROP_VARIABLE] == "population"
 
     def test_latest_available_is_previous_year(self):
         latest = self.source.latest_available()

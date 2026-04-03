@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import sys
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
 
 import pystac
 import pytest
 from fastapi.testclient import TestClient
+
+from eostrata.constants import PROP_VARIABLE, PROP_ZARR_GROUP
 
 
 @pytest.fixture()
@@ -69,9 +70,7 @@ class TestExamples:
         assert "warning" in data
         assert data["items"] == []
 
-    def test_with_items_returns_item_list(self, tmp_path, monkeypatch):
-        from unittest.mock import MagicMock, patch
-
+    def test_with_items_returns_item_list(self, tmp_path, monkeypatch, mocker):
         from eostrata import catalog as cat
 
         catalog_path = tmp_path / "catalog.json"
@@ -88,12 +87,13 @@ class TestExamples:
         )
         cat.save(catalogue, catalog_path)
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
         mock_settings.catalog_path = catalog_path
 
         from eostrata.server import app
 
-        with patch("eostrata.server.settings", mock_settings), TestClient(app) as c:
+        mocker.patch("eostrata.server.settings", mock_settings)
+        with TestClient(app) as c:
             resp = c.get("/examples")
 
         assert resp.status_code == 200
@@ -148,9 +148,7 @@ class TestDynamicOpenAPI:
         assert schema["info"]["title"] == "eostrata"
         assert "paths" in schema
 
-    def test_openapi_with_catalog_items(self, tmp_path):
-        from unittest.mock import MagicMock, patch
-
+    def test_openapi_with_catalog_items(self, tmp_path, mocker):
         from eostrata import catalog as cat
 
         catalog_path = tmp_path / "catalog.json"
@@ -167,12 +165,13 @@ class TestDynamicOpenAPI:
         )
         cat.save(catalogue, catalog_path)
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
         mock_settings.catalog_path = catalog_path
 
         from eostrata.server import app
 
-        with patch("eostrata.server.settings", mock_settings), TestClient(app) as c:
+        mocker.patch("eostrata.server.settings", mock_settings)
+        with TestClient(app) as c:
             resp = c.get("/openapi.json")
 
         assert resp.status_code == 200
@@ -229,31 +228,30 @@ class TestStoreUsage:
     def test_status_200(self, client):
         assert client.get("/store-usage").status_code == 200
 
-    def test_unlimited_when_quota_zero(self, tmp_path):
-        mock_settings = MagicMock()
+    def test_unlimited_when_quota_zero(self, tmp_path, mocker):
+        mock_settings = mocker.MagicMock()
         mock_settings.store_quota_mb = 0
         mock_settings.zarr_root = tmp_path / "zarr"
 
         from eostrata.server import app
 
-        with patch("eostrata.server.settings", mock_settings), TestClient(app) as c:
+        mocker.patch("eostrata.server.settings", mock_settings)
+        with TestClient(app) as c:
             data = c.get("/store-usage").json()
         assert data["quota_unlimited"] is True
         assert data["used_pct"] is None
         assert data["used_mb"] >= 0.0
 
-    def test_quota_set_returns_percent(self, tmp_path):
-        mock_settings = MagicMock()
+    def test_quota_set_returns_percent(self, tmp_path, mocker):
+        mock_settings = mocker.MagicMock()
         mock_settings.store_quota_mb = 1000
         mock_settings.zarr_root = tmp_path / "zarr"
 
         from eostrata.server import app
 
-        with (
-            patch("eostrata.server.settings", mock_settings),
-            patch("eostrata.cache.store_size_mb", return_value=250.0),
-            TestClient(app) as c,
-        ):
+        mocker.patch("eostrata.server.settings", mock_settings)
+        mocker.patch("eostrata.cache.store_size_mb", return_value=250.0)
+        with TestClient(app) as c:
             data = c.get("/store-usage").json()
         assert data["quota_unlimited"] is False
         assert data["quota_mb"] == 1000
@@ -264,7 +262,7 @@ class TestStoreUsage:
         assert "groups" in data
         assert isinstance(data["groups"], list)
 
-    def test_groups_include_timestamps(self, tmp_path):
+    def test_groups_include_timestamps(self, tmp_path, mocker):
         import numpy as np
         import xarray as xr
 
@@ -273,13 +271,14 @@ class TestStoreUsage:
         ds = xr.Dataset({"v": (("time", "y", "x"), np.zeros((2, 4, 4)))}, coords={"time": times})
         ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
         mock_settings.store_quota_mb = 0
         mock_settings.zarr_root = zarr_root
 
         from eostrata.server import app
 
-        with patch("eostrata.server.settings", mock_settings), TestClient(app) as c:
+        mocker.patch("eostrata.server.settings", mock_settings)
+        with TestClient(app) as c:
             data = c.get("/store-usage").json()
         assert len(data["groups"]) == 1
         g = data["groups"][0]
@@ -292,7 +291,7 @@ class TestStoreUsage:
         assert "size_mb" in t
         assert "last_accessed" in t
 
-    def test_group_without_time_dimension_excluded(self, tmp_path):
+    def test_group_without_time_dimension_excluded(self, tmp_path, mocker):
         """A Zarr group with no time dimension should be skipped in the response."""
         import numpy as np
         import xarray as xr
@@ -302,13 +301,14 @@ class TestStoreUsage:
         ds = xr.Dataset({"v": (("y", "x"), np.zeros((4, 4)))})
         ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
         mock_settings.store_quota_mb = 0
         mock_settings.zarr_root = zarr_root
 
         from eostrata.server import app
 
-        with patch("eostrata.server.settings", mock_settings), TestClient(app) as c:
+        mocker.patch("eostrata.server.settings", mock_settings)
+        with TestClient(app) as c:
             data = c.get("/store-usage").json()
         assert data["groups"] == []
 
@@ -339,8 +339,8 @@ def _make_catalog_with_item_no_datetimes() -> pystac.Catalog:
             "start_datetime": "2021-01-01T00:00:00+00:00",
             "end_datetime": "2021-12-31T00:00:00+00:00",
             "datetime": None,
-            "eostrata:variable": "population",
-            "eostrata:zarr_group": "worldpop/test",
+            PROP_VARIABLE: "population",
+            PROP_ZARR_GROUP: "worldpop/test",
             # deliberately NO eostrata:datetimes
         },
     )
@@ -353,19 +353,22 @@ def _make_catalog_with_item_no_datetimes() -> pystac.Catalog:
 
 
 class TestLifespan:
-    def test_scheduler_import_error_is_handled(self):
+    def test_scheduler_import_error_is_handled(self, mocker):
+
         from eostrata.server import app
 
-        with patch.dict(sys.modules, {"eostrata.scheduler": None}), TestClient(app) as c:
+        mocker.patch.dict(sys.modules, {"eostrata.scheduler": None})
+        with TestClient(app) as c:
             assert c.get("/").status_code == 200
 
-    def test_scheduler_runtime_error_is_handled(self):
+    def test_scheduler_runtime_error_is_handled(self, mocker):
+
         from eostrata.server import app
 
-        mock_mod = MagicMock()
+        mock_mod = mocker.MagicMock()
         mock_mod.Scheduler.return_value.start.side_effect = RuntimeError("boom")
-
-        with patch.dict(sys.modules, {"eostrata.scheduler": mock_mod}), TestClient(app) as c:
+        mocker.patch.dict(sys.modules, {"eostrata.scheduler": mock_mod})
+        with TestClient(app) as c:
             assert c.get("/").status_code == 200
 
 
@@ -373,36 +376,32 @@ class TestLifespan:
 
 
 class TestExamplesEdgeCases:
-    def test_non_collection_child_skipped(self):
+    def test_non_collection_child_skipped(self, mocker):
         """Catalog children that are not pystac.Collection instances are skipped."""
         catalog = _make_catalog_with_item_no_datetimes()
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
 
         from eostrata.server import app
 
-        with (
-            patch("eostrata.server.settings", mock_settings),
-            patch("eostrata.server.load_or_create", return_value=catalog),
-            TestClient(app) as c,
-        ):
+        mocker.patch("eostrata.server.settings", mock_settings)
+        mocker.patch("eostrata.server.load_or_create", return_value=catalog)
+        with TestClient(app) as c:
             resp = c.get("/examples")
 
         assert resp.status_code == 200
         # Only the collection item should appear (sub-catalog child is skipped)
         assert len(resp.json()["items"]) == 1
 
-    def test_fallback_datetime_from_start_datetime(self):
+    def test_fallback_datetime_from_start_datetime(self, mocker):
         """Items missing eostrata:datetimes fall back to start_datetime."""
         catalog = _make_catalog_with_item_no_datetimes()
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
 
         from eostrata.server import app
 
-        with (
-            patch("eostrata.server.settings", mock_settings),
-            patch("eostrata.server.load_or_create", return_value=catalog),
-            TestClient(app) as c,
-        ):
+        mocker.patch("eostrata.server.settings", mock_settings)
+        mocker.patch("eostrata.server.load_or_create", return_value=catalog)
+        with TestClient(app) as c:
             resp = c.get("/examples")
 
         data = resp.json()
@@ -414,41 +413,37 @@ class TestExamplesEdgeCases:
 
 
 class TestOpenAPIEdgeCases:
-    def test_openapi_fallback_datetime_from_properties(self):
+    def test_openapi_fallback_datetime_from_properties(self, mocker):
         """_catalog_openapi_examples falls back to start_datetime when
         eostrata:datetimes is absent; non-Collection children are also skipped."""
         catalog = _make_catalog_with_item_no_datetimes()
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
 
         from eostrata.server import app
 
         # _catalog_openapi_examples uses the module-level load_or_create binding
-        with (
-            patch("eostrata.server.settings", mock_settings),
-            patch("eostrata.server.load_or_create", return_value=catalog),
-            TestClient(app) as c,
-        ):
+        mocker.patch("eostrata.server.settings", mock_settings)
+        mocker.patch("eostrata.server.load_or_create", return_value=catalog)
+        with TestClient(app) as c:
             resp = c.get("/openapi.json")
 
         assert resp.status_code == 200
         assert "paths" in resp.json()
 
-    def test_openapi_catalog_exception_is_silenced(self):
+    def test_openapi_catalog_exception_is_silenced(self, mocker):
         """_catalog_openapi_examples swallows any catalog read error."""
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
 
         from eostrata.server import app
 
-        with (
-            patch("eostrata.server.settings", mock_settings),
-            patch("eostrata.server.load_or_create", side_effect=OSError("no catalog")),
-            TestClient(app) as c,
-        ):
+        mocker.patch("eostrata.server.settings", mock_settings)
+        mocker.patch("eostrata.server.load_or_create", side_effect=OSError("no catalog"))
+        with TestClient(app) as c:
             resp = c.get("/openapi.json")
 
         assert resp.status_code == 200
 
-    def test_openapi_non_dict_operation_skipped(self):
+    def test_openapi_non_dict_operation_skipped(self, mocker):
         """Non-dict values inside a path item (e.g. a 'summary' string) are
         skipped without error."""
         from eostrata.server import _dynamic_openapi
@@ -468,8 +463,8 @@ class TestOpenAPIEdgeCases:
             },
         }
 
-        with patch("eostrata.server.get_openapi", return_value=mock_schema):
-            schema = _dynamic_openapi()
+        mocker.patch("eostrata.server.get_openapi", return_value=mock_schema)
+        schema = _dynamic_openapi()
 
         assert schema["paths"] is not None
         # The string "summary" value was skipped; the get operation was processed

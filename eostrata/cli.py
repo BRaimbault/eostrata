@@ -9,6 +9,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from eostrata.constants import PROP_DATETIMES
+
 logger = logging.getLogger(__name__)
 
 app = typer.Typer(
@@ -197,15 +199,15 @@ def list_datasets(
 
         from datetime import UTC, datetime
 
-        from eostrata.cache import _ACCESS_DIR
+        from eostrata.cache import _access_dir
 
         table = Table(
             "Group", "Size", "Last accessed", title=f"Zarr store: {_zarr_root}  [{size_summary}]"
         )
         for group_path, size_mb, _ in sorted(groups, key=lambda t: t[0]):
-            access_dir = Path(_zarr_root) / group_path / _ACCESS_DIR
-            if access_dir.exists() and any(access_dir.iterdir()):
-                newest = max(access_dir.iterdir(), key=lambda f: f.stat().st_mtime)
+            adir = _access_dir(Path(_zarr_root), group_path)
+            if adir.exists() and any(adir.iterdir()):
+                newest = max(adir.iterdir(), key=lambda f: f.stat().st_mtime)
                 ts = datetime.fromtimestamp(newest.stat().st_mtime, tz=UTC)
                 last_read = ts.strftime("%Y-%m-%d %H:%M UTC")
             else:
@@ -221,7 +223,7 @@ def list_datasets(
         stac_table = Table("Collection", "Item ID", "Timestamps", title="STAC catalogue")
         for collection in catalogue.get_children():
             for item in collection.get_items():
-                timestamps: list[str] = item.properties.get("eostrata:datetimes", [])
+                timestamps: list[str] = item.properties.get(PROP_DATETIMES, [])
                 if timestamps:
                     # Show as short dates; flag gaps with a marker
                     dates = [t[:10] for t in timestamps]

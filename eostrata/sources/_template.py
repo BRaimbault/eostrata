@@ -16,6 +16,7 @@ from typing import Any
 
 import numpy as np
 
+from eostrata.constants import PROP_VARIABLE
 from eostrata.sources.base import BaseSource, _stream_download, register_source
 from eostrata.store import geotiff_to_zarr
 
@@ -94,7 +95,7 @@ class TemplateSource(BaseSource):
         return {
             "item_id": f"{cls.zarr_prefix}_{dataset_name}",
             "variable": cls.VARIABLE,
-            "extra": {"eostrata:variable": cls.VARIABLE},
+            "extra": {PROP_VARIABLE: cls.VARIABLE},
         }
 
     # ── Download ───────────────────────────────────────────────────────────────
@@ -170,7 +171,7 @@ class TemplateSource(BaseSource):
         """Return extra STAC item properties for the given params."""
         # TODO: add source-specific metadata fields
         return {
-            "eostrata:variable": self.VARIABLE,
+            PROP_VARIABLE: self.VARIABLE,
             # "eostrata:resolution": "...",
             # "eostrata:release":    "...",
         }

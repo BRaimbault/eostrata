@@ -47,3 +47,65 @@ class TestSettings:
         assert "zarr" in str(s.zarr_root)
         assert "raw" in str(s.raw_dir)
         assert "catalog" in str(s.catalog_path)
+
+    # ── Bbox coordinate range validation ──────────────────────────────────────
+
+    def test_bbox_west_out_of_range_raises(self):
+        with pytest.raises((ValidationError, ValueError)):
+            Settings(bbox_west=-181.0, bbox_east=10.0)
+
+    def test_bbox_east_out_of_range_raises(self):
+        with pytest.raises((ValidationError, ValueError)):
+            Settings(bbox_west=0.0, bbox_east=181.0)
+
+    def test_bbox_south_out_of_range_raises(self):
+        with pytest.raises((ValidationError, ValueError)):
+            Settings(bbox_south=-91.0, bbox_north=10.0)
+
+    def test_bbox_north_out_of_range_raises(self):
+        with pytest.raises((ValidationError, ValueError)):
+            Settings(bbox_south=0.0, bbox_north=91.0)
+
+    def test_bbox_at_poles_is_valid(self):
+        """Bbox touching exactly ±90° latitude or ±180° longitude is valid."""
+        s = Settings(bbox_west=-180.0, bbox_south=-90.0, bbox_east=180.0, bbox_north=90.0)
+        assert s.bbox == (-180.0, -90.0, 180.0, 90.0)
+
+    def test_bbox_near_north_pole(self):
+        s = Settings(bbox_west=-10.0, bbox_south=80.0, bbox_east=10.0, bbox_north=90.0)
+        assert s.bbox_north == 90.0
+
+    def test_bbox_near_south_pole(self):
+        s = Settings(bbox_west=-10.0, bbox_south=-90.0, bbox_east=10.0, bbox_north=-80.0)
+        assert s.bbox_south == -90.0
+
+    def test_bbox_west_at_antimeridian(self):
+        """Bbox where west touches −180° is valid."""
+        s = Settings(bbox_west=-180.0, bbox_south=-10.0, bbox_east=-170.0, bbox_north=10.0)
+        assert s.bbox_west == -180.0
+
+    def test_bbox_east_at_antimeridian(self):
+        """Bbox where east touches +180° is valid."""
+        s = Settings(bbox_west=170.0, bbox_south=-10.0, bbox_east=180.0, bbox_north=10.0)
+        assert s.bbox_east == 180.0
+
+    # ── New configurable settings ─────────────────────────────────────────────
+
+    def test_default_ingest_max_workers(self, monkeypatch):
+        monkeypatch.delenv("EOSTRATA_INGEST_MAX_WORKERS", raising=False)
+        s = Settings(_env_file=None)
+        assert s.ingest_max_workers == 3
+
+    def test_default_ingest_max_queued(self, monkeypatch):
+        monkeypatch.delenv("EOSTRATA_INGEST_MAX_QUEUED", raising=False)
+        s = Settings(_env_file=None)
+        assert s.ingest_max_queued == 20
+
+    def test_default_cors_origins(self, monkeypatch):
+        monkeypatch.delenv("EOSTRATA_CORS_ORIGINS", raising=False)
+        s = Settings(_env_file=None)
+        assert s.cors_origins == ["*"]
+
+    def test_custom_cors_origins(self):
+        s = Settings(cors_origins=["https://app.example.com", "https://staging.example.com"])
+        assert "https://app.example.com" in s.cors_origins

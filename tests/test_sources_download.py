@@ -6,7 +6,7 @@ These tests mock the HTTP layer so no real network calls are made.
 from __future__ import annotations
 
 import gzip
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import httpx
 import numpy as np
@@ -68,19 +68,19 @@ class TestStreamDownload:
         result = _stream_download("http://example.com/test.tif", dest)
         assert result == dest
 
-    def test_downloads_and_saves(self, tmp_path):
+    def test_downloads_and_saves(self, tmp_path, mocker):
         dest = tmp_path / "test.tif"
         tif_bytes = _make_tif_bytes()
 
         mock_stream = _make_httpx_stream_mock(tif_bytes)
-        with patch("eostrata.sources.base.httpx.stream", return_value=mock_stream):
-            result = _stream_download("http://example.com/test.tif", dest)
+        mocker.patch("eostrata.sources.base.httpx.stream", return_value=mock_stream)
+        result = _stream_download("http://example.com/test.tif", dest)
 
         assert result == dest
         assert dest.exists()
         assert dest.stat().st_size == len(tif_bytes)
 
-    def test_raises_on_http_error(self, tmp_path):
+    def test_raises_on_http_error(self, tmp_path, mocker):
         dest = tmp_path / "fail.tif"
 
         mock_stream = MagicMock()
@@ -88,31 +88,27 @@ class TestStreamDownload:
         mock_stream.__exit__ = MagicMock(return_value=False)
         mock_stream.raise_for_status = MagicMock(side_effect=Exception("404 Not Found"))
 
-        with (
-            patch("eostrata.sources.base.httpx.stream", return_value=mock_stream),
-            pytest.raises(Exception, match="404"),
-        ):
+        mocker.patch("eostrata.sources.base.httpx.stream", return_value=mock_stream)
+        with pytest.raises(Exception, match="404"):
             _stream_download("http://example.com/missing.tif", dest)
 
-    def test_transport_error_retries_then_raises(self, tmp_path):
+    def test_transport_error_retries_then_raises(self, tmp_path, mocker):
         """TransportError triggers retries; after all attempts the error is re-raised."""
         dest = tmp_path / "retry_fail.tif"
         err = httpx.TransportError("connection reset")
 
-        with (
-            patch(
-                "eostrata.sources.base.httpx.stream",
-                side_effect=err,
-            ),
-            patch("eostrata.sources.base.time.sleep"),
-            pytest.raises(httpx.TransportError),
-        ):
+        mocker.patch(
+            "eostrata.sources.base.httpx.stream",
+            side_effect=err,
+        )
+        mocker.patch("eostrata.sources.base.time.sleep")
+        with pytest.raises(httpx.TransportError):
             _stream_download("http://example.com/test.tif", dest)
 
         # Partial file must be cleaned up after each failed attempt
         assert not dest.exists()
 
-    def test_transport_error_first_attempt_then_success(self, tmp_path):
+    def test_transport_error_first_attempt_then_success(self, tmp_path, mocker):
         """First attempt raises TransportError; second attempt succeeds."""
         dest = tmp_path / "retry_ok.tif"
         tif_bytes = _make_tif_bytes()
@@ -128,11 +124,9 @@ class TestStreamDownload:
                 raise err
             return ok_stream
 
-        with (
-            patch("eostrata.sources.base.httpx.stream", side_effect=_stream_side_effect),
-            patch("eostrata.sources.base.time.sleep"),
-        ):
-            result = _stream_download("http://example.com/test.tif", dest)
+        mocker.patch("eostrata.sources.base.httpx.stream", side_effect=_stream_side_effect)
+        mocker.patch("eostrata.sources.base.time.sleep")
+        result = _stream_download("http://example.com/test.tif", dest)
 
         assert result == dest
         assert dest.exists()
@@ -140,7 +134,7 @@ class TestStreamDownload:
 
 
 class TestWorldPopDownloadIntegration:
-    def test_download_calls_http(self, tmp_path):
+    def test_download_calls_http(self, tmp_path, mocker):
         """WorldPopSource.download should call _stream_download."""
         from eostrata.sources.worldpop import WorldPopSource
 
@@ -148,8 +142,8 @@ class TestWorldPopDownloadIntegration:
         tif_bytes = _make_tif_bytes()
         mock_stream = _make_httpx_stream_mock(tif_bytes)
 
-        with patch("eostrata.sources.base.httpx.stream", return_value=mock_stream):
-            paths = source.download(tmp_path, (0, 0, 10, 10), iso3="NGA", year=2020)
+        mocker.patch("eostrata.sources.base.httpx.stream", return_value=mock_stream)
+        paths = source.download(tmp_path, (0, 0, 10, 10), iso3="NGA", year=2020)
 
         assert len(paths) == 1
         assert paths[0].exists()
@@ -165,14 +159,14 @@ class TestCHIRPSDownloadHelpers:
         result = _stream_download("http://example.com/data.tif.gz", dest)
         assert result == dest
 
-    def test_download_gz_saves_file(self, tmp_path):
+    def test_download_gz_saves_file(self, tmp_path, mocker):
         dest = tmp_path / "chirps.tif.gz"
         tif_bytes = _make_tif_bytes()
         gz_bytes = gzip.compress(tif_bytes)
         mock_stream = _make_httpx_stream_mock(gz_bytes)
 
-        with patch("eostrata.sources.base.httpx.stream", return_value=mock_stream):
-            result = _stream_download("http://example.com/data.tif.gz", dest)
+        mocker.patch("eostrata.sources.base.httpx.stream", return_value=mock_stream)
+        result = _stream_download("http://example.com/data.tif.gz", dest)
 
         assert result == dest
         assert dest.exists()
@@ -196,14 +190,14 @@ class TestCHIRPSDownloadHelpers:
 
 
 class TestCHIRPSSourceDownloadIntegration:
-    def test_download_fetches_and_decompresses(self, tmp_path):
+    def test_download_fetches_and_decompresses(self, tmp_path, mocker):
         source = CHIRPSSource()
         tif_bytes = _make_tif_bytes()
         gz_bytes = gzip.compress(tif_bytes)
         mock_stream = _make_httpx_stream_mock(gz_bytes)
 
-        with patch("eostrata.sources.base.httpx.stream", return_value=mock_stream):
-            paths = source.download(tmp_path, (0, 0, 10, 10), year=2023, month=6)
+        mocker.patch("eostrata.sources.base.httpx.stream", return_value=mock_stream)
+        paths = source.download(tmp_path, (0, 0, 10, 10), year=2023, month=6)
 
         assert len(paths) == 1
         assert paths[0].suffix == ".tif"
@@ -211,15 +205,15 @@ class TestCHIRPSSourceDownloadIntegration:
         # gz file should have been removed
         assert not paths[0].with_suffix(".tif.gz").exists()
 
-    def test_download_returns_existing_tif(self, tmp_path):
+    def test_download_returns_existing_tif(self, tmp_path, mocker):
         """If the .tif exists, no network call is made."""
         source = CHIRPSSource()
         tif = tmp_path / "chirps" / "chirps-v2.0.2023.06.tif"
         tif.parent.mkdir(parents=True)
         tif.write_bytes(b"fake tif")
 
-        with patch("eostrata.sources.base.httpx.stream") as mock_http:
-            paths = source.download(tmp_path, (0, 0, 10, 10), year=2023, month=6)
+        mock_http = mocker.patch("eostrata.sources.base.httpx.stream")
+        paths = source.download(tmp_path, (0, 0, 10, 10), year=2023, month=6)
 
         mock_http.assert_not_called()
         assert paths[0] == tif

@@ -21,6 +21,7 @@ from typing import Any
 
 import numpy as np
 
+from eostrata.constants import PROP_RESOLUTION, PROP_VARIABLE
 from eostrata.sources.base import BaseSource, _stream_download, register_source
 from eostrata.store import geotiff_to_zarr
 
@@ -121,8 +122,8 @@ class CHIRPSSource(BaseSource):
 
     def stac_properties(self, *, year: int, month: int, **_: Any) -> dict:
         return {
-            "eostrata:variable": self.VARIABLE,
-            "eostrata:resolution": "0.05deg",
+            PROP_VARIABLE: self.VARIABLE,
+            PROP_RESOLUTION: "0.05deg",
             "eostrata:release": "v2.0",
             "eostrata:units": "mm/month",
         }

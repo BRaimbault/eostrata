@@ -37,15 +37,16 @@ from stac_fastapi.api.app import StacApi
 from stac_fastapi.types.config import ApiSettings
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from titiler.core.errors import DEFAULT_STATUS_CODES, add_exception_handlers
-from titiler.xarray.extensions import VariablesExtension
 from titiler.xarray.factory import TilerFactory
 
 from eostrata.aggregate import AggregatingReader
 from eostrata.catalog import PystacClient, load_or_create
 from eostrata.config import settings
+from eostrata.constants import PROP_DATETIMES, PROP_VARIABLE, PROP_ZARR_GROUP
 from eostrata.ogc.ingest import router as ingest_router
 from eostrata.ogc.processes import router as processes_router
 from eostrata.ogc.scheduler_router import router as scheduler_router
+from eostrata.ogc.tiles import _VariablesExtension
 from eostrata.ogc.tiles import router as collection_tiles_router
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,29 @@ async def lifespan(app: FastAPI):
     from eostrata.log import setup_logging
 
     setup_logging(rich_console=False)  # file-only; uvicorn owns the console
+
+    # Validate that required storage directories exist and are writable.
+    # The isinstance guard lets test suites substitute mock settings without
+    # tripping over this check.
+    import os
+
+    for label, path in [
+        ("zarr_root", settings.zarr_root),
+        ("raw_dir", settings.raw_dir),
+    ]:
+        if not isinstance(path, Path):
+            continue
+        path.mkdir(parents=True, exist_ok=True)
+        if not os.access(path, os.W_OK):
+            raise RuntimeError(
+                f"Storage directory '{label}' is not writable: {path}. "
+                "Check permissions before starting the server."
+            )
+    logger.info(
+        "Storage directories OK — zarr_root=%s raw_dir=%s",
+        settings.zarr_root,
+        settings.raw_dir,
+    )
 
     scheduler = None
     try:
@@ -170,7 +194,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
@@ -214,7 +238,7 @@ app.include_router(collection_tiles_router)
 _raw_tiler = TilerFactory(
     reader=AggregatingReader,
     router_prefix="/tiles",
-    extensions=[VariablesExtension()],
+    extensions=[_VariablesExtension()],
 )
 app.include_router(
     _raw_tiler.router, prefix="/tiles", tags=["Tiles (direct)"], include_in_schema=False
@@ -367,14 +391,14 @@ def examples() -> dict:
         if not isinstance(coll, pystac.Collection):
             continue
         for item in coll.get_items():
-            datetimes: list[str] = item.properties.get("eostrata:datetimes", [])
+            datetimes: list[str] = item.properties.get(PROP_DATETIMES, [])
             if not datetimes:
                 # Fallback: derive from start/end
                 start = item.properties.get("start_datetime") or item.properties.get("datetime")
                 if start:
                     datetimes = [start]
-            variable = item.properties.get("eostrata:variable", "")
-            zarr_group = item.properties.get("eostrata:zarr_group", "")
+            variable = item.properties.get(PROP_VARIABLE, "")
+            zarr_group = item.properties.get(PROP_ZARR_GROUP, "")
             first_dt = datetimes[0] if datetimes else None
 
             tile_qs = f"item={item.id}"
@@ -622,7 +646,7 @@ def _catalog_openapi_examples() -> dict[str, dict[str, dict]]:
                     "summary": f"{item.id} ({coll.id})",
                 }
                 # Use eostrata:datetimes first, fall back to start/end interval bounds
-                datetimes: list[str] = item.properties.get("eostrata:datetimes", [])
+                datetimes: list[str] = item.properties.get(PROP_DATETIMES, [])
                 if not datetimes:
                     for key in ("start_datetime", "end_datetime", "datetime"):
                         val = item.properties.get(key)

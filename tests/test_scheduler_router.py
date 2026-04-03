@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -27,14 +26,14 @@ _JOB_WITH_RUNTIME = {
 
 
 @pytest.fixture()
-def mock_scheduler():
-    s = MagicMock()
+def mock_scheduler(mocker):
+    s = mocker.MagicMock()
     s.get_jobs.return_value = [_JOB_WITH_RUNTIME]
     return s
 
 
 @pytest.fixture()
-def client(tmp_path, monkeypatch, mock_scheduler):
+def client(tmp_path, monkeypatch, mock_scheduler, mocker):
     monkeypatch.setenv("EOSTRATA_CATALOG_PATH", str(tmp_path / "catalog.json"))
     monkeypatch.setenv("EOSTRATA_ZARR_ROOT", str(tmp_path / "zarr"))
 
@@ -44,12 +43,12 @@ def client(tmp_path, monkeypatch, mock_scheduler):
 
     from eostrata.server import app
 
-    with patch("eostrata.scheduler._instance", mock_scheduler):
-        yield TestClient(app, raise_server_exceptions=True)
+    mocker.patch("eostrata.scheduler._instance", mock_scheduler)
+    yield TestClient(app, raise_server_exceptions=True)
 
 
 @pytest.fixture()
-def client_no_scheduler(tmp_path, monkeypatch):
+def client_no_scheduler(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("EOSTRATA_CATALOG_PATH", str(tmp_path / "catalog.json"))
     monkeypatch.setenv("EOSTRATA_ZARR_ROOT", str(tmp_path / "zarr"))
 
@@ -59,8 +58,8 @@ def client_no_scheduler(tmp_path, monkeypatch):
 
     from eostrata.server import app
 
-    with patch("eostrata.scheduler._instance", None):
-        yield TestClient(app, raise_server_exceptions=False)
+    mocker.patch("eostrata.scheduler._instance", None)
+    yield TestClient(app, raise_server_exceptions=False)
 
 
 # ── GET /scheduler/jobs ───────────────────────────────────────────────────────

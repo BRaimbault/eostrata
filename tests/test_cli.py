@@ -12,6 +12,7 @@ from rasterio.transform import from_bounds
 from typer.testing import CliRunner
 
 from eostrata.cli import _ALL_MONTHS, _parse_int_list, app
+from eostrata.constants import PROP_VARIABLE, PROP_ZARR_GROUP
 
 runner = CliRunner()
 
@@ -813,7 +814,7 @@ class TestList:
             geometry=None,
             bbox=[2.0, 4.0, 6.0, 8.0],
             datetime=datetime(2020, 6, 1, tzinfo=UTC),
-            properties={"eostrata:variable": "population", "eostrata:zarr_group": "worldpop/nga"},
+            properties={PROP_VARIABLE: "population", PROP_ZARR_GROUP: "worldpop/nga"},
         )
         coll.add_item(item)
         save(cat_, catalog_path)
@@ -844,8 +845,8 @@ class TestList:
                 "start_datetime": "2020-01-01T00:00:00+00:00",
                 "end_datetime": "2020-12-31T00:00:00+00:00",
                 "datetime": None,
-                "eostrata:variable": "population",
-                "eostrata:zarr_group": "worldpop/nga",
+                PROP_VARIABLE: "population",
+                PROP_ZARR_GROUP: "worldpop/nga",
             },
         )
         coll.add_item(item)
@@ -879,15 +880,15 @@ class TestList:
         assert "MB" in result.output
 
     def test_list_shows_last_accessed_when_sentinel_exists(self, tmp_path):
-        from eostrata.cache import _ACCESS_DIR
+        from eostrata.cache import _access_dir
 
         zarr_root = tmp_path / "zarr"
         ds = xr.Dataset({"v": (("y", "x"), np.ones((4, 4)))})
         ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
         # Create a sentinel file so the "last accessed" branch is exercised
-        access_dir = zarr_root / "worldpop" / "nga" / _ACCESS_DIR
-        access_dir.mkdir(parents=True)
-        (access_dir / "2020-01-01T00:00:00").touch()
+        adir = _access_dir(zarr_root, "worldpop/nga")
+        adir.mkdir(parents=True, exist_ok=True)
+        (adir / "2020-01-01T00:00:00").touch()
 
         result = runner.invoke(
             app,

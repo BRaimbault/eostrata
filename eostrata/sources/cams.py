@@ -38,6 +38,7 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
+from eostrata.constants import PROP_RESOLUTION, PROP_VARIABLE
 from eostrata.sources.base import BaseSource, register_source
 
 logger = logging.getLogger(__name__)
@@ -222,10 +223,22 @@ def _cams_netcdf_to_zarr(
                     exc,
                 )
             logger.info("Appending CAMS '%s' to existing Zarr group", zarr_group)
-            ds.to_zarr(store_path, group=zarr_group, mode="a", append_dim="time", consolidated=True)
+            ds.to_zarr(
+                store_path,
+                group=zarr_group,
+                mode="a",
+                append_dim="time",
+                consolidated=True,
+            )
         else:
             logger.info("Writing new CAMS Zarr group '%s'", zarr_group)
-            ds.to_zarr(store_path, group=zarr_group, mode="w", encoding=encoding, consolidated=True)
+            ds.to_zarr(
+                store_path,
+                group=zarr_group,
+                mode="w",
+                encoding=encoding,
+                consolidated=True,
+            )
     finally:
         ds.close()
 
@@ -265,7 +278,7 @@ class CAMSSource(BaseSource):
         return {
             "item_id": f"cams_{dataset_name}",
             "variable": dataset_name,
-            "extra": {"eostrata:variable": dataset_name},
+            "extra": {PROP_VARIABLE: dataset_name},
         }
 
     def download(
@@ -339,9 +352,9 @@ class CAMSSource(BaseSource):
     def stac_properties(self, *, variable: str = "pm2p5", year: int, **_: Any) -> dict:
         cads_name = _VARIABLE_MAP.get(variable, variable)
         return {
-            "eostrata:variable": variable,
+            PROP_VARIABLE: variable,
             "eostrata:cams_variable": cads_name,
-            "eostrata:resolution": "0.75deg",
+            PROP_RESOLUTION: "0.75deg",
             "eostrata:dataset": _ADS_DATASET,
             "eostrata:pressure_level": "1000hPa" if variable in _MULTI_LEVEL_VARS else "single",
         }

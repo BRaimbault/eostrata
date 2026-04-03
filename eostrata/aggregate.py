@@ -106,10 +106,21 @@ def apply_temporal_aggregation(
     # non-monotonic DatetimeIndex, causing pandas to reject label-based slices.
     if not da.indexes["time"].is_monotonic_increasing:
         da = da.sortby("time")
+        if not da.indexes["time"].is_monotonic_increasing:
+            raise ValueError(
+                "Time axis is not monotonic increasing even after sort — "
+                "the dataset may be corrupt."
+            )
 
     # Deduplicate the time axis — re-ingesting the same year produces duplicate
     # timestamps that cause .sel(method="nearest") to raise InvalidIndexError.
     if not da.indexes["time"].is_unique:
+        n_dups = len(da.indexes["time"]) - da.indexes["time"].nunique()
+        logger.warning(
+            "Found %d duplicate timestamp(s) in time axis — keeping first occurrence. "
+            "Re-ingest may have produced duplicates; consider rebuilding the catalogue.",
+            n_dups,
+        )
         _, first_occurrence = np.unique(da.indexes["time"], return_index=True)
         da = da.isel(time=first_occurrence)
 
@@ -275,7 +286,6 @@ class AggregatingReader(Reader):
             self.ds,
             self.variable,
             sel=non_time_sel or None,
-            method=self.method,
         )
 
         # Let XarrayReader set bounds, CRS, _dims from self.input
@@ -300,7 +310,6 @@ class AggregatingReader(Reader):
         ds: xr.Dataset,
         variable: str,
         sel: list[str] | None = None,
-        method: str | None = None,
     ) -> xr.DataArray:
         """
         Select *variable* from *ds* and apply temporal aggregation.
@@ -308,7 +317,7 @@ class AggregatingReader(Reader):
         Respects ``_agg_datetime``, ``_agg_method``, and ``_agg_baseline``
         instance attributes set by callers (e.g. tests, zonal-stats endpoint).
         """
-        da = _base_get_variable(ds, variable, sel=sel, method=method)
+        da = _base_get_variable(ds, variable, sel=sel)
 
         datetime_str: str | None = getattr(self, "_agg_datetime", None)
         agg: str | None = getattr(self, "_agg_method", None)

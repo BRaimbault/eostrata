@@ -5,11 +5,12 @@ from __future__ import annotations
 import io
 import zipfile
 from datetime import UTC, date, datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
+from eostrata.constants import PROP_RESOLUTION, PROP_VARIABLE
 from eostrata.sources.tropomi import (
     _VARIABLE_MAP,
     TROPOMISource,
@@ -23,28 +24,26 @@ from eostrata.sources.tropomi import (
 
 
 class TestGetCdseToken:
-    def test_returns_access_token(self):
+    def test_returns_access_token(self, mocker):
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"access_token": "tok123"}
-        with patch("eostrata.sources.tropomi.httpx.post", return_value=mock_resp) as mock_post:
-            token = _get_cdse_token("user@example.com", "secret")
+        mock_post = mocker.patch("eostrata.sources.tropomi.httpx.post", return_value=mock_resp)
+        token = _get_cdse_token("user@example.com", "secret")
         assert token == "tok123"
         mock_post.assert_called_once()
         call_kwargs = mock_post.call_args[1]["data"]
         assert call_kwargs["username"] == "user@example.com"
         assert call_kwargs["client_id"] == "cdse-public"
 
-    def test_raises_on_http_error(self):
+    def test_raises_on_http_error(self, mocker):
         import httpx
 
         mock_resp = MagicMock()
         mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
             "401", request=MagicMock(), response=MagicMock()
         )
-        with (
-            patch("eostrata.sources.tropomi.httpx.post", return_value=mock_resp),
-            pytest.raises(httpx.HTTPStatusError),
-        ):
+        mocker.patch("eostrata.sources.tropomi.httpx.post", return_value=mock_resp)
+        with pytest.raises(httpx.HTTPStatusError):
             _get_cdse_token("bad", "creds")
 
 
@@ -57,30 +56,28 @@ class TestSearchProducts:
         mock_resp.json.return_value = body
         return mock_resp
 
-    def test_returns_products_list(self):
+    def test_returns_products_list(self, mocker):
         products = [{"Id": "abc", "Name": "S5P_OFFL_L2__NO2"}]
         mock_resp = self._make_search_response(products)
-        with patch("eostrata.sources.tropomi.httpx.get", return_value=mock_resp):
-            result = _search_products("L2__NO2___", date(2023, 6, 1), (0, 0, 10, 10))
+        mocker.patch("eostrata.sources.tropomi.httpx.get", return_value=mock_resp)
+        result = _search_products("L2__NO2___", date(2023, 6, 1), (0, 0, 10, 10))
         assert result == products
 
-    def test_follows_pagination(self):
+    def test_follows_pagination(self, mocker):
         page1 = [{"Id": "p1", "Name": "orbit1"}]
         page2 = [{"Id": "p2", "Name": "orbit2"}]
         resp1 = self._make_search_response(page1, next_link="https://next.page")
         resp2 = self._make_search_response(page2)
-
-        with patch("eostrata.sources.tropomi.httpx.get", side_effect=[resp1, resp2]):
-            result = _search_products("L2__NO2___", date(2023, 6, 1), (0, 0, 10, 10))
-
+        mocker.patch("eostrata.sources.tropomi.httpx.get", side_effect=[resp1, resp2])
+        result = _search_products("L2__NO2___", date(2023, 6, 1), (0, 0, 10, 10))
         assert len(result) == 2
         assert result[0]["Id"] == "p1"
         assert result[1]["Id"] == "p2"
 
-    def test_returns_empty_list_when_no_products(self):
+    def test_returns_empty_list_when_no_products(self, mocker):
         mock_resp = self._make_search_response([])
-        with patch("eostrata.sources.tropomi.httpx.get", return_value=mock_resp):
-            result = _search_products("L2__CO____", date(2023, 1, 1), (0, 0, 5, 5))
+        mocker.patch("eostrata.sources.tropomi.httpx.get", return_value=mock_resp)
+        result = _search_products("L2__CO____", date(2023, 1, 1), (0, 0, 5, 5))
         assert result == []
 
 
@@ -100,19 +97,17 @@ class TestDownloadProduct:
         result = _download_product("uuid-123", dest, "token")
         assert result == dest
 
-    def test_downloads_raw_hdf5_file(self, tmp_path):
+    def test_downloads_raw_hdf5_file(self, tmp_path, mocker):
         # HDF5 magic bytes: \x89HDF\r\n\x1a\n
         hdf5_content = b"\x89HDF\r\n\x1a\n" + b"\x00" * 100
         mock_stream = self._make_stream_context(hdf5_content)
         dest = tmp_path / "product.nc"
-
-        with patch("eostrata.sources.tropomi.httpx.stream", return_value=mock_stream):
-            result = _download_product("uuid-hdf5", dest, "mytoken")
-
+        mocker.patch("eostrata.sources.tropomi.httpx.stream", return_value=mock_stream)
+        result = _download_product("uuid-hdf5", dest, "mytoken")
         assert result == dest
         assert dest.read_bytes() == hdf5_content
 
-    def test_downloads_and_extracts_zip(self, tmp_path):
+    def test_downloads_and_extracts_zip(self, tmp_path, mocker):
         # Create a real in-memory ZIP containing a .nc file
         nc_content = b"\x89HDF fake nc content"
         buf = io.BytesIO()
@@ -122,14 +117,12 @@ class TestDownloadProduct:
 
         mock_stream = self._make_stream_context(zip_bytes)
         dest = tmp_path / "product.nc"
-
-        with patch("eostrata.sources.tropomi.httpx.stream", return_value=mock_stream):
-            result = _download_product("uuid-zip", dest, "mytoken")
-
+        mocker.patch("eostrata.sources.tropomi.httpx.stream", return_value=mock_stream)
+        result = _download_product("uuid-zip", dest, "mytoken")
         assert result == dest
         assert dest.read_bytes() == nc_content
 
-    def test_zip_with_no_nc_raises_runtime_error(self, tmp_path):
+    def test_zip_with_no_nc_raises_runtime_error(self, tmp_path, mocker):
         """A ZIP that contains no .nc members must raise RuntimeError."""
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
@@ -138,26 +131,19 @@ class TestDownloadProduct:
 
         mock_stream = self._make_stream_context(zip_bytes)
         dest = tmp_path / "product.nc"
-
-        with (
-            patch("eostrata.sources.tropomi.httpx.stream", return_value=mock_stream),
-            pytest.raises(RuntimeError, match="No .nc file found"),
-        ):
+        mocker.patch("eostrata.sources.tropomi.httpx.stream", return_value=mock_stream)
+        with pytest.raises(RuntimeError, match="No .nc file found"):
             _download_product("uuid-bad-zip", dest, "tok")
 
-    def test_cleans_up_tmp_on_exception(self, tmp_path):
-        mock_stream = MagicMock()
+    def test_cleans_up_tmp_on_exception(self, tmp_path, mocker):
+        mock_stream = mocker.MagicMock()
         mock_stream.__enter__ = lambda s: mock_stream
-        mock_stream.__exit__ = MagicMock(return_value=False)
+        mock_stream.__exit__ = mocker.MagicMock(return_value=False)
         mock_stream.raise_for_status.side_effect = RuntimeError("network error")
         dest = tmp_path / "product.nc"
-
-        with (
-            patch("eostrata.sources.tropomi.httpx.stream", return_value=mock_stream),
-            pytest.raises(RuntimeError),
-        ):
+        mocker.patch("eostrata.sources.tropomi.httpx.stream", return_value=mock_stream)
+        with pytest.raises(RuntimeError):
             _download_product("uuid-fail", dest, "tok")
-
         tmp = dest.with_suffix(".tmp")
         assert not tmp.exists()
 
@@ -335,9 +321,9 @@ class TestTROPOMISource:
 
     def test_stac_properties(self):
         props = self.source.stac_properties(variable="no2", year=2023, month=6, day=15)
-        assert props["eostrata:variable"] == "no2"
+        assert props[PROP_VARIABLE] == "no2"
         assert props["eostrata:tropomi_product"] == "L2__NO2___"
-        assert "0.1deg" in props["eostrata:resolution"]
+        assert "0.1deg" in props[PROP_RESOLUTION]
         assert props["eostrata:qa_threshold"] == 0.75
 
     def test_latest_available_is_in_past(self):
@@ -412,7 +398,7 @@ class TestTROPOMIStacRegistrations:
         assert item["item_id"] == "tropomi_co"
         assert item["datetime_"] == datetime(2022, 8, 10, tzinfo=UTC)
         assert item["variable"] == "co"
-        assert "eostrata:variable" in item["extra_properties"]
+        assert PROP_VARIABLE in item["extra_properties"]
 
 
 class TestGridSwathDataZeroSizeGrid:
@@ -430,20 +416,20 @@ class TestGridSwathDataZeroSizeGrid:
 
 
 class TestTROPOMIDownloadRequiresCredentials:
-    def test_raises_without_credentials(self, tmp_path):
+    def test_raises_without_credentials(self, tmp_path, mocker):
         source = TROPOMISource()
-        with patch("eostrata.config.settings") as mock_settings:
-            mock_settings.cdse_user = ""
-            mock_settings.cdse_password = ""
-            with pytest.raises(RuntimeError, match="CDSE credentials"):
-                source.download(
-                    tmp_path,
-                    (0.0, 0.0, 10.0, 10.0),
-                    variable="no2",
-                    year=2023,
-                    month=6,
-                    day=1,
-                )
+        mock_settings = mocker.patch("eostrata.config.settings")
+        mock_settings.cdse_user = ""
+        mock_settings.cdse_password = ""
+        with pytest.raises(RuntimeError, match="CDSE credentials"):
+            source.download(
+                tmp_path,
+                (0.0, 0.0, 10.0, 10.0),
+                variable="no2",
+                year=2023,
+                month=6,
+                day=1,
+            )
 
     def test_raises_for_unknown_variable(self, tmp_path):
         source = TROPOMISource()
@@ -457,39 +443,34 @@ class TestTROPOMIDownloadRequiresCredentials:
                 day=1,
             )
 
-    def test_download_returns_empty_when_no_products_found(self, tmp_path):
+    def test_download_returns_empty_when_no_products_found(self, tmp_path, mocker):
         source = TROPOMISource()
-        with (
-            patch("eostrata.config.settings") as mock_settings,
-            patch("eostrata.sources.tropomi._search_products", return_value=[]),
-        ):
-            mock_settings.cdse_user = "user@example.com"
-            mock_settings.cdse_password = "secret"
-            result = source.download(
-                tmp_path, (0, 0, 10, 10), variable="no2", year=2023, month=6, day=1
-            )
+        mock_settings = mocker.patch("eostrata.config.settings")
+        mock_settings.cdse_user = "user@example.com"
+        mock_settings.cdse_password = "secret"
+        mocker.patch("eostrata.sources.tropomi._search_products", return_value=[])
+        result = source.download(
+            tmp_path, (0, 0, 10, 10), variable="no2", year=2023, month=6, day=1
+        )
         assert result == []
 
-    def test_download_returns_paths_on_success(self, tmp_path):
+    def test_download_returns_paths_on_success(self, tmp_path, mocker):
         source = TROPOMISource()
         fake_nc = tmp_path / "tropomi" / "2023" / "06" / "01" / "orbit1.nc"
         products = [{"Id": "uuid-1", "Name": "orbit1"}]
-
-        with (
-            patch("eostrata.config.settings") as mock_settings,
-            patch("eostrata.sources.tropomi._search_products", return_value=products),
-            patch("eostrata.sources.tropomi._get_cdse_token", return_value="tok"),
-            patch("eostrata.sources.tropomi._download_product", return_value=fake_nc),
-        ):
-            mock_settings.cdse_user = "user@example.com"
-            mock_settings.cdse_password = "secret"
-            result = source.download(
-                tmp_path, (0, 0, 10, 10), variable="no2", year=2023, month=6, day=1
-            )
+        mock_settings = mocker.patch("eostrata.config.settings")
+        mock_settings.cdse_user = "user@example.com"
+        mock_settings.cdse_password = "secret"
+        mocker.patch("eostrata.sources.tropomi._search_products", return_value=products)
+        mocker.patch("eostrata.sources.tropomi._get_cdse_token", return_value="tok")
+        mocker.patch("eostrata.sources.tropomi._download_product", return_value=fake_nc)
+        result = source.download(
+            tmp_path, (0, 0, 10, 10), variable="no2", year=2023, month=6, day=1
+        )
 
         assert result == [fake_nc]
 
-    def test_download_skips_failed_products(self, tmp_path):
+    def test_download_skips_failed_products(self, tmp_path, mocker):
         """If one product download raises, it is logged and skipped — others succeed."""
         source = TROPOMISource()
         fake_nc = tmp_path / "orbit2.nc"
@@ -500,18 +481,15 @@ class TestTROPOMIDownloadRequiresCredentials:
                 raise RuntimeError("network error")
             return fake_nc
 
-        with (
-            patch("eostrata.config.settings") as mock_settings,
-            patch("eostrata.sources.tropomi._search_products", return_value=products),
-            patch("eostrata.sources.tropomi._get_cdse_token", return_value="tok"),
-            patch("eostrata.sources.tropomi._download_product", side_effect=side_effect),
-        ):
-            mock_settings.cdse_user = "user@example.com"
-            mock_settings.cdse_password = "secret"
-            result = source.download(
-                tmp_path, (0, 0, 10, 10), variable="no2", year=2023, month=6, day=1
-            )
-
+        mock_settings = mocker.patch("eostrata.config.settings")
+        mock_settings.cdse_user = "user@example.com"
+        mock_settings.cdse_password = "secret"
+        mocker.patch("eostrata.sources.tropomi._search_products", return_value=products)
+        mocker.patch("eostrata.sources.tropomi._get_cdse_token", return_value="tok")
+        mocker.patch("eostrata.sources.tropomi._download_product", side_effect=side_effect)
+        result = source.download(
+            tmp_path, (0, 0, 10, 10), variable="no2", year=2023, month=6, day=1
+        )
         assert result == [fake_nc]
 
 
@@ -592,7 +570,7 @@ class TestTROPOMIToZarrMissingBranches:
         )
         assert "no2" in ds
 
-    def test_write_daily_grid_falls_back_when_existing_read_fails(self, tmp_path):
+    def test_write_daily_grid_falls_back_when_existing_read_fails(self, tmp_path, mocker):
         """If open_zarr raises while checking for duplicate timestamps, append proceeds."""
         _, var_path = _VARIABLE_MAP["no2"]
         (tmp_path / "swaths").mkdir()
@@ -604,9 +582,9 @@ class TestTROPOMIToZarrMissingBranches:
         # First write to create the group
         source.to_zarr(swath, zarr_root, bbox, variable="no2", year=2023, month=7, day=1)
 
-        with patch("xarray.open_zarr", side_effect=OSError("broken")):
-            # Should not raise — fallback appends
-            source.to_zarr(swath, zarr_root, bbox, variable="no2", year=2023, month=7, day=2)
+        mocker.patch("xarray.open_zarr", side_effect=OSError("broken"))
+        # Should not raise — fallback appends
+        source.to_zarr(swath, zarr_root, bbox, variable="no2", year=2023, month=7, day=2)
 
     def test_to_zarr_append_skips_duplicate_day(self, tmp_path):
         """Writing the same day twice must not create duplicate time entries."""

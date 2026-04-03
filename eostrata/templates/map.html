@@ -913,6 +913,40 @@
       refreshTile(collId, itemId, dt, aggParam, baselineParam);
     }
 
+    // Event listeners are attached once; guarded so both loadCatalog() and
+    // refreshCatalog() can call _setupListeners() without duplicating handlers.
+    let _listenersSetUp = false;
+    function _setupListeners() {
+      if (_listenersSetUp) return;
+      _listenersSetUp = true;
+      const collSel = document.getElementById('sel-collection');
+      collSel.addEventListener('change', () => onCollectionChange());
+      document.getElementById('sel-item').addEventListener('change', () => onItemChange());
+      document.getElementById('sel-datetime').addEventListener('change', updateLayer);
+      document.getElementById('inp-start').addEventListener('change', updateLayer);
+      document.getElementById('inp-end').addEventListener('change', updateLayer);
+      document.getElementById('sel-agg').addEventListener('change', onAggChange);
+      document.getElementById('inp-baseline-start').addEventListener('change', updateLayer);
+      document.getElementById('inp-baseline-end').addEventListener('change', updateLayer);
+      document.getElementById('sel-colormap').addEventListener('change', updateLayer);
+      document.getElementById('inp-rescale').addEventListener('input', () => {
+        const chk = document.getElementById('chk-autoscale');
+        if (chk.checked) {
+          chk.checked = false;
+          document.getElementById('inp-rescale').disabled = false;
+        }
+      });
+      document.getElementById('inp-rescale').addEventListener('change', updateLayer);
+      document.getElementById('chk-autoscale').addEventListener('change', () => {
+        const chk = document.getElementById('chk-autoscale');
+        document.getElementById('inp-rescale').disabled = chk.checked;
+        if (chk.checked && lastStats) {
+          const { stats, collId, itemId, dt, aggParam, baselineParam } = lastStats;
+          applyAutoScale(stats, collId, itemId, dt, aggParam, baselineParam);
+        }
+      });
+    }
+
     // Refresh catalog data in-place (preserves current map selection if still valid)
     async function refreshCatalog() {
       let data;
@@ -940,6 +974,10 @@
         catalog[it.collection_id].push(it);
       }
 
+      // Hide the "no data" warning if it was showing
+      document.getElementById('warning').style.display = 'none';
+      // Attach event listeners if this is the first time we have data
+      _setupListeners();
       // Restore previous collection/item selection if still available
       if (prevCollId && catalog[prevCollId]) {
         collSel.value = prevCollId;
@@ -979,32 +1017,7 @@
         }
         catalog[it.collection_id].push(it);
       }
-      collSel.addEventListener('change', () => onCollectionChange());
-      document.getElementById('sel-item').addEventListener('change', () => onItemChange());
-      document.getElementById('sel-datetime').addEventListener('change', updateLayer);
-      document.getElementById('inp-start').addEventListener('change', updateLayer);
-      document.getElementById('inp-end').addEventListener('change', updateLayer);
-      document.getElementById('sel-agg').addEventListener('change', onAggChange);
-      document.getElementById('inp-baseline-start').addEventListener('change', updateLayer);
-      document.getElementById('inp-baseline-end').addEventListener('change', updateLayer);
-      document.getElementById('sel-colormap').addEventListener('change', updateLayer);
-      document.getElementById('inp-rescale').addEventListener('input', () => {
-        // Editing the rescale field manually → untick auto-scale
-        const chk = document.getElementById('chk-autoscale');
-        if (chk.checked) {
-          chk.checked = false;
-          document.getElementById('inp-rescale').disabled = false;
-        }
-      });
-      document.getElementById('inp-rescale').addEventListener('change', updateLayer);
-      document.getElementById('chk-autoscale').addEventListener('change', () => {
-        const chk = document.getElementById('chk-autoscale');
-        document.getElementById('inp-rescale').disabled = chk.checked;
-        if (chk.checked && lastStats) {
-          const { stats, collId, itemId, dt, aggParam, baselineParam } = lastStats;
-          applyAutoScale(stats, collId, itemId, dt, aggParam, baselineParam);
-        }
-      });
+      _setupListeners();
 
       // Apply pre-selected values from query params
       if (PRESELECT.collection && catalog[PRESELECT.collection]) {

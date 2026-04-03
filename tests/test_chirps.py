@@ -35,7 +35,7 @@ class TestCHIRPSSource:
         assert self.source.zarr_group() == "chirps/global"
 
     def test_stac_item_id(self):
-        assert self.source.stac_item_id() == "chirps_global"
+        assert self.source.stac_item_id() == "global"
 
     def test_stac_properties(self):
         props = self.source.stac_properties(year=2023, month=6)

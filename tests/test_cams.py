@@ -49,10 +49,10 @@ class TestCAMSSource:
         assert self.source.zarr_group(variable="aod550") == "cams/aod550"
 
     def test_stac_item_id_default(self):
-        assert self.source.stac_item_id() == "cams_pm2p5"
+        assert self.source.stac_item_id() == "pm2p5"
 
     def test_stac_item_id_custom_variable(self):
-        assert self.source.stac_item_id(variable="o3") == "cams_o3"
+        assert self.source.stac_item_id(variable="o3") == "o3"
 
     def test_stac_properties_multi_level(self):
         props = self.source.stac_properties(variable="no2", year=2022)
@@ -93,7 +93,7 @@ class TestCAMSSource:
 
     def test_catalog_meta(self):
         meta = CAMSSource.catalog_meta("pm2p5")
-        assert meta["item_id"] == "cams_pm2p5"
+        assert meta["item_id"] == "pm2p5"
         assert meta["variable"] == "pm2p5"
 
     def test_ui_fields(self):
@@ -139,7 +139,7 @@ class TestCAMSStacRegistrations:
         period_kwargs = {"variable": "pm2p5", "year": 2021, "months": [6]}
         items = self.source.stac_registrations(ds, period_kwargs)
         item = items[0]
-        assert item["item_id"] == "cams_pm2p5"
+        assert item["item_id"] == "pm2p5"
         assert item["datetime_"] == datetime(2021, 6, 1, tzinfo=UTC)
         assert item["variable"] == "pm2p5"
         assert PROP_VARIABLE in item["extra_properties"]

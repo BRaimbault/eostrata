@@ -229,7 +229,9 @@ class CDSSource(BaseSource):
     id = "cds"
     collection_id = "era5"
     collection_title = "ERA5 — Climate reanalysis (0.25°, monthly)"
-    collection_description = "Monthly climate reanalysis from the Copernicus Climate Data Store (ERA5)"
+    collection_description = (
+        "Monthly climate reanalysis from the Copernicus Climate Data Store (ERA5)"
+    )
     zarr_prefix = "era5"
     temporal_resolution = "monthly"
     default_lag_days = 90  # ERA5 has ~3-month production lag

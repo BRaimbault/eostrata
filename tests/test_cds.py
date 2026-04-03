@@ -25,7 +25,7 @@ class TestCDSSource:
 
     def test_metadata(self):
         assert self.source.id == "cds"
-        assert self.source.collection_id == "cds"
+        assert self.source.collection_id == "era5"
         assert self.source.temporal_resolution == "monthly"
 
     def test_zarr_group_default(self):
@@ -35,8 +35,8 @@ class TestCDSSource:
         assert self.source.zarr_group(variable="tp") == "era5/tp"
 
     def test_stac_item_id(self):
-        assert self.source.stac_item_id() == "era5_t2m"
-        assert self.source.stac_item_id(variable="tp") == "era5_tp"
+        assert self.source.stac_item_id() == "t2m"
+        assert self.source.stac_item_id(variable="tp") == "tp"
 
     def test_stac_properties(self):
         props = self.source.stac_properties(variable="t2m", year=2020)

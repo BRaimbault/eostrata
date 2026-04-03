@@ -88,7 +88,7 @@ class TestSentinelNDVISource:
         assert self.source.zarr_group() == "sentinel_ndvi/global"
 
     def test_stac_item_id(self):
-        assert self.source.stac_item_id() == "sentinel_ndvi_global"
+        assert self.source.stac_item_id() == "global"
 
     def test_stac_properties_dekad1(self):
         props = self.source.stac_properties(year=2023, month=6, dekad=1)
@@ -118,7 +118,7 @@ class TestSentinelNDVISource:
         reg = regs[0]
         assert reg["variable"] == "ndvi"
         assert reg["datetime_"] == datetime(2024, 3, 1, tzinfo=UTC)
-        assert reg["item_id"] == "sentinel_ndvi_global"
+        assert reg["item_id"] == "global"
 
     def test_latest_available_is_in_past(self):
         latest = self.source.latest_available()

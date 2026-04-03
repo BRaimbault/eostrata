@@ -107,6 +107,35 @@ class TestExamples:
         assert "zonalstats_body" in item
 
 
+class TestSchedulerUI:
+    def test_returns_html(self, client):
+        resp = client.get("/scheduler")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        assert "<html" in resp.text.lower()
+
+
+class TestLifespanStorageCheck:
+    def test_unwritable_storage_dir_raises(self, tmp_path, monkeypatch):
+        """lifespan should raise RuntimeError if a storage directory is not writable."""
+        import importlib
+        from unittest.mock import patch
+
+        monkeypatch.setenv("EOSTRATA_CATALOG_PATH", str(tmp_path / "catalog.json"))
+        monkeypatch.setenv("EOSTRATA_ZARR_ROOT", str(tmp_path / "zarr"))
+
+        import eostrata.config as cfg_mod
+
+        importlib.reload(cfg_mod)
+
+        from eostrata.server import app
+
+        with patch("os.access", return_value=False):
+            with pytest.raises(RuntimeError, match="not writable"):
+                with TestClient(app):
+                    pass
+
+
 class TestMapViewer:
     def test_returns_html(self, client):
         resp = client.get("/map")

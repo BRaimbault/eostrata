@@ -182,6 +182,31 @@ class TestEvictGroup:
         freed = evict_group(tmp_path, "worldpop/nonexistent")
         assert freed == 0.0
 
+    def test_removes_access_sentinels_when_present(self, tmp_path):
+        """evict_group should also remove the access sentinel directory if it exists."""
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021])
+        record_access(tmp_path, "worldpop/nga", [np.datetime64("2020-01-01")])
+        adir = _access_dir(tmp_path, "worldpop/nga")
+        assert adir.exists()
+        evict_group(tmp_path, "worldpop/nga")
+        assert not adir.exists()
+
+
+class TestConsolidateMetadataWithTimeout:
+    def test_timeout_logs_warning_and_does_not_raise(self, tmp_path, mocker):
+        """FuturesTimeoutError during consolidation should only log a warning."""
+        import time
+
+        from eostrata.cache import _consolidate_metadata_with_timeout
+
+        # Block consolidation indefinitely so the short timeout fires.
+        mocker.patch(
+            "eostrata.cache.zarr.consolidate_metadata",
+            side_effect=lambda *a, **k: time.sleep(60),
+        )
+        # Must complete without raising — just logs a warning.
+        _consolidate_metadata_with_timeout(tmp_path, timeout_s=0)
+
 
 class TestEvictTimestamp:
     def test_removes_one_timestamp(self, tmp_path):

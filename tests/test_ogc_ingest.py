@@ -85,6 +85,17 @@ class TestInputValidation:
         resp = client.post("/processes/ingest/execution", json={"inputs": {}})
         assert resp.status_code == 422
 
+    def test_too_many_queued_returns_429(self, client):
+        from unittest.mock import MagicMock, patch
+
+        mock_settings = MagicMock()
+        mock_settings.ingest_max_queued = 0
+        with patch("eostrata.ogc.ingest.settings", mock_settings):
+            resp = client.post(
+                "/processes/ingest/execution", json={"inputs": {"source": "chirps"}}
+            )
+        assert resp.status_code == 429
+
     def test_invalid_source_returns_422(self, client):
         resp = client.post("/processes/ingest/execution", json={"inputs": {"source": "sentinel"}})
         assert resp.status_code == 422

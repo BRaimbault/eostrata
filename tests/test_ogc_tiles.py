@@ -186,6 +186,26 @@ class TestResolve:
         assert exc_info.value.status_code == 422
 
 
+# ── Variables extension ────────────────────────────────────────────────────────
+
+
+class TestVariablesExtension:
+    def test_variables_returns_data_vars(self, setup):
+        """_VariablesExtension /variables endpoint returns the dataset variable names."""
+        from fastapi.testclient import TestClient
+
+        from eostrata.ogc.tiles import _internal_app
+
+        tmp_path, catalog_path, zarr_root = setup
+        client = TestClient(_internal_app)
+        resp = client.get(
+            "/internal/variables",
+            params={"url": str(zarr_root), "group": "worldpop/nga"},
+        )
+        assert resp.status_code == 200
+        assert "population" in resp.json()
+
+
 # ── Route tests ────────────────────────────────────────────────────────────────
 
 

@@ -347,13 +347,6 @@
         Auto-scale from stats
       </label>
 
-      <label>Opacity</label>
-      <div style="display:flex;align-items:center;gap:8px;margin-top:3px">
-        <input id="inp-opacity" type="range" min="0" max="1" step="0.05" value="0.8"
-               style="flex:1;accent-color:#2563eb;cursor:pointer"/>
-        <span id="lbl-opacity" style="font-size:12px;color:#374151;min-width:30px;text-align:right">80%</span>
-      </div>
-
       <div id="warning"></div>
       <div id="status"></div>
       <div id="stats-section">
@@ -772,7 +765,7 @@
       if (dataLayer) { map.removeLayer(dataLayer); dataLayer = null; }
       dataLayer = L.tileLayer(buildTileUrl(collId, itemId, dt, aggVal, baselineVal), {
         tileSize: 256,
-        opacity: parseFloat(document.getElementById('inp-opacity').value) || 0.8,
+        opacity: 0.8,
         errorTileUrl: ''
       }).addTo(map);
 
@@ -817,7 +810,7 @@
       if (dataLayer) { map.removeLayer(dataLayer); dataLayer = null; }
       dataLayer = L.tileLayer(buildTileUrl(collId, itemId, dt, aggVal, baselineVal), {
         tileSize: 256,
-        opacity: parseFloat(document.getElementById('inp-opacity').value) || 0.8,
+        opacity: 0.8,
         errorTileUrl: ''
       }).addTo(map);
     }
@@ -1011,11 +1004,6 @@
           const { stats, collId, itemId, dt, aggParam, baselineParam } = lastStats;
           applyAutoScale(stats, collId, itemId, dt, aggParam, baselineParam);
         }
-      });
-      document.getElementById('inp-opacity').addEventListener('input', () => {
-        const val = parseFloat(document.getElementById('inp-opacity').value);
-        document.getElementById('lbl-opacity').textContent = Math.round(val * 100) + '%';
-        if (dataLayer) dataLayer.setOpacity(val);
       });
 
       // Apply pre-selected values from query params

@@ -88,12 +88,12 @@ class TemplateSource(BaseSource):
         Called by ``rebuild-catalog``.  ``dataset_name`` is the second part of
         the group path (e.g. ``"nga"`` from ``worldpop/nga``).
 
-        Override only if the default ``f"{zarr_prefix}_{dataset_name}"`` item id
-        does not suit your source.  Delete this method to use the default.
+        Override only if the default ``dataset_name`` item id does not suit
+        your source.  Delete this method to use the default.
         """
         # TODO: customise or delete this method
         return {
-            "item_id": f"{cls.zarr_prefix}_{dataset_name}",
+            "item_id": dataset_name,
             "variable": cls.VARIABLE,
             "extra": {PROP_VARIABLE: cls.VARIABLE},
         }
@@ -164,8 +164,8 @@ class TemplateSource(BaseSource):
 
     def stac_item_id(self, **_: Any) -> str:
         """Return the STAC item id for the given params."""
-        # TODO: return a stable, unique item id
-        return "template_global"
+        # TODO: return a stable, unique item id (scoped to the collection, no prefix needed)
+        return "global"
 
     def stac_properties(self, *, year: int, month: int, **_: Any) -> dict:
         """Return extra STAC item properties for the given params."""

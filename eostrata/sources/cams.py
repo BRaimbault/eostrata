@@ -276,7 +276,7 @@ class CAMSSource(BaseSource):
     def catalog_meta(cls, dataset_name: str) -> dict:
         # dataset_name IS the variable (e.g. "pm2p5" from "cams/pm2p5")
         return {
-            "item_id": f"cams_{dataset_name}",
+            "item_id": dataset_name,
             "variable": dataset_name,
             "extra": {PROP_VARIABLE: dataset_name},
         }
@@ -347,7 +347,7 @@ class CAMSSource(BaseSource):
 
     def stac_item_id(self, *, variable: str = "pm2p5", **_: Any) -> str:
         """One STAC item per CAMS variable."""
-        return f"cams_{variable}"
+        return variable
 
     def stac_properties(self, *, variable: str = "pm2p5", year: int, **_: Any) -> dict:
         cads_name = _VARIABLE_MAP.get(variable, variable)

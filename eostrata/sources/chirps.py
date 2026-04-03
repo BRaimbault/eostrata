@@ -118,7 +118,7 @@ class CHIRPSSource(BaseSource):
 
     def stac_item_id(self, **_: Any) -> str:
         """Single STAC item for the global CHIRPS collection."""
-        return "chirps_global"
+        return "global"
 
     def stac_properties(self, *, year: int, month: int, **_: Any) -> dict:
         return {

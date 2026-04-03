@@ -417,7 +417,7 @@ class TROPOMISource(BaseSource):
     def catalog_meta(cls, dataset_name: str) -> dict:
         # dataset_name IS the variable (e.g. "no2" from "tropomi/no2")
         return {
-            "item_id": f"tropomi_{dataset_name}",
+            "item_id": dataset_name,
             "variable": dataset_name,
             "extra": {PROP_VARIABLE: dataset_name},
         }
@@ -575,7 +575,7 @@ class TROPOMISource(BaseSource):
 
     def stac_item_id(self, *, variable: str = "no2", **_: Any) -> str:
         """One STAC item per TROPOMI variable (all days as timesteps)."""
-        return f"tropomi_{variable}"
+        return variable
 
     def stac_properties(
         self, *, variable: str = "no2", year: int, month: int, day: int, **_: Any

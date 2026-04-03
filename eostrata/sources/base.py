@@ -153,7 +153,7 @@ class BaseSource(ABC):
         Override in subclasses when the default derivation doesn't apply.
         """
         return {
-            "item_id": f"{cls.zarr_prefix}_{dataset_name}",
+            "item_id": dataset_name,
             "variable": cls.VARIABLE,
             "extra": {PROP_VARIABLE: cls.VARIABLE},
         }

@@ -30,13 +30,11 @@ dependencies = [
     "h5netcdf>=1.3",
     "cdsapi>=0.7.7",
     "filelock>=3.12",
-]
-
-[project.optional-dependencies]
-scheduler = [
     "apscheduler>=3.11",
     "pyyaml>=6.0",
 ]
+
+[project.optional-dependencies]
 cds = ["cdsapi>=0.7.7"]
 dev = [
     "pytest>=9",

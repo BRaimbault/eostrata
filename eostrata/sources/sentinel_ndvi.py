@@ -138,7 +138,7 @@ class SentinelNDVISource(BaseSource):
 
     id = "sentinel_ndvi"
     collection_id = "sentinel_ndvi"
-    collection_title = "Sentinel NDVI (CGLS)"
+    collection_title = "Sentinel-3 NDVI — CGLS composites (300 m, dekadal)"
     collection_description = (
         "Sentinel-3 NDVI 300m dekadal composites from the Copernicus Global Land Service"
     )

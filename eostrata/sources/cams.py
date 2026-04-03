@@ -251,7 +251,7 @@ class CAMSSource(BaseSource):
 
     id = "cams"
     collection_id = "cams"
-    collection_title = "CAMS air quality reanalysis (EAC4)"
+    collection_title = "CAMS EAC4 — Air quality reanalysis (0.75°, monthly)"
     collection_description = (
         "CAMS Global Reanalysis EAC4 monthly surface air quality "
         "from the Copernicus Atmosphere Data Store"

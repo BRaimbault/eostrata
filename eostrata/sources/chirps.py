@@ -54,7 +54,7 @@ class CHIRPSSource(BaseSource):
 
     id = "chirps"
     collection_id = "chirps"
-    collection_title = "CHIRPS precipitation"
+    collection_title = "CHIRPS — Precipitation (0.05°, monthly)"
     collection_description = "Climate Hazards Group InfraRed Precipitation with Station data"
     zarr_prefix = "chirps"
     temporal_resolution = "monthly"

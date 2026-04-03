@@ -40,7 +40,7 @@ class WorldPopSource(BaseSource):
 
     id = "worldpop"
     collection_id = "worldpop"
-    collection_title = "WorldPop population"
+    collection_title = "WorldPop — Global population (1 km, annual)"
     collection_description = "Global population rasters from WorldPop (worldpop.org)"
     zarr_prefix = "worldpop"
     temporal_resolution = "annual"

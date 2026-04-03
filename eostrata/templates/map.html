@@ -322,7 +322,7 @@
       <select id="sel-colormap">
         <option value="">default</option>
         <optgroup label="Sequential">
-          <option value="viridis">viridis</option>
+          <option value="viridis" selected>viridis</option>
           <option value="plasma">plasma</option>
           <option value="inferno">inferno</option>
           <option value="magma">magma</option>
@@ -341,9 +341,9 @@
         </optgroup>
       </select>
       <label>Value range (min,max)</label>
-      <input id="inp-rescale" type="text" placeholder="e.g. 0,1000 — blank = auto"/>
+      <input id="inp-rescale" type="text" placeholder="e.g. 0,1000 — blank = auto" disabled/>
       <label class="label-checkbox">
-        <input id="chk-autoscale" type="checkbox"/>
+        <input id="chk-autoscale" type="checkbox" checked/>
         Auto-scale from stats
       </label>
 
@@ -538,10 +538,13 @@
       const tbody = document.getElementById('cfg-sources-tbody');
       SOURCES.forEach(function(s) {
         const descs = s.variable_descriptions || {};
-        const varHtml = (s.variables || []).map(function(v) {
-          const d = descs[v] ? v + ' — ' + descs[v] : v;
-          return '<div class="vars">' + d + '</div>';
-        }).join('');
+        const vars = s.variables || [];
+        const fullDescs = vars.map(function(v) {
+          return descs[v] ? v + ' — ' + descs[v] : v;
+        }).join(' · ');
+        const varHtml = vars.length
+          ? '<span class="vars" title="' + fullDescs + '">' + vars.join(', ') + '</span>'
+          : '';
         const tr = document.createElement('tr');
         tr.innerHTML =
           '<td>' + s.id + '</td>' +
@@ -917,6 +920,42 @@
       refreshTile(collId, itemId, dt, aggParam, baselineParam);
     }
 
+    // Refresh catalog data in-place (preserves current map selection if still valid)
+    async function refreshCatalog() {
+      let data;
+      try {
+        const resp = await fetch('/examples');
+        data = await resp.json();
+      } catch (e) { return; }
+      if (!data.items || data.items.length === 0) return;
+
+      const collSel = document.getElementById('sel-collection');
+      const prevCollId = collSel.value;
+      const prevItemId = document.getElementById('sel-item').value;
+
+      // Rebuild catalog dict and collection dropdown from scratch
+      for (const k in catalog) delete catalog[k];
+      collSel.innerHTML = '';
+      for (const it of data.items) {
+        if (!catalog[it.collection_id]) {
+          catalog[it.collection_id] = [];
+          const opt = document.createElement('option');
+          opt.value = it.collection_id;
+          opt.textContent = it.collection_id;
+          collSel.appendChild(opt);
+        }
+        catalog[it.collection_id].push(it);
+      }
+
+      // Restore previous collection/item selection if still available
+      if (prevCollId && catalog[prevCollId]) {
+        collSel.value = prevCollId;
+        onCollectionChange(prevItemId);
+      } else {
+        onCollectionChange();
+      }
+    }
+
     async function loadCatalog() {
       setStatus('Loading catalog…');
       let data;
@@ -1131,6 +1170,7 @@
     // ── Jobs list ────────────────────────────────────────────────────────────
 
     let _jobPoller = null;
+    let _prevRunningIds = new Set(); // track running→done transitions
 
     function startJobPoller() {
       if (_jobPoller) return; // already polling
@@ -1150,6 +1190,16 @@
       } catch (e) { return; }
 
       const jobs = (data.jobs || []).slice().reverse(); // newest first
+
+      // Detect jobs that just transitioned running → successful
+      const prevRunning = _prevRunningIds;
+      _prevRunningIds = new Set(jobs.filter(j => j.status === 'running').map(j => j.jobID));
+      const anyJustSucceeded = jobs.some(j => j.status === 'successful' && prevRunning.has(j.jobID));
+      if (anyJustSucceeded) {
+        _quotaLoaded = false; // force quota tab to reload next open
+        refreshCatalog();
+      }
+
       const el   = document.getElementById('jobs-list');
       if (!jobs.length) {
         el.innerHTML = '<span style="font-size:12px;color:#9ca3af">No jobs yet.</span>';

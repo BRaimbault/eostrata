@@ -391,9 +391,9 @@ class TROPOMISource(BaseSource):
 
     id = "tropomi"
     collection_id = "tropomi"
-    collection_title = "Sentinel-5P TROPOMI air quality"
+    collection_title = "TROPOMI — S5P air quality columns (0.1°, daily)"
     collection_description = (
-        "Daily surface-level air quality columns from the Sentinel-5P "
+        "Daily air quality columns from the Sentinel-5P "
         "TROPOMI instrument via the Copernicus Data Space"
     )
     zarr_prefix = "tropomi"

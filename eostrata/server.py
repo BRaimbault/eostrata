@@ -42,6 +42,7 @@ from titiler.xarray.factory import TilerFactory
 from eostrata.aggregate import AggregatingReader
 from eostrata.catalog import PystacClient, load_or_create
 from eostrata.config import settings
+from eostrata.constants import PROP_DATETIMES, PROP_VARIABLE, PROP_ZARR_GROUP
 from eostrata.ogc.ingest import router as ingest_router
 from eostrata.ogc.processes import router as processes_router
 from eostrata.ogc.scheduler_router import router as scheduler_router
@@ -390,14 +391,14 @@ def examples() -> dict:
         if not isinstance(coll, pystac.Collection):
             continue
         for item in coll.get_items():
-            datetimes: list[str] = item.properties.get("eostrata:datetimes", [])
+            datetimes: list[str] = item.properties.get(PROP_DATETIMES, [])
             if not datetimes:
                 # Fallback: derive from start/end
                 start = item.properties.get("start_datetime") or item.properties.get("datetime")
                 if start:
                     datetimes = [start]
-            variable = item.properties.get("eostrata:variable", "")
-            zarr_group = item.properties.get("eostrata:zarr_group", "")
+            variable = item.properties.get(PROP_VARIABLE, "")
+            zarr_group = item.properties.get(PROP_ZARR_GROUP, "")
             first_dt = datetimes[0] if datetimes else None
 
             tile_qs = f"item={item.id}"
@@ -645,7 +646,7 @@ def _catalog_openapi_examples() -> dict[str, dict[str, dict]]:
                     "summary": f"{item.id} ({coll.id})",
                 }
                 # Use eostrata:datetimes first, fall back to start/end interval bounds
-                datetimes: list[str] = item.properties.get("eostrata:datetimes", [])
+                datetimes: list[str] = item.properties.get(PROP_DATETIMES, [])
                 if not datetimes:
                     for key in ("start_datetime", "end_datetime", "datetime"):
                         val = item.properties.get(key)

@@ -42,6 +42,7 @@ import h5py
 import httpx
 import numpy as np
 
+from eostrata.constants import PROP_RESOLUTION, PROP_SOURCE, PROP_VARIABLE
 from eostrata.sources.base import BaseSource, register_source
 from eostrata.store import _group_lock, geotiff_to_zarr  # noqa: F401 — imported for type hints only
 
@@ -418,7 +419,7 @@ class TROPOMISource(BaseSource):
         return {
             "item_id": f"tropomi_{dataset_name}",
             "variable": dataset_name,
-            "extra": {"eostrata:variable": dataset_name},
+            "extra": {PROP_VARIABLE: dataset_name},
         }
 
     def download(
@@ -581,13 +582,13 @@ class TROPOMISource(BaseSource):
     ) -> dict:
         product_type, var_path = _VARIABLE_MAP.get(variable, ("", ""))
         return {
-            "eostrata:variable": variable,
+            PROP_VARIABLE: variable,
             "eostrata:tropomi_product": product_type,
             "eostrata:hdf5_path": var_path,
-            "eostrata:resolution": "0.1deg",
+            PROP_RESOLUTION: "0.1deg",
             "eostrata:units": _VARIABLE_UNITS.get(variable, ""),
             "eostrata:qa_threshold": _QA_THRESHOLD,
-            "eostrata:source": "Sentinel-5P TROPOMI OFFLINE L2",
+            PROP_SOURCE: "Sentinel-5P TROPOMI OFFLINE L2",
         }
 
     def latest_available(self) -> datetime:

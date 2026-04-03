@@ -10,6 +10,8 @@ import pystac
 import pytest
 from fastapi.testclient import TestClient
 
+from eostrata.constants import PROP_VARIABLE, PROP_ZARR_GROUP
+
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
@@ -339,8 +341,8 @@ def _make_catalog_with_item_no_datetimes() -> pystac.Catalog:
             "start_datetime": "2021-01-01T00:00:00+00:00",
             "end_datetime": "2021-12-31T00:00:00+00:00",
             "datetime": None,
-            "eostrata:variable": "population",
-            "eostrata:zarr_group": "worldpop/test",
+            PROP_VARIABLE: "population",
+            PROP_ZARR_GROUP: "worldpop/test",
             # deliberately NO eostrata:datetimes
         },
     )

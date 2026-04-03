@@ -39,6 +39,7 @@ import httpx
 import numpy as np
 from tqdm import tqdm
 
+from eostrata.constants import PROP_RESOLUTION, PROP_SOURCE, PROP_VARIABLE
 from eostrata.sources.base import BaseSource, register_source
 from eostrata.store import geotiff_to_zarr
 
@@ -152,7 +153,7 @@ class SentinelNDVISource(BaseSource):
         return {
             "item_id": "sentinel_ndvi_global",
             "variable": cls.VARIABLE,
-            "extra": {"eostrata:variable": cls.VARIABLE, "eostrata:source": "Sentinel-3 OLCI"},
+            "extra": {PROP_VARIABLE: cls.VARIABLE, PROP_SOURCE: "Sentinel-3 OLCI"},
         }
 
     def download(
@@ -222,11 +223,11 @@ class SentinelNDVISource(BaseSource):
         start_day = _DEKAD_START_DAYS[dekad]
         end_day = _end_day_of_dekad(year, month, dekad)
         return {
-            "eostrata:variable": self.VARIABLE,
-            "eostrata:resolution": "300m",
+            PROP_VARIABLE: self.VARIABLE,
+            PROP_RESOLUTION: "300m",
             "eostrata:release": "v2",
             "eostrata:product": _COVERAGE_ID,
-            "eostrata:source": "Sentinel-3 OLCI",
+            PROP_SOURCE: "Sentinel-3 OLCI",
             "eostrata:period": (
                 f"{year:04d}-{month:02d}-{start_day:02d}/{year:04d}-{month:02d}-{end_day:02d}"
             ),

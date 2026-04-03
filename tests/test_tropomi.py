@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+from eostrata.constants import PROP_RESOLUTION, PROP_VARIABLE
 from eostrata.sources.tropomi import (
     _VARIABLE_MAP,
     TROPOMISource,
@@ -335,9 +336,9 @@ class TestTROPOMISource:
 
     def test_stac_properties(self):
         props = self.source.stac_properties(variable="no2", year=2023, month=6, day=15)
-        assert props["eostrata:variable"] == "no2"
+        assert props[PROP_VARIABLE] == "no2"
         assert props["eostrata:tropomi_product"] == "L2__NO2___"
-        assert "0.1deg" in props["eostrata:resolution"]
+        assert "0.1deg" in props[PROP_RESOLUTION]
         assert props["eostrata:qa_threshold"] == 0.75
 
     def test_latest_available_is_in_past(self):
@@ -412,7 +413,7 @@ class TestTROPOMIStacRegistrations:
         assert item["item_id"] == "tropomi_co"
         assert item["datetime_"] == datetime(2022, 8, 10, tzinfo=UTC)
         assert item["variable"] == "co"
-        assert "eostrata:variable" in item["extra_properties"]
+        assert PROP_VARIABLE in item["extra_properties"]
 
 
 class TestGridSwathDataZeroSizeGrid:

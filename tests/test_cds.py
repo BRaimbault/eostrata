@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from eostrata.constants import PROP_VARIABLE
 from eostrata.sources.cds import _VARIABLE_MAP, CDSSource
 
 
@@ -39,7 +40,7 @@ class TestCDSSource:
 
     def test_stac_properties(self):
         props = self.source.stac_properties(variable="t2m", year=2020)
-        assert props["eostrata:variable"] == "t2m"
+        assert props[PROP_VARIABLE] == "t2m"
         assert props["eostrata:cds_variable"] == "2m_temperature"
 
     def test_latest_available_is_in_past(self):

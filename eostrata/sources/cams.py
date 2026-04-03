@@ -38,6 +38,7 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
+from eostrata.constants import PROP_RESOLUTION, PROP_VARIABLE
 from eostrata.sources.base import BaseSource, register_source
 
 logger = logging.getLogger(__name__)
@@ -277,7 +278,7 @@ class CAMSSource(BaseSource):
         return {
             "item_id": f"cams_{dataset_name}",
             "variable": dataset_name,
-            "extra": {"eostrata:variable": dataset_name},
+            "extra": {PROP_VARIABLE: dataset_name},
         }
 
     def download(
@@ -351,9 +352,9 @@ class CAMSSource(BaseSource):
     def stac_properties(self, *, variable: str = "pm2p5", year: int, **_: Any) -> dict:
         cads_name = _VARIABLE_MAP.get(variable, variable)
         return {
-            "eostrata:variable": variable,
+            PROP_VARIABLE: variable,
             "eostrata:cams_variable": cads_name,
-            "eostrata:resolution": "0.75deg",
+            PROP_RESOLUTION: "0.75deg",
             "eostrata:dataset": _ADS_DATASET,
             "eostrata:pressure_level": "1000hPa" if variable in _MULTI_LEVEL_VARS else "single",
         }

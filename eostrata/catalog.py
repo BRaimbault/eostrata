@@ -13,6 +13,14 @@ from stac_fastapi.types.core import BaseCoreClient
 from stac_fastapi.types.errors import NotFoundError
 from stac_fastapi.types.stac import Collection, Collections, Item, ItemCollection
 
+from eostrata.constants import (
+    PROP_DATETIMES,
+    PROP_SOURCE,
+    PROP_VARIABLE,
+    PROP_ZARR_GROUP,
+    PROP_ZARR_ROOT,
+)
+
 logger = logging.getLogger(__name__)
 
 CATALOG_ID = "eostrata"
@@ -142,7 +150,7 @@ def register_item(
             interval_start = datetime_
             interval_end = datetime_
         # Accumulate the exact list of ingested timestamps (preserves gap information)
-        existing_timestamps: list[str] = existing.properties.get("eostrata:datetimes", [])
+        existing_timestamps: list[str] = existing.properties.get(PROP_DATETIMES, [])
         new_ts = datetime_.isoformat()
         ingested_datetimes = sorted(set(existing_timestamps) | {new_ts})
         collection.remove_item(item_id)
@@ -167,11 +175,11 @@ def register_item(
     }
 
     properties = {
-        "eostrata:source": collection_id,
-        "eostrata:variable": variable,
-        "eostrata:zarr_group": zarr_group,
-        "eostrata:zarr_root": str(zarr_root),
-        "eostrata:datetimes": ingested_datetimes,
+        PROP_SOURCE: collection_id,
+        PROP_VARIABLE: variable,
+        PROP_ZARR_GROUP: zarr_group,
+        PROP_ZARR_ROOT: str(zarr_root),
+        PROP_DATETIMES: ingested_datetimes,
         "datetime": None,
         "start_datetime": interval_start.isoformat(),
         "end_datetime": interval_end.isoformat(),
@@ -228,9 +236,9 @@ def remove_timestamp(
         if not isinstance(collection, pystac.Collection):
             continue
         for item in list(collection.get_items()):
-            if item.properties.get("eostrata:zarr_group") != group_path:
+            if item.properties.get(PROP_ZARR_GROUP) != group_path:
                 continue
-            datetimes: list[str] = item.properties.get("eostrata:datetimes", [])
+            datetimes: list[str] = item.properties.get(PROP_DATETIMES, [])
             remaining = [dt for dt in datetimes if not dt.startswith(ts_date)]
             if len(remaining) == len(datetimes):
                 continue
@@ -241,7 +249,7 @@ def remove_timestamp(
                 dts = [datetime.fromisoformat(dt) for dt in remaining]
                 start = min(dts).replace(tzinfo=UTC) if min(dts).tzinfo is None else min(dts)
                 end = max(dts).replace(tzinfo=UTC) if max(dts).tzinfo is None else max(dts)
-                item.properties["eostrata:datetimes"] = sorted(remaining)
+                item.properties[PROP_DATETIMES] = sorted(remaining)
                 item.properties["start_datetime"] = start.isoformat()
                 item.properties["end_datetime"] = end.isoformat()
                 item.common_metadata.start_datetime = start
@@ -278,9 +286,9 @@ def resolve_item(
         raise ValueError(f"Item '{item_id}' has no zarr asset.")
 
     return {
-        "zarr_root": item.properties.get("eostrata:zarr_root", "data/zarr"),
-        "zarr_group": item.properties["eostrata:zarr_group"],
-        "variable": item.properties["eostrata:variable"],
+        "zarr_root": item.properties.get(PROP_ZARR_ROOT, "data/zarr"),
+        "zarr_group": item.properties[PROP_ZARR_GROUP],
+        "variable": item.properties[PROP_VARIABLE],
         "start_datetime": item.properties.get("start_datetime"),
         "end_datetime": item.properties.get("end_datetime"),
     }

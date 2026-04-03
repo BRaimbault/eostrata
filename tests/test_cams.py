@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from eostrata.constants import PROP_RESOLUTION, PROP_VARIABLE
 from eostrata.sources.cams import (
     _MULTI_LEVEL_VARS,
     _VARIABLE_MAP,
@@ -56,8 +57,8 @@ class TestCAMSSource:
 
     def test_stac_properties_multi_level(self):
         props = self.source.stac_properties(variable="no2", year=2022)
-        assert props["eostrata:variable"] == "no2"
-        assert props["eostrata:resolution"] == "0.75deg"
+        assert props[PROP_VARIABLE] == "no2"
+        assert props[PROP_RESOLUTION] == "0.75deg"
         assert props["eostrata:dataset"] == "cams-global-reanalysis-eac4-monthly"
         assert "1000hPa" in props["eostrata:pressure_level"]
 
@@ -142,7 +143,7 @@ class TestCAMSStacRegistrations:
         assert item["item_id"] == "cams_pm2p5"
         assert item["datetime_"] == datetime(2021, 6, 1, tzinfo=UTC)
         assert item["variable"] == "pm2p5"
-        assert "eostrata:variable" in item["extra_properties"]
+        assert PROP_VARIABLE in item["extra_properties"]
 
     def test_datetimes_are_month_starts(self):
         ds = MagicMock()

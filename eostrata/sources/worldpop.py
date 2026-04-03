@@ -10,6 +10,7 @@ from typing import Any
 
 import numpy as np
 
+from eostrata.constants import PROP_RESOLUTION, PROP_VARIABLE
 from eostrata.sources.base import BaseSource, _stream_download, register_source
 from eostrata.store import geotiff_to_zarr
 
@@ -53,7 +54,7 @@ class WorldPopSource(BaseSource):
         return {
             "item_id": f"worldpop_{dataset_name}",
             "variable": cls.VARIABLE,
-            "extra": {"eostrata:iso3": dataset_name.upper(), "eostrata:variable": cls.VARIABLE},
+            "extra": {"eostrata:iso3": dataset_name.upper(), PROP_VARIABLE: cls.VARIABLE},
         }
 
     def download(
@@ -103,8 +104,8 @@ class WorldPopSource(BaseSource):
     def stac_properties(self, *, iso3: str, year: int, **_: Any) -> dict:
         return {
             "eostrata:iso3": iso3.upper(),
-            "eostrata:variable": self.VARIABLE,
-            "eostrata:resolution": "1km",
+            PROP_VARIABLE: self.VARIABLE,
+            PROP_RESOLUTION: "1km",
             "eostrata:release": _RELEASE,
         }
 

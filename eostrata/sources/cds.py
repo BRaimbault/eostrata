@@ -31,6 +31,7 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
+from eostrata.constants import PROP_RESOLUTION, PROP_VARIABLE
 from eostrata.sources.base import BaseSource, register_source
 from eostrata.store import _group_lock
 
@@ -249,7 +250,7 @@ class CDSSource(BaseSource):
         return {
             "item_id": f"era5_{dataset_name}",
             "variable": dataset_name,
-            "extra": {"eostrata:variable": dataset_name},
+            "extra": {PROP_VARIABLE: dataset_name},
         }
 
     def download(
@@ -322,9 +323,9 @@ class CDSSource(BaseSource):
     def stac_properties(self, *, variable: str = "t2m", year: int, **_: Any) -> dict:
         cds_name = _VARIABLE_MAP.get(variable, variable)
         return {
-            "eostrata:variable": variable,
+            PROP_VARIABLE: variable,
             "eostrata:cds_variable": cds_name,
-            "eostrata:resolution": "0.25deg",
+            PROP_RESOLUTION: "0.25deg",
             "eostrata:dataset": _CDS_DATASET,
             "eostrata:product_type": _PRODUCT_TYPE,
         }

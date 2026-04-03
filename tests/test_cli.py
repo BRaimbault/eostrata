@@ -12,6 +12,7 @@ from rasterio.transform import from_bounds
 from typer.testing import CliRunner
 
 from eostrata.cli import _ALL_MONTHS, _parse_int_list, app
+from eostrata.constants import PROP_VARIABLE, PROP_ZARR_GROUP
 
 runner = CliRunner()
 
@@ -813,7 +814,7 @@ class TestList:
             geometry=None,
             bbox=[2.0, 4.0, 6.0, 8.0],
             datetime=datetime(2020, 6, 1, tzinfo=UTC),
-            properties={"eostrata:variable": "population", "eostrata:zarr_group": "worldpop/nga"},
+            properties={PROP_VARIABLE: "population", PROP_ZARR_GROUP: "worldpop/nga"},
         )
         coll.add_item(item)
         save(cat_, catalog_path)
@@ -844,8 +845,8 @@ class TestList:
                 "start_datetime": "2020-01-01T00:00:00+00:00",
                 "end_datetime": "2020-12-31T00:00:00+00:00",
                 "datetime": None,
-                "eostrata:variable": "population",
-                "eostrata:zarr_group": "worldpop/nga",
+                PROP_VARIABLE: "population",
+                PROP_ZARR_GROUP: "worldpop/nga",
             },
         )
         coll.add_item(item)

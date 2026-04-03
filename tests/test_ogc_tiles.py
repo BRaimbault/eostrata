@@ -10,6 +10,8 @@ import pytest
 import xarray as xr
 from fastapi.testclient import TestClient
 
+from eostrata.constants import PROP_VARIABLE, PROP_ZARR_GROUP
+
 
 def _register_item(catalog_path: Path, zarr_root: Path) -> None:
     from eostrata import catalog as cat
@@ -183,8 +185,8 @@ class TestResolve:
             bbox=[0, 0, 1, 1],
             datetime=datetime(2020, 1, 1, tzinfo=UTC),
             properties={
-                "eostrata:zarr_group": "worldpop/x",
-                "eostrata:variable": "v",
+                PROP_ZARR_GROUP: "worldpop/x",
+                PROP_VARIABLE: "v",
             },
         )
         # Do NOT add zarr asset

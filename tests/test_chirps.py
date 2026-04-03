@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import numpy as np
 
+from eostrata.constants import PROP_VARIABLE
 from eostrata.sources.chirps import CHIRPSSource, _build_url
 
 
@@ -39,7 +40,7 @@ class TestCHIRPSSource:
 
     def test_stac_properties(self):
         props = self.source.stac_properties(year=2023, month=6)
-        assert props["eostrata:variable"] == "precipitation"
+        assert props[PROP_VARIABLE] == "precipitation"
         assert "mm/month" in props["eostrata:units"]
 
     def test_latest_available_is_in_past(self):

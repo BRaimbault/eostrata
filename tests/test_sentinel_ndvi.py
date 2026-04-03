@@ -9,6 +9,7 @@ import httpx
 import numpy as np
 import pytest
 
+from eostrata.constants import PROP_RESOLUTION, PROP_SOURCE, PROP_VARIABLE
 from eostrata.sources.sentinel_ndvi import (
     SentinelNDVISource,
     _build_wcs_url,
@@ -91,9 +92,9 @@ class TestSentinelNDVISource:
 
     def test_stac_properties_dekad1(self):
         props = self.source.stac_properties(year=2023, month=6, dekad=1)
-        assert props["eostrata:variable"] == "ndvi"
-        assert "300m" in props["eostrata:resolution"]
-        assert "Sentinel-3" in props["eostrata:source"]
+        assert props[PROP_VARIABLE] == "ndvi"
+        assert "300m" in props[PROP_RESOLUTION]
+        assert "Sentinel-3" in props[PROP_SOURCE]
         assert props["eostrata:period"] == "2023-06-01/2023-06-10"
 
     def test_stac_properties_dekad3(self):

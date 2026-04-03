@@ -9,6 +9,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from eostrata.constants import PROP_DATETIMES
+
 logger = logging.getLogger(__name__)
 
 app = typer.Typer(
@@ -221,7 +223,7 @@ def list_datasets(
         stac_table = Table("Collection", "Item ID", "Timestamps", title="STAC catalogue")
         for collection in catalogue.get_children():
             for item in collection.get_items():
-                timestamps: list[str] = item.properties.get("eostrata:datetimes", [])
+                timestamps: list[str] = item.properties.get(PROP_DATETIMES, [])
                 if timestamps:
                     # Show as short dates; flag gaps with a marker
                     dates = [t[:10] for t in timestamps]

@@ -35,6 +35,7 @@ from eostrata.aggregate import (
     AggregatingReader,
 )
 from eostrata.config import settings
+from eostrata.constants import PROP_VARIABLE, PROP_ZARR_GROUP, PROP_ZARR_ROOT
 
 
 @define
@@ -89,9 +90,9 @@ def _resolve(collection_id: str, item_id: str | None) -> dict:
         raise HTTPException(422, detail=f"Item '{item.id}' has no zarr asset.")
 
     return {
-        "zarr_root": item.properties.get("eostrata:zarr_root", str(settings.zarr_root)),
-        "zarr_group": item.properties["eostrata:zarr_group"],
-        "variable": item.properties["eostrata:variable"],
+        "zarr_root": item.properties.get(PROP_ZARR_ROOT, str(settings.zarr_root)),
+        "zarr_group": item.properties[PROP_ZARR_GROUP],
+        "variable": item.properties[PROP_VARIABLE],
     }
 
 

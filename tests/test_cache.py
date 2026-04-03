@@ -5,8 +5,6 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
 import numpy as np
 import pytest
 import xarray as xr
@@ -22,6 +20,7 @@ from eostrata.cache import (
     record_access,
     store_size_mb,
 )
+from eostrata.constants import PROP_DATETIMES
 
 
 def _write_fake_group(zarr_root: Path, group: str, size_kb: int = 10) -> None:
@@ -54,38 +53,38 @@ class TestRecordAccess:
         assert (access_dir / "2020-01-01T00:00:00").exists()
         assert (access_dir / "2021-01-01T00:00:00").exists()
 
-    def test_debounce_skips_touch_within_window(self, tmp_path):
+    def test_debounce_skips_touch_within_window(self, tmp_path, mocker):
         _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020])
         ts = [np.datetime64("2020-01-01")]
         record_access(tmp_path, "worldpop/nga", ts)
         sentinel = _access_dir(tmp_path, "worldpop/nga") / "2020-01-01T00:00:00"
         mtime_first = sentinel.stat().st_mtime
-        with patch("eostrata.cache.time.time", return_value=mtime_first + _DEBOUNCE_S - 1):
-            record_access(tmp_path, "worldpop/nga", ts)
+        mocker.patch("eostrata.cache.time.time", return_value=mtime_first + _DEBOUNCE_S - 1)
+        record_access(tmp_path, "worldpop/nga", ts)
         assert sentinel.stat().st_mtime == mtime_first
 
-    def test_debounce_allows_touch_after_window(self, tmp_path):
+    def test_debounce_allows_touch_after_window(self, tmp_path, mocker):
         _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020])
         ts = [np.datetime64("2020-01-01")]
         record_access(tmp_path, "worldpop/nga", ts)
         sentinel = _access_dir(tmp_path, "worldpop/nga") / "2020-01-01T00:00:00"
         mtime_first = sentinel.stat().st_mtime
-        with patch("eostrata.cache.time.time", return_value=mtime_first + _DEBOUNCE_S + 1):
-            record_access(tmp_path, "worldpop/nga", ts)
+        mocker.patch("eostrata.cache.time.time", return_value=mtime_first + _DEBOUNCE_S + 1)
+        record_access(tmp_path, "worldpop/nga", ts)
         assert sentinel.stat().st_mtime >= mtime_first
 
-    def test_track_access_false_skips_sentinel(self, tmp_path):
+    def test_track_access_false_skips_sentinel(self, tmp_path, mocker):
         _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020])
-        with patch("eostrata.config.settings") as mock_settings:
-            mock_settings.track_access = False
-            record_access(tmp_path, "worldpop/nga", [np.datetime64("2020-01-01")])
+        mock_settings = mocker.patch("eostrata.config.settings")
+        mock_settings.track_access = False
+        record_access(tmp_path, "worldpop/nga", [np.datetime64("2020-01-01")])
         access_dir = _access_dir(tmp_path, "worldpop/nga")
         assert not access_dir.exists()
 
-    def test_oserror_is_silenced(self, tmp_path):
+    def test_oserror_is_silenced(self, tmp_path, mocker):
         """record_access must not raise even if the access dir cannot be created."""
-        with patch("eostrata.cache.Path.mkdir", side_effect=OSError("read-only")):
-            record_access(tmp_path, "worldpop/nga", [np.datetime64("2020-01-01")])
+        mocker.patch("eostrata.cache.Path.mkdir", side_effect=OSError("read-only"))
+        record_access(tmp_path, "worldpop/nga", [np.datetime64("2020-01-01")])
 
     def test_sentinel_affects_lru_order(self, tmp_path):
         """Touching the sentinel of the older group makes it appear newer."""
@@ -240,7 +239,7 @@ class TestEvictTimestamp:
         assert not any("2020" in n for n in names)
         assert any("2021" in n for n in names)
 
-    def test_consolidate_metadata_exception_is_silenced(self, tmp_path):
+    def test_consolidate_metadata_exception_is_silenced(self, tmp_path, mocker):
         """If zarr.consolidate_metadata raises during eviction, the eviction still succeeds."""
         import zarr as _zarr
 
@@ -255,8 +254,8 @@ class TestEvictTimestamp:
                 raise OSError("no meta")
             return _original(path, **kwargs)
 
-        with patch("eostrata.cache.zarr.consolidate_metadata", side_effect=_raise_for_our_call):
-            freed = evict_timestamp(zarr_root, "worldpop/nga", "2020-01-01T00:00:00")
+        mocker.patch("eostrata.cache.zarr.consolidate_metadata", side_effect=_raise_for_our_call)
+        freed = evict_timestamp(zarr_root, "worldpop/nga", "2020-01-01T00:00:00")
         assert freed > 0
         ds = xr.open_zarr(str(zarr_root), group="worldpop/nga", consolidated=False)
         years = [t.astype("datetime64[Y]").item().year for t in ds["time"].values]
@@ -299,7 +298,7 @@ class TestEvictTimestamp:
         updated = cat.load_or_create(catalog_path)
         item = updated.get_child("worldpop").get_item("worldpop_nga")
         assert item is not None
-        datetimes = item.properties["eostrata:datetimes"]
+        datetimes = item.properties[PROP_DATETIMES]
         assert not any(d.startswith("2021") for d in datetimes)
         assert any(d.startswith("2020") for d in datetimes)
 
@@ -315,86 +314,76 @@ class TestCheckAndEvict:
         check_and_evict(tmp_path, quota_mb=1000.0)
         assert (tmp_path / "worldpop" / "nga").exists()
 
-    def test_exceeds_quota_evicts_oldest_timestamp_first(self, tmp_path):
+    def test_exceeds_quota_evicts_oldest_timestamp_first(self, tmp_path, mocker):
         """Oldest timestamp (no access sentinel) is evicted before the newer one."""
         _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021])
         time.sleep(0.05)
         record_access(tmp_path, "worldpop/nga", [np.datetime64("2021-01-01")])
 
         size_before = store_size_mb(tmp_path)
-        with (
-            patch("eostrata.cache.evict_timestamp") as mock_evict,
-            patch(
-                "eostrata.cache.store_size_mb",
-                # Call sequence: initial check, loop iter 1 (2020→evict),
-                # loop iter 2 (2021→quota met→break), final remaining check
-                side_effect=[size_before, size_before, size_before * 0.3, size_before * 0.3],
-            ),
-        ):
-            check_and_evict(tmp_path, quota_mb=size_before * 0.6)
+        mock_evict = mocker.patch("eostrata.cache.evict_timestamp")
+        mocker.patch(
+            "eostrata.cache.store_size_mb",
+            # Call sequence: initial check, loop iter 1 (2020→evict),
+            # loop iter 2 (2021→quota met→break), final remaining check
+            side_effect=[size_before, size_before, size_before * 0.3, size_before * 0.3],
+        )
+        check_and_evict(tmp_path, quota_mb=size_before * 0.6)
 
         mock_evict.assert_called_once()
         evicted_ts = mock_evict.call_args[0][2]
         assert evicted_ts.startswith("2020")  # oldest (no sentinel) evicted first
 
-    def test_exceeds_quota_no_timestamps_raises(self, tmp_path):
-        with (
-            patch("eostrata.cache.store_size_mb", return_value=100.0),
-            patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 100.0, 1.0)]),
-            patch("eostrata.cache.list_timestamps", return_value=[]),
-            pytest.raises(RuntimeError, match="no timestamps"),
-        ):
+    def test_exceeds_quota_no_timestamps_raises(self, tmp_path, mocker):
+        mocker.patch("eostrata.cache.store_size_mb", return_value=100.0)
+        mocker.patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 100.0, 1.0)])
+        mocker.patch("eostrata.cache.list_timestamps", return_value=[])
+        with pytest.raises(RuntimeError, match="no timestamps"):
             check_and_evict(tmp_path, quota_mb=10.0)
 
-    def test_eviction_stops_when_quota_met(self, tmp_path):
+    def test_eviction_stops_when_quota_met(self, tmp_path, mocker):
         # store_size_mb call sequence:
         # 1. initial check: 10.0 → exceeds quota of 5 MB
         # 2. loop iter 1 (2020): 10.0 → still over → evict 2020
         # 3. loop iter 2 (2021): 3.0 → within quota → break
         # 4. final remaining check: 3.0 → within quota → no raise
-        with (
-            patch("eostrata.cache.store_size_mb", side_effect=[10.0, 10.0, 3.0, 3.0]),
-            patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 10.0, 1.0)]),
-            patch(
-                "eostrata.cache.list_timestamps",
-                return_value=[
-                    ("2020-01-01T00:00:00", 7.0, 1.0, 0.5),
-                    ("2021-01-01T00:00:00", 3.0, 2.0, 0.5),
-                ],
-            ),
-            patch("eostrata.cache.evict_timestamp") as mock_evict,
-        ):
-            check_and_evict(tmp_path, quota_mb=5.0)
+        mocker.patch("eostrata.cache.store_size_mb", side_effect=[10.0, 10.0, 3.0, 3.0])
+        mocker.patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 10.0, 1.0)])
+        mocker.patch(
+            "eostrata.cache.list_timestamps",
+            return_value=[
+                ("2020-01-01T00:00:00", 7.0, 1.0, 0.5),
+                ("2021-01-01T00:00:00", 3.0, 2.0, 0.5),
+            ],
+        )
+        mock_evict = mocker.patch("eostrata.cache.evict_timestamp")
+        check_and_evict(tmp_path, quota_mb=5.0)
         mock_evict.assert_called_once_with(
             tmp_path, "worldpop/nga", "2020-01-01T00:00:00", catalog_path=None
         )
 
-    def test_still_over_quota_after_all_evictions_raises(self, tmp_path):
+    def test_still_over_quota_after_all_evictions_raises(self, tmp_path, mocker):
         # store_size_mb: initial=100, re-measure in loop=100 (still over), final=100
-        with (
-            patch("eostrata.cache.store_size_mb", return_value=100.0),
-            patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 100.0, 1.0)]),
-            patch(
-                "eostrata.cache.list_timestamps",
-                return_value=[("2020-01-01T00:00:00", 1.0, 1.0, 0.5)],
-            ),
-            patch("eostrata.cache.evict_timestamp"),
-            pytest.raises(RuntimeError, match="Could not reduce store"),
-        ):
+        mocker.patch("eostrata.cache.store_size_mb", return_value=100.0)
+        mocker.patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 100.0, 1.0)])
+        mocker.patch(
+            "eostrata.cache.list_timestamps",
+            return_value=[("2020-01-01T00:00:00", 1.0, 1.0, 0.5)],
+        )
+        mocker.patch("eostrata.cache.evict_timestamp")
+        with pytest.raises(RuntimeError, match="Could not reduce store"):
             check_and_evict(tmp_path, quota_mb=50.0)
 
-    def test_no_access_or_ingestion_time_age_desc(self, tmp_path):
+    def test_no_access_or_ingestion_time_age_desc(self, tmp_path, mocker):
         """Timestamps with last_access=0 and ingestion_time=0 log 'no access or ingestion'."""
-        with (
-            patch("eostrata.cache.store_size_mb", side_effect=[10.0, 10.0, 0.0, 0.0]),
-            patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 10.0, 0.0)]),
-            patch(
-                "eostrata.cache.list_timestamps",
-                return_value=[("2020-01-01T00:00:00", 10.0, 0.0, 0.0)],
-            ),
-            patch("eostrata.cache.evict_timestamp"),
-        ):
-            check_and_evict(tmp_path, quota_mb=5.0)
+        mocker.patch("eostrata.cache.store_size_mb", side_effect=[10.0, 10.0, 0.0, 0.0])
+        mocker.patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 10.0, 0.0)])
+        mocker.patch(
+            "eostrata.cache.list_timestamps",
+            return_value=[("2020-01-01T00:00:00", 10.0, 0.0, 0.0)],
+        )
+        mocker.patch("eostrata.cache.evict_timestamp")
+        check_and_evict(tmp_path, quota_mb=5.0)
 
 
 class TestListTimestampsEdgeCases:

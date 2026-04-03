@@ -14,6 +14,8 @@ import httpx
 import xarray as xr
 from tqdm import tqdm
 
+from eostrata.constants import PROP_VARIABLE
+
 logger = logging.getLogger(__name__)
 
 # ── Shared download helper ─────────────────────────────────────────────────────
@@ -153,7 +155,7 @@ class BaseSource(ABC):
         return {
             "item_id": f"{cls.zarr_prefix}_{dataset_name}",
             "variable": cls.VARIABLE,
-            "extra": {"eostrata:variable": cls.VARIABLE},
+            "extra": {PROP_VARIABLE: cls.VARIABLE},
         }
 
     @abstractmethod

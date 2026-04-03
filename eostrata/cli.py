@@ -290,8 +290,8 @@ def run_lint(
 
 @app.command("serve")
 def serve(
-    host: str = typer.Option("127.0.0.1", help="Bind host"),
-    port: int = typer.Option(8000, help="Bind port"),
+    host: str = typer.Option("127.0.0.1", envvar="HOST", help="Bind host"),
+    port: int = typer.Option(8000, envvar="PORT", help="Bind port"),
     reload: bool = typer.Option(False, "--reload", help="Hot-reload (dev only)"),
 ) -> None:
     """Start the tile server, STAC catalogue and OGC Processes API."""

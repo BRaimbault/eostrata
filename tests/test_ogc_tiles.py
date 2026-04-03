@@ -54,98 +54,85 @@ def setup(tmp_path):
 
 
 @pytest.fixture()
-def app_client(setup):
+def app_client(setup, mocker):
     tmp_path, catalog_path, zarr_root = setup
-    from unittest.mock import MagicMock, patch
 
-    mock_settings = MagicMock()
+    mock_settings = mocker.MagicMock()
     mock_settings.catalog_path = catalog_path
     mock_settings.zarr_root = zarr_root
     mock_settings.bbox = (2.0, 4.0, 15.0, 14.0)
 
-    with (
-        patch("eostrata.ogc.tiles.settings", mock_settings),
-        patch("eostrata.ogc.processes.settings", mock_settings),
-        patch("eostrata.server.settings", mock_settings),
-    ):
-        from eostrata.server import app
+    mocker.patch("eostrata.ogc.tiles.settings", mock_settings)
+    mocker.patch("eostrata.ogc.processes.settings", mock_settings)
+    mocker.patch("eostrata.server.settings", mock_settings)
+    from eostrata.server import app
 
-        yield TestClient(app)
+    yield TestClient(app)
 
 
 # ── Unit tests for _resolve ────────────────────────────────────────────────────
 
 
 class TestResolve:
-    def test_found_with_item(self, setup):
+    def test_found_with_item(self, setup, mocker):
         tmp_path, catalog_path, zarr_root = setup
-        from unittest.mock import MagicMock, patch
 
         from eostrata.ogc.tiles import _resolve
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
         mock_settings.catalog_path = catalog_path
         mock_settings.zarr_root = zarr_root
 
-        with patch("eostrata.ogc.tiles.settings", mock_settings):
-            result = _resolve("worldpop", "worldpop_nga")
+        mocker.patch("eostrata.ogc.tiles.settings", mock_settings)
+        result = _resolve("worldpop", "worldpop_nga")
         assert result["zarr_group"] == "worldpop/nga"
         assert result["variable"] == "population"
 
-    def test_missing_collection_raises_404(self, setup):
+    def test_missing_collection_raises_404(self, setup, mocker):
         tmp_path, catalog_path, zarr_root = setup
-        from unittest.mock import MagicMock, patch
 
         from fastapi import HTTPException
 
         from eostrata.ogc.tiles import _resolve
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
         mock_settings.catalog_path = catalog_path
 
-        with (
-            patch("eostrata.ogc.tiles.settings", mock_settings),
-            pytest.raises(HTTPException) as exc_info,
-        ):
+        mocker.patch("eostrata.ogc.tiles.settings", mock_settings)
+        with pytest.raises(HTTPException) as exc_info:
             _resolve("nonexistent", None)
         assert exc_info.value.status_code == 404
 
-    def test_missing_item_raises_404(self, setup):
+    def test_missing_item_raises_404(self, setup, mocker):
         tmp_path, catalog_path, zarr_root = setup
-        from unittest.mock import MagicMock, patch
 
         from fastapi import HTTPException
 
         from eostrata.ogc.tiles import _resolve
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
         mock_settings.catalog_path = catalog_path
 
-        with (
-            patch("eostrata.ogc.tiles.settings", mock_settings),
-            pytest.raises(HTTPException) as exc_info,
-        ):
+        mocker.patch("eostrata.ogc.tiles.settings", mock_settings)
+        with pytest.raises(HTTPException) as exc_info:
             _resolve("worldpop", "unknown_item")
         assert exc_info.value.status_code == 404
 
-    def test_no_item_picks_first(self, setup):
+    def test_no_item_picks_first(self, setup, mocker):
         tmp_path, catalog_path, zarr_root = setup
-        from unittest.mock import MagicMock, patch
 
         from eostrata.ogc.tiles import _resolve
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
         mock_settings.catalog_path = catalog_path
         mock_settings.zarr_root = zarr_root
 
-        with patch("eostrata.ogc.tiles.settings", mock_settings):
-            result = _resolve("worldpop", None)
+        mocker.patch("eostrata.ogc.tiles.settings", mock_settings)
+        result = _resolve("worldpop", None)
         assert result["zarr_group"] == "worldpop/nga"
 
-    def test_empty_collection_raises_404(self, tmp_path):
+    def test_empty_collection_raises_404(self, tmp_path, mocker):
         """A collection with no items should raise 404."""
-        from unittest.mock import MagicMock, patch
-
         from fastapi import HTTPException
 
         from eostrata import catalog as cat
@@ -154,20 +141,17 @@ class TestResolve:
         cat_path = tmp_path / "catalog.json"
         cat.save(cat._make_catalog(), cat_path)
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
         mock_settings.catalog_path = cat_path
 
-        with (
-            patch("eostrata.ogc.tiles.settings", mock_settings),
-            pytest.raises(HTTPException) as exc_info,
-        ):
+        mocker.patch("eostrata.ogc.tiles.settings", mock_settings)
+        with pytest.raises(HTTPException) as exc_info:
             _resolve("worldpop", None)  # worldpop collection exists but has no items
         assert exc_info.value.status_code == 404
 
-    def test_item_without_zarr_asset_raises_422(self, tmp_path):
+    def test_item_without_zarr_asset_raises_422(self, tmp_path, mocker):
         """An item without a zarr asset should raise 422."""
         from datetime import datetime
-        from unittest.mock import MagicMock, patch
 
         import pystac
         from fastapi import HTTPException
@@ -193,13 +177,11 @@ class TestResolve:
         coll.add_item(item)
         cat.save(catalogue, cat_path)
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
         mock_settings.catalog_path = cat_path
 
-        with (
-            patch("eostrata.ogc.tiles.settings", mock_settings),
-            pytest.raises(HTTPException) as exc_info,
-        ):
+        mocker.patch("eostrata.ogc.tiles.settings", mock_settings)
+        with pytest.raises(HTTPException) as exc_info:
             _resolve("worldpop", "bare_item")
         assert exc_info.value.status_code == 422
 
@@ -280,64 +262,57 @@ class TestTileRoutes:
         # TiTiler processes the real zarr — any non-server-error response is acceptable
         assert resp.status_code != 500
 
-    def test_info_endpoint_calls_delegate(self, setup):
+    def test_info_endpoint_calls_delegate(self, setup, mocker):
         """Collection info delegates to TiTiler — verify _delegate is invoked."""
         tmp_path, catalog_path, zarr_root = setup
-        from unittest.mock import MagicMock, patch
 
         from fastapi.responses import Response
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
         mock_settings.catalog_path = catalog_path
         mock_settings.zarr_root = zarr_root
 
         async def fake_delegate(path, params):
             return Response(content=b'{"info": "ok"}', media_type="application/json")
 
-        with (
-            patch("eostrata.ogc.tiles.settings", mock_settings),
-            patch("eostrata.ogc.tiles._delegate", side_effect=fake_delegate),
-        ):
-            from eostrata.server import app
+        mocker.patch("eostrata.ogc.tiles.settings", mock_settings)
+        mocker.patch("eostrata.ogc.tiles._delegate", side_effect=fake_delegate)
+        from eostrata.server import app
 
-            client = TestClient(app)
-            resp = client.get("/collections/worldpop/info?item=worldpop_nga")
+        client = TestClient(app)
+        resp = client.get("/collections/worldpop/info?item=worldpop_nga")
 
         assert resp.status_code == 200
 
-    def test_tile_endpoint_calls_delegate(self, setup):
+    def test_tile_endpoint_calls_delegate(self, setup, mocker):
         """Collection tile delegates to TiTiler — verify _delegate is invoked."""
         tmp_path, catalog_path, zarr_root = setup
-        from unittest.mock import MagicMock, patch
 
         from fastapi.responses import Response
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
         mock_settings.catalog_path = catalog_path
         mock_settings.zarr_root = zarr_root
 
         async def fake_delegate(path, params):
             return Response(content=b"\x89PNG", media_type="image/png")
 
-        with (
-            patch("eostrata.ogc.tiles.settings", mock_settings),
-            patch("eostrata.ogc.tiles._delegate", side_effect=fake_delegate),
-        ):
-            from eostrata.server import app
+        mocker.patch("eostrata.ogc.tiles.settings", mock_settings)
+        mocker.patch("eostrata.ogc.tiles._delegate", side_effect=fake_delegate)
+        from eostrata.server import app
 
-            client = TestClient(app)
-            resp = client.get("/collections/worldpop/tiles/WebMercatorQuad/1/0/0?item=worldpop_nga")
+        client = TestClient(app)
+        resp = client.get("/collections/worldpop/tiles/WebMercatorQuad/1/0/0?item=worldpop_nga")
 
         assert resp.status_code == 200
 
-    def test_tile_with_optional_params(self, setup):
+    def test_tile_with_optional_params(self, setup, mocker):
         """Optional colormap/rescale params are forwarded to TiTiler."""
         tmp_path, catalog_path, zarr_root = setup
-        from unittest.mock import MagicMock, patch
 
         from fastapi.responses import Response
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
         mock_settings.catalog_path = catalog_path
         mock_settings.zarr_root = zarr_root
 
@@ -347,33 +322,30 @@ class TestTileRoutes:
             captured.update(params)
             return Response(content=b"\x89PNG", media_type="image/png")
 
-        with (
-            patch("eostrata.ogc.tiles.settings", mock_settings),
-            patch("eostrata.ogc.tiles._delegate", side_effect=fake_delegate),
-        ):
-            from eostrata.server import app
+        mocker.patch("eostrata.ogc.tiles.settings", mock_settings)
+        mocker.patch("eostrata.ogc.tiles._delegate", side_effect=fake_delegate)
+        from eostrata.server import app
 
-            client = TestClient(app)
-            client.get(
-                "/collections/worldpop/tiles/WebMercatorQuad/1/0/0"
-                "?item=worldpop_nga&datetime=2020-01-01&colormap_name=viridis&rescale=0,100"
-            )
+        client = TestClient(app)
+        client.get(
+            "/collections/worldpop/tiles/WebMercatorQuad/1/0/0"
+            "?item=worldpop_nga&datetime=2020-01-01&colormap_name=viridis&rescale=0,100"
+        )
 
         assert "colormap_name" in captured
         assert "rescale" in captured
         # time is handled via context vars, not forwarded as sel
         assert "sel" not in captured
 
-    def test_tile_agg_params_set_context_vars(self, setup):
+    def test_tile_agg_params_set_context_vars(self, setup, mocker):
         """agg/baseline/datetime are propagated to AggregatingReader via ContextVar."""
         tmp_path, catalog_path, zarr_root = setup
-        from unittest.mock import MagicMock, patch
 
         from fastapi.responses import Response
 
         from eostrata.aggregate import _CTX_AGG_BASELINE, _CTX_AGG_DATETIME, _CTX_AGG_METHOD
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
         mock_settings.catalog_path = catalog_path
         mock_settings.zarr_root = zarr_root
 
@@ -385,20 +357,18 @@ class TestTileRoutes:
             ctx_snapshot["baseline"] = _CTX_AGG_BASELINE.get()
             return Response(content=b"\x89PNG", media_type="image/png")
 
-        with (
-            patch("eostrata.ogc.tiles.settings", mock_settings),
-            patch("eostrata.ogc.tiles._delegate", side_effect=fake_delegate),
-        ):
-            from eostrata.server import app
+        mocker.patch("eostrata.ogc.tiles.settings", mock_settings)
+        mocker.patch("eostrata.ogc.tiles._delegate", side_effect=fake_delegate)
+        from eostrata.server import app
 
-            client = TestClient(app)
-            client.get(
-                "/collections/worldpop/tiles/WebMercatorQuad/1/0/0"
-                "?item=worldpop_nga"
-                "&datetime=2020-01-01/2021-12-31"
-                "&agg=mean"
-                "&baseline=2019-01-01/2019-12-31"
-            )
+        client = TestClient(app)
+        client.get(
+            "/collections/worldpop/tiles/WebMercatorQuad/1/0/0"
+            "?item=worldpop_nga"
+            "&datetime=2020-01-01/2021-12-31"
+            "&agg=mean"
+            "&baseline=2019-01-01/2019-12-31"
+        )
 
         assert ctx_snapshot["datetime"] == "2020-01-01/2021-12-31"
         assert ctx_snapshot["agg"] == "mean"

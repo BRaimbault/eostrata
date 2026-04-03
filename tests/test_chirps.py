@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import patch
 
 import numpy as np
 
@@ -47,12 +46,12 @@ class TestCHIRPSSource:
         latest = self.source.latest_available()
         assert latest < datetime.now(tz=UTC)
 
-    def test_latest_available_wraps_year_in_january(self):
+    def test_latest_available_wraps_year_in_january(self, mocker):
         """When current month is January (month-2 <= 0), wraps to previous year."""
-        with patch("eostrata.sources.chirps.datetime") as mock_dt:
-            mock_dt.now.return_value = datetime(2024, 2, 15, tzinfo=UTC)
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-            result = CHIRPSSource().latest_available()
+        mock_dt = mocker.patch("eostrata.sources.chirps.datetime")
+        mock_dt.now.return_value = datetime(2024, 2, 15, tzinfo=UTC)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        result = CHIRPSSource().latest_available()
         assert result.year == 2023
         assert result.month == 12
 

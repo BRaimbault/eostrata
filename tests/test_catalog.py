@@ -55,14 +55,16 @@ class TestMakeCatalog:
         ids = {c.id for c in cat.get_children()}
         assert ids == {cls.collection_id for cls in all_sources()}
 
-    def test_duplicate_collection_id_deduplicated(self):
+    def test_duplicate_collection_id_deduplicated(self, mocker):
         """Two sources sharing a collection_id produce only one collection."""
-        from unittest.mock import MagicMock, patch
-
-        src_a = MagicMock(collection_id="shared", collection_title="T", collection_description="D")
-        src_b = MagicMock(collection_id="shared", collection_title="T", collection_description="D")
-        with patch("eostrata.sources.base.all_sources", return_value=[src_a, src_b]):
-            cat = _make_catalog()
+        src_a = mocker.MagicMock(
+            collection_id="shared", collection_title="T", collection_description="D"
+        )
+        src_b = mocker.MagicMock(
+            collection_id="shared", collection_title="T", collection_description="D"
+        )
+        mocker.patch("eostrata.sources.base.all_sources", return_value=[src_a, src_b])
+        cat = _make_catalog()
         assert len(list(cat.get_children())) == 1
 
 

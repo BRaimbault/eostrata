@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -387,19 +388,19 @@ class TestCheckAndEvict:
 
 
 class TestListTimestampsEdgeCases:
-    def test_zarr_open_failure_returns_empty(self, tmp_path):
-        with patch("xarray.open_zarr", side_effect=Exception("bad zarr")):
-            assert list_timestamps(tmp_path, "worldpop/nga") == []
+    def test_zarr_open_failure_returns_empty(self, tmp_path, mocker):
+        mocker.patch("xarray.open_zarr", side_effect=Exception("bad zarr"))
+        assert list_timestamps(tmp_path, "worldpop/nga") == []
 
-    def test_time_values_raises_returns_empty(self, tmp_path):
+    def test_time_values_raises_returns_empty(self, tmp_path, mocker):
         """ds['time'].values raising an exception → return []."""
         import xarray as xr
 
-        mock_ds = MagicMock(spec=xr.Dataset)
+        mock_ds = mocker.MagicMock(spec=xr.Dataset)
         mock_ds.__contains__ = lambda self, key: key == "time"
-        mock_ds.__getitem__ = MagicMock(side_effect=KeyError("time"))
-        with patch("xarray.open_zarr", return_value=mock_ds):
-            assert list_timestamps(tmp_path, "worldpop/nga") == []
+        mock_ds.__getitem__ = mocker.MagicMock(side_effect=KeyError("time"))
+        mocker.patch("xarray.open_zarr", return_value=mock_ds)
+        assert list_timestamps(tmp_path, "worldpop/nga") == []
 
     def test_empty_time_array_returns_empty(self, tmp_path):
         import xarray as xr

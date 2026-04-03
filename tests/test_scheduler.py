@@ -5,7 +5,6 @@ from __future__ import annotations
 import sys
 import textwrap
 from datetime import UTC
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -13,13 +12,14 @@ from eostrata.scheduler import _load_schedules, _send_webhook
 
 
 class TestLoadSchedules:
-    def test_yaml_not_installed_raises(self, tmp_path):
+    def test_yaml_not_installed_raises(self, tmp_path, mocker):
         """_load_schedules raises ImportError when PyYAML is not installed."""
         import sys
 
         f = tmp_path / "schedules.yml"
         f.write_text("jobs: []\n")
-        with patch.dict(sys.modules, {"yaml": None}), pytest.raises(ImportError, match="PyYAML"):
+        mocker.patch.dict(sys.modules, {"yaml": None})
+        with pytest.raises(ImportError, match="PyYAML"):
             _load_schedules(f)
 
     def test_missing_file_returns_empty(self, tmp_path):
@@ -69,30 +69,28 @@ class TestLoadSchedules:
 
 
 class TestSendWebhook:
-    def test_posts_payload(self):
-        with patch("httpx.post") as mock_post:
-            mock_resp = MagicMock()
-            mock_resp.raise_for_status.return_value = None
-            mock_post.return_value = mock_resp
+    def test_posts_payload(self, mocker):
+        mock_resp = mocker.MagicMock()
+        mock_resp.raise_for_status.return_value = None
+        mock_post = mocker.patch("httpx.post", return_value=mock_resp)
 
-            _send_webhook("https://example.com/alert", {"event": "test"})
-            mock_post.assert_called_once()
-            call_kwargs = mock_post.call_args
-            assert call_kwargs[0][0] == "https://example.com/alert"
+        _send_webhook("https://example.com/alert", {"event": "test"})
+        mock_post.assert_called_once()
+        call_kwargs = mock_post.call_args
+        assert call_kwargs[0][0] == "https://example.com/alert"
 
-    def test_swallows_connection_error(self):
-        with patch("httpx.post", side_effect=Exception("connection refused")):
-            # Should not raise
-            _send_webhook("https://example.com/alert", {"event": "test"})
+    def test_swallows_connection_error(self, mocker):
+        mocker.patch("httpx.post", side_effect=Exception("connection refused"))
+        # Should not raise
+        _send_webhook("https://example.com/alert", {"event": "test"})
 
 
 class TestRunJob:
     """Tests for the _run_job orchestration function."""
 
-    def _make_mock_source(self, tmp_path):
+    def _make_mock_source(self, tmp_path, mocker):
         """Return a mock source that writes a tiny real Zarr."""
         from datetime import datetime
-        from unittest.mock import MagicMock
 
         import numpy as np
         import xarray as xr
@@ -106,7 +104,7 @@ class TestRunJob:
         )
         ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
 
-        src = MagicMock()
+        src = mocker.MagicMock()
         src.collection_id = "worldpop"
         src.temporal_resolution = "annual"
         src.VARIABLE = "population"
@@ -118,223 +116,206 @@ class TestRunJob:
         src.stac_properties.return_value = {}
         return src, zarr_root
 
-    def test_succeeds_on_first_attempt(self, tmp_path):
-        src, zarr_root = self._make_mock_source(tmp_path)
-        from unittest.mock import MagicMock, patch
+    def test_succeeds_on_first_attempt(self, tmp_path, mocker):
+        src, zarr_root = self._make_mock_source(tmp_path, mocker)
 
         from eostrata.scheduler import _run_job
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
         mock_settings.bbox = (2.0, 4.0, 15.0, 14.0)
         mock_settings.raw_dir = tmp_path / "raw"
         mock_settings.zarr_root = zarr_root
         mock_settings.catalog_path = tmp_path / "catalog.json"
 
-        with (
-            patch("eostrata.sources.base.get_source", return_value=lambda: src),
-            patch("eostrata.config.settings", mock_settings),
-            patch("eostrata.catalog.load_or_create", return_value=MagicMock()),
-            patch("eostrata.catalog.register_item"),
-            patch("eostrata.catalog.save"),
-        ):
-            _run_job(
-                job_id="test",
-                source_id="worldpop",
-                params={"iso3": "NGA", "year": 2020},
-                auto_period=False,
-                webhook_url=None,
-            )
+        mocker.patch("eostrata.sources.base.get_source", return_value=lambda: src)
+        mocker.patch("eostrata.config.settings", mock_settings)
+        mocker.patch("eostrata.catalog.load_or_create", return_value=mocker.MagicMock())
+        mocker.patch("eostrata.catalog.register_item")
+        mocker.patch("eostrata.catalog.save")
+        _run_job(
+            job_id="test",
+            source_id="worldpop",
+            params={"iso3": "NGA", "year": 2020},
+            auto_period=False,
+            webhook_url=None,
+        )
 
-    def test_auto_period_injects_month_for_monthly_source(self, tmp_path):
+    def test_auto_period_injects_month_for_monthly_source(self, tmp_path, mocker):
         """auto_period=True with a monthly source injects both year and month."""
-        src, zarr_root = self._make_mock_source(tmp_path)
         from datetime import datetime
-        from unittest.mock import MagicMock, patch
+
+        src, zarr_root = self._make_mock_source(tmp_path, mocker)
 
         from eostrata.scheduler import _run_job
 
         src.temporal_resolution = "monthly"
         src.latest_available.return_value = datetime(2023, 6, 1, tzinfo=UTC)
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
         mock_settings.bbox = (0.0, 0.0, 10.0, 10.0)
         mock_settings.raw_dir = tmp_path / "raw"
         mock_settings.zarr_root = zarr_root
         mock_settings.catalog_path = tmp_path / "catalog.json"
 
-        with (
-            patch("eostrata.sources.base.get_source", return_value=lambda: src),
-            patch("eostrata.config.settings", mock_settings),
-            patch("eostrata.catalog.load_or_create", return_value=MagicMock()),
-            patch("eostrata.catalog.register_item"),
-            patch("eostrata.catalog.save"),
-        ):
-            _run_job(
-                job_id="test",
-                source_id="worldpop",
-                params={},
-                auto_period=True,
-                webhook_url=None,
-            )
+        mocker.patch("eostrata.sources.base.get_source", return_value=lambda: src)
+        mocker.patch("eostrata.config.settings", mock_settings)
+        mocker.patch("eostrata.catalog.load_or_create", return_value=mocker.MagicMock())
+        mocker.patch("eostrata.catalog.register_item")
+        mocker.patch("eostrata.catalog.save")
+        _run_job(
+            job_id="test",
+            source_id="worldpop",
+            params={},
+            auto_period=True,
+            webhook_url=None,
+        )
 
         call_kwargs = src.download.call_args[1]
         assert call_kwargs.get("month") == 6
 
-    def test_auto_period_injects_year(self, tmp_path):
+    def test_auto_period_injects_year(self, tmp_path, mocker):
         """auto_period=True should resolve year from source.latest_available()."""
-        src, zarr_root = self._make_mock_source(tmp_path)
         from datetime import datetime
-        from unittest.mock import MagicMock, patch
+
+        src, zarr_root = self._make_mock_source(tmp_path, mocker)
 
         from eostrata.scheduler import _run_job
 
         src.latest_available.return_value = datetime(2023, 1, 1, tzinfo=UTC)
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
         mock_settings.bbox = (0.0, 0.0, 10.0, 10.0)
         mock_settings.raw_dir = tmp_path / "raw"
         mock_settings.zarr_root = zarr_root
         mock_settings.catalog_path = tmp_path / "catalog.json"
 
-        with (
-            patch("eostrata.sources.base.get_source", return_value=lambda: src),
-            patch("eostrata.config.settings", mock_settings),
-            patch("eostrata.catalog.load_or_create", return_value=MagicMock()),
-            patch("eostrata.catalog.register_item"),
-            patch("eostrata.catalog.save"),
-        ):
-            _run_job(
-                job_id="test",
-                source_id="worldpop",
-                params={},
-                auto_period=True,
-                webhook_url=None,
-            )
+        mocker.patch("eostrata.sources.base.get_source", return_value=lambda: src)
+        mocker.patch("eostrata.config.settings", mock_settings)
+        mocker.patch("eostrata.catalog.load_or_create", return_value=mocker.MagicMock())
+        mocker.patch("eostrata.catalog.register_item")
+        mocker.patch("eostrata.catalog.save")
+        _run_job(
+            job_id="test",
+            source_id="worldpop",
+            params={},
+            auto_period=True,
+            webhook_url=None,
+        )
 
         call_kwargs = src.download.call_args[1]
         assert call_kwargs.get("year") == 2023
 
-    def test_sends_webhook_after_exhausted_retries(self, tmp_path):
-        from unittest.mock import MagicMock, patch
-
+    def test_sends_webhook_after_exhausted_retries(self, tmp_path, mocker):
         from eostrata.scheduler import _run_job
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
         mock_settings.bbox = (0.0, 0.0, 10.0, 10.0)
 
-        failing_source = MagicMock()
+        failing_source = mocker.MagicMock()
         failing_source.temporal_resolution = "annual"
         failing_source.download.side_effect = RuntimeError("network error")
 
         webhook_calls = []
 
-        with (
-            patch("eostrata.sources.base.get_source", return_value=lambda: failing_source),
-            patch("eostrata.config.settings", mock_settings),
-            patch(
-                "eostrata.scheduler._send_webhook",
-                side_effect=lambda url, payload: webhook_calls.append(payload),
-            ),
-            patch("eostrata.scheduler.time.sleep"),
-        ):
-            _run_job(
-                job_id="fail_job",
-                source_id="worldpop",
-                params={"iso3": "NGA", "year": 2020},
-                auto_period=False,
-                webhook_url="https://example.com/alert",
-            )
+        mocker.patch("eostrata.sources.base.get_source", return_value=lambda: failing_source)
+        mocker.patch("eostrata.config.settings", mock_settings)
+        mocker.patch(
+            "eostrata.scheduler._send_webhook",
+            side_effect=lambda url, payload: webhook_calls.append(payload),
+        )
+        mocker.patch("eostrata.scheduler.time.sleep")
+        _run_job(
+            job_id="fail_job",
+            source_id="worldpop",
+            params={"iso3": "NGA", "year": 2020},
+            auto_period=False,
+            webhook_url="https://example.com/alert",
+        )
 
         assert len(webhook_calls) == 1
         assert webhook_calls[0]["job_id"] == "fail_job"
         assert "network error" in webhook_calls[0]["error"]
 
-    def test_no_webhook_when_url_is_none(self, tmp_path):
-        from unittest.mock import MagicMock, patch
-
+    def test_no_webhook_when_url_is_none(self, tmp_path, mocker):
         from eostrata.scheduler import _run_job
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
 
-        failing_source = MagicMock()
+        failing_source = mocker.MagicMock()
         failing_source.temporal_resolution = "annual"
         failing_source.download.side_effect = RuntimeError("err")
 
-        with (
-            patch("eostrata.sources.base.get_source", return_value=lambda: failing_source),
-            patch("eostrata.config.settings", mock_settings),
-            patch("eostrata.scheduler._send_webhook") as mock_wh,
-            patch("eostrata.scheduler.time.sleep"),
-        ):
-            _run_job(
-                job_id="x",
-                source_id="worldpop",
-                params={"iso3": "NGA", "year": 2020},
-                auto_period=False,
-                webhook_url=None,
-            )
+        mocker.patch("eostrata.sources.base.get_source", return_value=lambda: failing_source)
+        mocker.patch("eostrata.config.settings", mock_settings)
+        mock_wh = mocker.patch("eostrata.scheduler._send_webhook")
+        mocker.patch("eostrata.scheduler.time.sleep")
+        _run_job(
+            job_id="x",
+            source_id="worldpop",
+            params={"iso3": "NGA", "year": 2020},
+            auto_period=False,
+            webhook_url=None,
+        )
 
         mock_wh.assert_not_called()
 
 
 class TestExecuteIngestion:
-    def test_empty_paths_raises(self):
+    def test_empty_paths_raises(self, mocker):
         """_execute_ingestion raises RuntimeError when download returns no paths."""
-        from unittest.mock import MagicMock
-
         from eostrata.scheduler import _execute_ingestion
 
-        src = MagicMock()
+        src = mocker.MagicMock()
         src.download.return_value = []
         with pytest.raises(RuntimeError, match="no paths"):
-            _execute_ingestion(src, {}, MagicMock())
+            _execute_ingestion(src, {}, mocker.MagicMock())
 
 
 class TestSchedulerInit:
-    def test_missing_apscheduler_raises(self):
+    def test_missing_apscheduler_raises(self, mocker):
         """Scheduler() raises ImportError when APScheduler is not installed."""
         import sys
 
-        with patch.dict(
+        mocker.patch.dict(
             sys.modules,
             {
                 "apscheduler": None,
                 "apscheduler.schedulers": None,
                 "apscheduler.schedulers.background": None,
             },
-        ):
-            from eostrata.scheduler import Scheduler
+        )
+        from eostrata.scheduler import Scheduler
 
-            with pytest.raises(ImportError, match="APScheduler"):
-                Scheduler()
+        with pytest.raises(ImportError, match="APScheduler"):
+            Scheduler()
 
 
 class TestSchedulerStartStop:
     @pytest.fixture(autouse=True)
-    def _mock_apscheduler(self):
+    def _mock_apscheduler(self, mocker):
         """Inject a mock APScheduler so tests run without the package installed."""
-        mock_instance = MagicMock()
+        mock_instance = mocker.MagicMock()
         mock_instance.running = True  # so stop() calls shutdown()
 
-        mock_bg_cls = MagicMock(return_value=mock_instance)
-        mock_bg_module = MagicMock()
+        mock_bg_cls = mocker.MagicMock(return_value=mock_instance)
+        mock_bg_module = mocker.MagicMock()
         mock_bg_module.BackgroundScheduler = mock_bg_cls
 
-        mock_schedulers = MagicMock()
+        mock_schedulers = mocker.MagicMock()
         mock_schedulers.background = mock_bg_module
 
-        mock_aps = MagicMock()
+        mock_aps = mocker.MagicMock()
         mock_aps.schedulers = mock_schedulers
 
-        with patch.dict(
+        mocker.patch.dict(
             sys.modules,
             {
                 "apscheduler": mock_aps,
                 "apscheduler.schedulers": mock_schedulers,
                 "apscheduler.schedulers.background": mock_bg_module,
             },
-        ):
-            yield mock_bg_cls
+        )
+        yield mock_bg_cls
 
     def test_start_stop_no_jobs(self, tmp_path):
         """Scheduler with no enabled jobs starts and stops cleanly."""
@@ -451,9 +432,8 @@ class TestSchedulerStartStop:
 class TestRunJobReturnValue:
     """_run_job returns (bool, error_str_or_none)."""
 
-    def _make_source(self, tmp_path):
+    def _make_source(self, tmp_path, mocker):
         from datetime import datetime
-        from unittest.mock import MagicMock
 
         import numpy as np
         import xarray as xr
@@ -465,7 +445,7 @@ class TestRunJobReturnValue:
             coords={"y": np.arange(4.0), "x": np.arange(4.0)},
         )
         ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
-        src = MagicMock()
+        src = mocker.MagicMock()
         src.collection_id = "worldpop"
         src.temporal_resolution = "annual"
         src.VARIABLE = "population"
@@ -477,68 +457,58 @@ class TestRunJobReturnValue:
         src.stac_properties.return_value = {}
         return src, zarr_root
 
-    def test_returns_true_none_on_success(self, tmp_path):
-        from unittest.mock import MagicMock, patch
-
+    def test_returns_true_none_on_success(self, tmp_path, mocker):
         from eostrata.scheduler import _run_job
 
-        src, zarr_root = self._make_source(tmp_path)
-        mock_settings = MagicMock()
+        src, zarr_root = self._make_source(tmp_path, mocker)
+        mock_settings = mocker.MagicMock()
         mock_settings.bbox = (0.0, 0.0, 10.0, 10.0)
         mock_settings.raw_dir = tmp_path / "raw"
         mock_settings.zarr_root = zarr_root
         mock_settings.catalog_path = tmp_path / "catalog.json"
 
-        with (
-            patch("eostrata.sources.base.get_source", return_value=lambda: src),
-            patch("eostrata.config.settings", mock_settings),
-            patch("eostrata.catalog.load_or_create", return_value=MagicMock()),
-            patch("eostrata.catalog.register_item"),
-            patch("eostrata.catalog.save"),
-        ):
-            result = _run_job(
-                job_id="test",
-                source_id="worldpop",
-                params={"iso3": "NGA", "year": 2020},
-                auto_period=False,
-                webhook_url=None,
-            )
+        mocker.patch("eostrata.sources.base.get_source", return_value=lambda: src)
+        mocker.patch("eostrata.config.settings", mock_settings)
+        mocker.patch("eostrata.catalog.load_or_create", return_value=mocker.MagicMock())
+        mocker.patch("eostrata.catalog.register_item")
+        mocker.patch("eostrata.catalog.save")
+        result = _run_job(
+            job_id="test",
+            source_id="worldpop",
+            params={"iso3": "NGA", "year": 2020},
+            auto_period=False,
+            webhook_url=None,
+        )
 
         assert result == (True, None)
 
-    def test_returns_false_and_error_on_all_retries_failed(self, tmp_path):
-        from unittest.mock import MagicMock, patch
-
+    def test_returns_false_and_error_on_all_retries_failed(self, tmp_path, mocker):
         from eostrata.scheduler import _run_job
 
-        failing_src = MagicMock()
+        failing_src = mocker.MagicMock()
         failing_src.temporal_resolution = "annual"
         failing_src.download.side_effect = RuntimeError("boom")
 
-        with (
-            patch("eostrata.sources.base.get_source", return_value=lambda: failing_src),
-            patch("eostrata.config.settings", MagicMock()),
-            patch("eostrata.scheduler.time.sleep"),
-        ):
-            success, error = _run_job(
-                job_id="fail",
-                source_id="worldpop",
-                params={"iso3": "NGA", "year": 2020},
-                auto_period=False,
-                webhook_url=None,
-            )
+        mocker.patch("eostrata.sources.base.get_source", return_value=lambda: failing_src)
+        mocker.patch("eostrata.config.settings", mocker.MagicMock())
+        mocker.patch("eostrata.scheduler.time.sleep")
+        success, error = _run_job(
+            job_id="fail",
+            source_id="worldpop",
+            params={"iso3": "NGA", "year": 2020},
+            auto_period=False,
+            webhook_url=None,
+        )
 
         assert success is False
         assert "boom" in error
 
 
 class TestSchedulerSingleton:
-    def test_set_get_clear(self):
-        from unittest.mock import MagicMock
-
+    def test_set_get_clear(self, mocker):
         from eostrata.scheduler import get_scheduler, set_scheduler
 
-        mock_s = MagicMock()
+        mock_s = mocker.MagicMock()
         set_scheduler(mock_s)
         try:
             assert get_scheduler() is mock_s
@@ -551,41 +521,40 @@ class TestSchedulerTracking:
     """Tests for _wrap_for_tracking, get_jobs, save_job, remove_job, trigger_job."""
 
     @pytest.fixture()
-    def scheduler(self, tmp_path):
+    def scheduler(self, tmp_path, mocker):
         """A Scheduler backed by a mock APScheduler."""
         import sys
-        from unittest.mock import MagicMock, patch
 
-        mock_instance = MagicMock()
+        mock_instance = mocker.MagicMock()
         mock_instance.running = True
-        mock_bg_cls = MagicMock(return_value=mock_instance)
-        mock_bg_module = MagicMock()
+        mock_bg_cls = mocker.MagicMock(return_value=mock_instance)
+        mock_bg_module = mocker.MagicMock()
         mock_bg_module.BackgroundScheduler = mock_bg_cls
-        mock_schedulers = MagicMock()
+        mock_schedulers = mocker.MagicMock()
         mock_schedulers.background = mock_bg_module
-        mock_aps = MagicMock()
+        mock_aps = mocker.MagicMock()
         mock_aps.schedulers = mock_schedulers
 
-        with patch.dict(
+        mocker.patch.dict(
             sys.modules,
             {
                 "apscheduler": mock_aps,
                 "apscheduler.schedulers": mock_schedulers,
                 "apscheduler.schedulers.background": mock_bg_module,
             },
-        ):
-            from eostrata.scheduler import Scheduler
+        )
+        from eostrata.scheduler import Scheduler
 
-            f = tmp_path / "schedules.yml"
-            f.write_text("jobs: []\n")
-            s = Scheduler(schedules_path=f)
-            s._scheduler = mock_instance
-            yield s
+        f = tmp_path / "schedules.yml"
+        f.write_text("jobs: []\n")
+        s = Scheduler(schedules_path=f)
+        s._scheduler = mock_instance
+        yield s
 
     def test_get_jobs_empty(self, scheduler):
         assert scheduler.get_jobs() == []
 
-    def test_get_jobs_includes_next_run_and_last_run(self, scheduler):
+    def test_get_jobs_includes_next_run_and_last_run(self, scheduler, mocker):
         from datetime import datetime
 
         scheduler._job_defs["j1"] = {
@@ -596,7 +565,7 @@ class TestSchedulerTracking:
             "auto_period": True,
             "enabled": True,
         }
-        mock_apjob = MagicMock()
+        mock_apjob = mocker.MagicMock()
         mock_apjob.next_run_time = datetime(2026, 4, 15, 3, 0, tzinfo=UTC)
         scheduler._scheduler.get_job.return_value = mock_apjob
 
@@ -694,9 +663,7 @@ class TestSchedulerTracking:
         with pytest.raises(KeyError, match="unknown"):
             scheduler.trigger_job("unknown")
 
-    def test_trigger_job_spawns_thread(self, scheduler):
-        from unittest.mock import patch
-
+    def test_trigger_job_spawns_thread(self, scheduler, mocker):
         scheduler._job_defs["j1"] = {
             "id": "j1",
             "source": "chirps",
@@ -705,15 +672,12 @@ class TestSchedulerTracking:
             "auto_period": False,
             "enabled": True,
         }
-        with patch("threading.Thread") as mock_thread_cls:
-            mock_t = MagicMock()
-            mock_thread_cls.return_value = mock_t
-            scheduler.trigger_job("j1")
+        mock_t = mocker.MagicMock()
+        mocker.patch("threading.Thread", return_value=mock_t)
+        scheduler.trigger_job("j1")
         mock_t.start.assert_called_once()
 
-    def test_wrap_for_tracking_records_success(self, scheduler, tmp_path):
-        from unittest.mock import MagicMock, patch
-
+    def test_wrap_for_tracking_records_success(self, scheduler, tmp_path, mocker):
         import numpy as np
         import xarray as xr
 
@@ -725,7 +689,7 @@ class TestSchedulerTracking:
         )
         ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
 
-        src = MagicMock()
+        src = mocker.MagicMock()
         src.collection_id = "worldpop"
         src.temporal_resolution = "annual"
         src.VARIABLE = "population"
@@ -735,7 +699,7 @@ class TestSchedulerTracking:
         src.stac_item_id.return_value = "worldpop_nga"
         src.stac_properties.return_value = {}
 
-        mock_settings = MagicMock()
+        mock_settings = mocker.MagicMock()
         mock_settings.bbox = (0.0, 0.0, 10.0, 10.0)
         mock_settings.raw_dir = tmp_path / "raw"
         mock_settings.zarr_root = zarr_root
@@ -744,103 +708,92 @@ class TestSchedulerTracking:
         tracked = scheduler._wrap_for_tracking(
             "j1", "worldpop", {"iso3": "NGA", "year": 2020}, False, None
         )
-        with (
-            patch("eostrata.sources.base.get_source", return_value=lambda: src),
-            patch("eostrata.config.settings", mock_settings),
-            patch("eostrata.catalog.load_or_create", return_value=MagicMock()),
-            patch("eostrata.catalog.register_item"),
-            patch("eostrata.catalog.save"),
-        ):
-            tracked()
+        mocker.patch("eostrata.sources.base.get_source", return_value=lambda: src)
+        mocker.patch("eostrata.config.settings", mock_settings)
+        mocker.patch("eostrata.catalog.load_or_create", return_value=mocker.MagicMock())
+        mocker.patch("eostrata.catalog.register_item")
+        mocker.patch("eostrata.catalog.save")
+        tracked()
 
         run = scheduler._job_runs["j1"]
         assert run["status"] == "success"
         assert run["error"] is None
         assert run["finished_at"] is not None
 
-    def test_wrap_for_tracking_records_failure(self, scheduler):
-        from unittest.mock import MagicMock, patch
-
-        src = MagicMock()
+    def test_wrap_for_tracking_records_failure(self, scheduler, mocker):
+        src = mocker.MagicMock()
         src.temporal_resolution = "annual"
         src.download.side_effect = RuntimeError("disk full")
 
         tracked = scheduler._wrap_for_tracking("j1", "worldpop", {}, False, None)
-        with (
-            patch("eostrata.sources.base.get_source", return_value=lambda: src),
-            patch("eostrata.config.settings", MagicMock()),
-            patch("eostrata.scheduler.time.sleep"),
-        ):
-            tracked()
+        mocker.patch("eostrata.sources.base.get_source", return_value=lambda: src)
+        mocker.patch("eostrata.config.settings", mocker.MagicMock())
+        mocker.patch("eostrata.scheduler.time.sleep")
+        tracked()
 
         run = scheduler._job_runs["j1"]
         assert run["status"] == "failed"
         assert "disk full" in run["error"]
 
-    def test_wrap_for_tracking_sets_running_before_executing(self, scheduler):
+    def test_wrap_for_tracking_sets_running_before_executing(self, scheduler, mocker):
         """While the job is in-flight, status should be 'running'."""
-        from unittest.mock import MagicMock, patch
-
         observed_status = []
 
         def capture_status(*args, **kwargs):
             observed_status.append(scheduler._job_runs.get("j1", {}).get("status"))
             raise RuntimeError("stop")
 
-        src = MagicMock()
+        src = mocker.MagicMock()
         src.temporal_resolution = "annual"
         src.download.side_effect = capture_status
 
         tracked = scheduler._wrap_for_tracking("j1", "worldpop", {}, False, None)
-        with (
-            patch("eostrata.sources.base.get_source", return_value=lambda: src),
-            patch("eostrata.config.settings", MagicMock()),
-            patch("eostrata.scheduler.time.sleep"),
-        ):
-            tracked()
+        mocker.patch("eostrata.sources.base.get_source", return_value=lambda: src)
+        mocker.patch("eostrata.config.settings", mocker.MagicMock())
+        mocker.patch("eostrata.scheduler.time.sleep")
+        tracked()
 
         assert "running" in observed_status
 
 
 class TestSchedulerWriteSchedules:
     @pytest.fixture()
-    def scheduler_with_jobs(self, tmp_path):
+    def scheduler_with_jobs(self, tmp_path, mocker):
         import sys
-        from unittest.mock import MagicMock, patch
 
-        mock_instance = MagicMock()
+        mock_instance = mocker.MagicMock()
         mock_instance.running = False
-        mock_bg_cls = MagicMock(return_value=mock_instance)
-        mock_bg_module = MagicMock()
+        mock_bg_cls = mocker.MagicMock(return_value=mock_instance)
+        mock_bg_module = mocker.MagicMock()
         mock_bg_module.BackgroundScheduler = mock_bg_cls
-        mock_schedulers = MagicMock()
+        mock_schedulers = mocker.MagicMock()
         mock_schedulers.background = mock_bg_module
-        mock_aps = MagicMock()
+        mock_aps = mocker.MagicMock()
         mock_aps.schedulers = mock_schedulers
 
-        with patch.dict(
+        mocker.patch.dict(
             sys.modules,
             {
                 "apscheduler": mock_aps,
                 "apscheduler.schedulers": mock_schedulers,
                 "apscheduler.schedulers.background": mock_bg_module,
             },
-        ):
-            from eostrata.scheduler import Scheduler
+        )
+        from eostrata.scheduler import Scheduler
 
-            f = tmp_path / "schedules.yml"
-            f.write_text("jobs: []\n")
-            s = Scheduler(schedules_path=f)
-            s._scheduler = mock_instance
-            s._job_defs["j1"] = {
-                "id": "j1",
-                "source": "chirps",
-                "params": {},
-                "cron": "0 3 15 * *",
-                "auto_period": True,
-                "enabled": True,
-            }
-            yield s, f
+        f = tmp_path / "schedules.yml"
+        f.write_text("jobs: []\n")
+        s = Scheduler(schedules_path=f)
+        s._scheduler = mock_instance
+        s._job_defs["j1"] = {
+            "id": "j1",
+            "source": "chirps",
+            "params": {},
+            "cron": "0 3 15 * *",
+            "auto_period": True,
+            "enabled": True,
+        }
+        yield s, f
 
     def test_write_persists_jobs_to_yaml(self, scheduler_with_jobs):
         import yaml
@@ -859,10 +812,9 @@ class TestSchedulerWriteSchedules:
         data = yaml.safe_load(f.read_text())
         assert data["webhook_url"] == "https://example.com/hook"
 
-    def test_write_schedules_no_yaml_warns_and_returns(self, scheduler_with_jobs):
+    def test_write_schedules_no_yaml_warns_and_returns(self, scheduler_with_jobs, mocker):
         import sys
-        from unittest.mock import patch
 
         s, _ = scheduler_with_jobs
-        with patch.dict(sys.modules, {"yaml": None}):
-            s._write_schedules()  # must not raise
+        mocker.patch.dict(sys.modules, {"yaml": None})
+        s._write_schedules()  # must not raise

@@ -51,38 +51,34 @@ class TestCDSSource:
         latest = self.source.latest_available()
         assert latest.tzinfo is not None
 
-    def test_latest_available_january_wraps_to_previous_year(self):
+    def test_latest_available_january_wraps_to_previous_year(self, mocker):
         """In January, subtracting 3 months wraps to October of the previous year."""
-        from unittest.mock import patch
-
-        with patch("eostrata.sources.cds.datetime") as mock_dt:
-            mock_dt.now.return_value = datetime(2024, 1, 15, tzinfo=UTC)
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-            latest = CDSSource().latest_available()
+        mock_dt = mocker.patch("eostrata.sources.cds.datetime")
+        mock_dt.now.return_value = datetime(2024, 1, 15, tzinfo=UTC)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        latest = CDSSource().latest_available()
 
         assert latest == datetime(2023, 10, 1, tzinfo=UTC)
 
-    def test_cdsapi_import_error_message(self):
+    def test_cdsapi_import_error_message(self, mocker):
         """Helpful error message shown when cdsapi is not installed."""
         import sys
-        from unittest.mock import patch
 
-        with patch.dict(sys.modules, {"cdsapi": None}):
-            from eostrata.sources.cds import _get_cdsapi
+        mocker.patch.dict(sys.modules, {"cdsapi": None})
+        from eostrata.sources.cds import _get_cdsapi
 
-            with pytest.raises(ImportError, match="cdsapi"):
-                _get_cdsapi()
+        with pytest.raises(ImportError, match="cdsapi"):
+            _get_cdsapi()
 
-    def test_cdsapi_success_returns_module(self):
+    def test_cdsapi_success_returns_module(self, mocker):
         """_get_cdsapi returns the cdsapi module when it is available."""
         import sys
-        from unittest.mock import MagicMock, patch
 
-        fake_cdsapi = MagicMock()
-        with patch.dict(sys.modules, {"cdsapi": fake_cdsapi}):
-            from eostrata.sources.cds import _get_cdsapi
+        fake_cdsapi = mocker.MagicMock()
+        mocker.patch.dict(sys.modules, {"cdsapi": fake_cdsapi})
+        from eostrata.sources.cds import _get_cdsapi
 
-            result = _get_cdsapi()
+        result = _get_cdsapi()
         assert result is fake_cdsapi
 
 
@@ -98,17 +94,16 @@ class TestDownloadEra5:
         )
         assert result == dest
 
-    def test_calls_cdsapi_client(self, tmp_path):
+    def test_calls_cdsapi_client(self, tmp_path, mocker):
         """_download_era5 calls cdsapi.Client.retrieve when file is missing."""
         import sys
-        from unittest.mock import MagicMock, patch
 
         from eostrata.sources.cds import _download_era5
 
         dest = tmp_path / "era5_t2m_2023.nc"
 
-        fake_client = MagicMock()
-        fake_cdsapi = MagicMock()
+        fake_client = mocker.MagicMock()
+        fake_cdsapi = mocker.MagicMock()
         fake_cdsapi.Client.return_value = fake_client
 
         def _fake_retrieve(_dataset, _params, path):
@@ -116,13 +111,11 @@ class TestDownloadEra5:
 
         fake_client.retrieve.side_effect = _fake_retrieve
 
-        with (
-            patch.dict(sys.modules, {"cdsapi": fake_cdsapi}),
-            patch("eostrata.sources.cds._get_cdsapi", return_value=fake_cdsapi),
-        ):
-            result = _download_era5(
-                dest, variable="2m_temperature", year=2023, months=[1, 2], bbox=(2, 4, 15, 14)
-            )
+        mocker.patch.dict(sys.modules, {"cdsapi": fake_cdsapi})
+        mocker.patch("eostrata.sources.cds._get_cdsapi", return_value=fake_cdsapi)
+        result = _download_era5(
+            dest, variable="2m_temperature", year=2023, months=[1, 2], bbox=(2, 4, 15, 14)
+        )
 
         assert result == dest
         fake_client.retrieve.assert_called_once()

@@ -153,10 +153,8 @@ class TestNetcdfToZarr:
         # Should have 3 unique timestamps: 2023-01, 2023-02, 2023-03
         assert len(ds_out["time"]) == 3
 
-    def test_exception_in_duplicate_check_appends_anyway(self, tmp_path):
+    def test_exception_in_duplicate_check_appends_anyway(self, tmp_path, mocker):
         """If the existing-timestamp check raises, the data is appended anyway."""
-        from unittest.mock import patch
-
         from eostrata.sources.cds import _netcdf_to_zarr
 
         nc = tmp_path / "era5_t2m.nc"
@@ -178,8 +176,8 @@ class TestNetcdfToZarr:
                 raise OSError("simulated read error")
             return original_open_zarr(*args, **kwargs)
 
-        with patch("eostrata.sources.cds.xr.open_zarr", side_effect=_patched_open_zarr):
-            _netcdf_to_zarr(nc, zarr_root, "era5/t2m", variable="2m_temperature", bbox=bbox)
+        mocker.patch("eostrata.sources.cds.xr.open_zarr", side_effect=_patched_open_zarr)
+        _netcdf_to_zarr(nc, zarr_root, "era5/t2m", variable="2m_temperature", bbox=bbox)
 
         # Group still exists — data was appended despite the check failure
         assert (zarr_root / "era5" / "t2m").exists()
@@ -251,13 +249,13 @@ class TestCDSSourceToZarr:
         source.to_zarr(nc, zarr_root, (2.0, 4.0, 15.0, 14.0), variable="tp", year=2023)
         assert (zarr_root / "era5" / "tp").exists()
 
-    def test_cdsapi_unavailable_raises_on_download(self, tmp_path):
+    def test_cdsapi_unavailable_raises_on_download(self, tmp_path, mocker):
         """CDSSource.download raises a helpful ImportError if cdsapi is missing."""
         import sys
-        from unittest.mock import patch
 
         from eostrata.sources.cds import CDSSource
 
         source = CDSSource()
-        with patch.dict(sys.modules, {"cdsapi": None}), pytest.raises(ImportError, match="cdsapi"):
+        mocker.patch.dict(sys.modules, {"cdsapi": None})
+        with pytest.raises(ImportError, match="cdsapi"):
             source.download(tmp_path, (0, 0, 10, 10), year=2023)

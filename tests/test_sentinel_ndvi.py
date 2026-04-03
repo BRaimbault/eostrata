@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import httpx
 import numpy as np
@@ -132,28 +132,28 @@ class TestSentinelNDVISource:
         latest = self.source.latest_available()
         assert latest.day in (1, 11, 21)
 
-    def test_latest_available_mid_month(self):
+    def test_latest_available_mid_month(self, mocker):
         """From the 15th, dekad 1 of the current month should be available."""
-        with patch("eostrata.sources.sentinel_ndvi.datetime") as mock_dt:
-            mock_dt.now.return_value = datetime(2024, 6, 20, tzinfo=UTC)
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-            result = SentinelNDVISource().latest_available()
+        mock_dt = mocker.patch("eostrata.sources.sentinel_ndvi.datetime")
+        mock_dt.now.return_value = datetime(2024, 6, 20, tzinfo=UTC)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        result = SentinelNDVISource().latest_available()
         assert result == datetime(2024, 6, 1, tzinfo=UTC)
 
-    def test_latest_available_early_month_wraps_to_previous(self):
+    def test_latest_available_early_month_wraps_to_previous(self, mocker):
         """Before the 5th, return dekad 2 of the previous month."""
-        with patch("eostrata.sources.sentinel_ndvi.datetime") as mock_dt:
-            mock_dt.now.return_value = datetime(2024, 3, 3, tzinfo=UTC)
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-            result = SentinelNDVISource().latest_available()
+        mock_dt = mocker.patch("eostrata.sources.sentinel_ndvi.datetime")
+        mock_dt.now.return_value = datetime(2024, 3, 3, tzinfo=UTC)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        result = SentinelNDVISource().latest_available()
         assert result == datetime(2024, 2, 11, tzinfo=UTC)
 
-    def test_latest_available_january_wraps_to_december(self):
+    def test_latest_available_january_wraps_to_december(self, mocker):
         """Early January → previous year December."""
-        with patch("eostrata.sources.sentinel_ndvi.datetime") as mock_dt:
-            mock_dt.now.return_value = datetime(2024, 1, 2, tzinfo=UTC)
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-            result = SentinelNDVISource().latest_available()
+        mock_dt = mocker.patch("eostrata.sources.sentinel_ndvi.datetime")
+        mock_dt.now.return_value = datetime(2024, 1, 2, tzinfo=UTC)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        result = SentinelNDVISource().latest_available()
         assert result.year == 2023
         assert result.month == 12
 
@@ -255,55 +255,55 @@ def _make_httpx_stream_mock(content: bytes):
 
 
 class TestDownloadFunction:
-    def test_streams_content_to_file(self, tmp_path):
+    def test_streams_content_to_file(self, tmp_path, mocker):
         dest = tmp_path / "sub" / "out.tif"
         content = b"fake tif bytes"
         mock_resp = _make_httpx_stream_mock(content)
 
-        with patch("eostrata.sources.sentinel_ndvi.httpx.stream", return_value=mock_resp):
-            result = _download("http://example.com/ndvi.tif", dest)
+        mocker.patch("eostrata.sources.sentinel_ndvi.httpx.stream", return_value=mock_resp)
+        result = _download("http://example.com/ndvi.tif", dest)
 
         assert result == dest
         assert dest.read_bytes() == content
 
-    def test_skips_if_file_already_exists(self, tmp_path):
+    def test_skips_if_file_already_exists(self, tmp_path, mocker):
         dest = tmp_path / "out.tif"
         dest.write_bytes(b"existing")
 
-        with patch("eostrata.sources.sentinel_ndvi.httpx.stream") as mock_stream:
-            result = _download("http://example.com/ndvi.tif", dest)
+        mock_stream = mocker.patch("eostrata.sources.sentinel_ndvi.httpx.stream")
+        result = _download("http://example.com/ndvi.tif", dest)
 
         mock_stream.assert_not_called()
         assert result == dest
 
-    def test_sends_bearer_auth_header(self, tmp_path):
+    def test_sends_bearer_auth_header(self, tmp_path, mocker):
         dest = tmp_path / "out.tif"
         content = b"data"
         mock_resp = _make_httpx_stream_mock(content)
 
-        with patch(
+        mock_stream = mocker.patch(
             "eostrata.sources.sentinel_ndvi.httpx.stream", return_value=mock_resp
-        ) as mock_stream:
-            _download("http://example.com/ndvi.tif", dest, api_key="mytoken")
+        )
+        _download("http://example.com/ndvi.tif", dest, api_key="mytoken")
 
         call_kwargs = mock_stream.call_args
         headers = call_kwargs.kwargs["headers"]
         assert headers["Authorization"] == "Bearer mytoken"
 
-    def test_no_auth_header_without_api_key(self, tmp_path):
+    def test_no_auth_header_without_api_key(self, tmp_path, mocker):
         dest = tmp_path / "out.tif"
         content = b"data"
         mock_resp = _make_httpx_stream_mock(content)
 
-        with patch(
+        mock_stream = mocker.patch(
             "eostrata.sources.sentinel_ndvi.httpx.stream", return_value=mock_resp
-        ) as mock_stream:
-            _download("http://example.com/ndvi.tif", dest)
+        )
+        _download("http://example.com/ndvi.tif", dest)
 
         headers = mock_stream.call_args.kwargs["headers"]
         assert "Authorization" not in headers
 
-    def test_retries_on_transport_error_then_succeeds(self, tmp_path):
+    def test_retries_on_transport_error_then_succeeds(self, tmp_path, mocker):
         dest = tmp_path / "out.tif"
         content = b"recovered"
         good_resp = _make_httpx_stream_mock(content)
@@ -318,41 +318,35 @@ class TestDownloadFunction:
                 raise error
             return good_resp
 
-        with (
-            patch("eostrata.sources.sentinel_ndvi.httpx.stream", side_effect=_side_effect),
-            patch("eostrata.sources.sentinel_ndvi.time.sleep"),
-        ):
-            result = _download("http://example.com/ndvi.tif", dest)
+        mocker.patch("eostrata.sources.sentinel_ndvi.httpx.stream", side_effect=_side_effect)
+        mocker.patch("eostrata.sources.sentinel_ndvi.time.sleep")
+        result = _download("http://example.com/ndvi.tif", dest)
 
         assert result == dest
         assert call_count == 2
 
-    def test_raises_after_all_retries_exhausted(self, tmp_path):
+    def test_raises_after_all_retries_exhausted(self, tmp_path, mocker):
         dest = tmp_path / "out.tif"
         error = httpx.TransportError("timeout")
 
-        with (
-            patch(
-                "eostrata.sources.sentinel_ndvi.httpx.stream",
-                side_effect=error,
-            ),
-            patch("eostrata.sources.sentinel_ndvi.time.sleep"),
-            pytest.raises(httpx.TransportError),
-        ):
+        mocker.patch(
+            "eostrata.sources.sentinel_ndvi.httpx.stream",
+            side_effect=error,
+        )
+        mocker.patch("eostrata.sources.sentinel_ndvi.time.sleep")
+        with pytest.raises(httpx.TransportError):
             _download("http://example.com/ndvi.tif", dest)
 
-    def test_download_method_calls_download_helper(self, tmp_path):
+    def test_download_method_calls_download_helper(self, tmp_path, mocker):
         """SentinelNDVISource.download() calls _download when file is missing."""
         source = SentinelNDVISource()
         content = b"tif bytes"
         mock_resp = _make_httpx_stream_mock(content)
 
-        with (
-            patch("eostrata.sources.sentinel_ndvi.httpx.stream", return_value=mock_resp),
-            patch("eostrata.config.settings") as mock_settings,
-        ):
-            mock_settings.cgls_api_key = ""
-            paths = source.download(tmp_path, (0, 0, 10, 10), year=2023, month=6, dekad=1)
+        mocker.patch("eostrata.sources.sentinel_ndvi.httpx.stream", return_value=mock_resp)
+        mock_settings = mocker.patch("eostrata.config.settings")
+        mock_settings.cgls_api_key = ""
+        paths = source.download(tmp_path, (0, 0, 10, 10), year=2023, month=6, dekad=1)
 
         assert len(paths) == 1
         assert paths[0].exists()
@@ -362,10 +356,10 @@ class TestDownloadFunction:
 
 
 class TestLatestAvailableMidMonth:
-    def test_latest_available_day_5_to_14_returns_dekad3_prev_month(self):
+    def test_latest_available_day_5_to_14_returns_dekad3_prev_month(self, mocker):
         """Between day 5 and 14 inclusive, returns dekad 3 (day 21) of the previous month."""
-        with patch("eostrata.sources.sentinel_ndvi.datetime") as mock_dt:
-            mock_dt.now.return_value = datetime(2024, 4, 10, tzinfo=UTC)
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-            result = SentinelNDVISource().latest_available()
+        mock_dt = mocker.patch("eostrata.sources.sentinel_ndvi.datetime")
+        mock_dt.now.return_value = datetime(2024, 4, 10, tzinfo=UTC)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        result = SentinelNDVISource().latest_available()
         assert result == datetime(2024, 3, 21, tzinfo=UTC)

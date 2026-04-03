@@ -165,17 +165,17 @@ class TestGeotiffToZarr:
         ds = geotiff_to_zarr(tif, zarr_root, "col/nd", variable_name="v", nodata_override=-9999.0)
         assert np.all(np.isnan(ds["v"].values))
 
-    def test_appends_when_existing_zarr_unreadable(self, tmp_path):
+    def test_appends_when_existing_zarr_unreadable(self, tmp_path, mocker):
         """If the existing group can't be opened, proceed with append (don't crash)."""
-        from unittest.mock import patch
-
         tif = tmp_path / "test.tif"
         _write_tif(tif, (0.0, 0.0, 5.0, 5.0))
         zarr_root = tmp_path / "zarr"
         t1 = np.datetime64("2020-01-01", "ns")
         geotiff_to_zarr(tif, zarr_root, "col/d", variable_name="v", time_coord=t1)
         t2 = np.datetime64("2021-01-01", "ns")
-        with patch("eostrata.store.xr.open_zarr", side_effect=OSError("corrupted")):
+        from unittest.mock import patch as _patch
+
+        with _patch("eostrata.store.xr.open_zarr", side_effect=OSError("corrupted")):
             geotiff_to_zarr(tif, zarr_root, "col/d", variable_name="v", time_coord=t2)
         ds = xr.open_zarr(str(zarr_root), group="col/d", consolidated=False)
         assert len(ds["time"]) >= 1

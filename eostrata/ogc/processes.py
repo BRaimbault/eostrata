@@ -12,8 +12,12 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from eostrata.aggregate import apply_temporal_aggregation
+from pathlib import Path
+
+from eostrata.aggregate import apply_temporal_aggregation, resolve_accessed_times
+from eostrata.cache import record_access
 from eostrata.config import settings
+from eostrata.ogc.ingest import INGEST_PROCESS_IDS
 
 logger = logging.getLogger(__name__)
 
@@ -177,11 +181,6 @@ def _load_array(
     triggering N separate zarr reads.  The underlying dataset is closed before
     this function returns to avoid open file-handle accumulation under load.
     """
-    from pathlib import Path
-
-    from eostrata.aggregate import resolve_accessed_times
-    from eostrata.cache import record_access
-
     store_path = url or str(settings.zarr_root)
     ds = xr.open_zarr(store_path, group=group, consolidated=True)
     try:
@@ -266,8 +265,6 @@ def _feature_stats(da: xr.DataArray, geometry: dict) -> dict:
 
 @router.get("", summary="List available processes")
 def list_processes() -> dict:
-    from eostrata.ogc.ingest import INGEST_PROCESS_IDS
-
     return {
         "processes": [{"id": "zonalstats", "version": "0.1.0"}, *INGEST_PROCESS_IDS],
         "links": [{"href": "/processes", "rel": "self", "type": "application/json"}],

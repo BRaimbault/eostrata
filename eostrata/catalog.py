@@ -237,7 +237,7 @@ def register_item(
     item.add_asset(
         "zarr",
         pystac.Asset(
-            href=str(Path(zarr_root) / zarr_group),
+            href=str(zarr_root / zarr_group),
             media_type="application/vnd+zarr",
             roles=["data"],
             extra_fields={

@@ -670,9 +670,10 @@ def _dynamic_openapi() -> dict:
     """
     global _openapi_schema_cache, _openapi_catalog_mtime
 
-    catalog_mtime = (
-        settings.catalog_path.stat().st_mtime if settings.catalog_path.exists() else 0.0
-    )
+    try:
+        catalog_mtime = settings.catalog_path.stat().st_mtime
+    except FileNotFoundError:
+        catalog_mtime = 0.0
     if _openapi_schema_cache is not None and catalog_mtime == _openapi_catalog_mtime:
         return _openapi_schema_cache
 

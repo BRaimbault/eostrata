@@ -208,8 +208,11 @@ def list_datasets(
             adir = _access_dir(Path(_zarr_root), group_path)
             sentinels = list(adir.iterdir()) if adir.exists() else []
             if sentinels:
-                newest = max(sentinels, key=lambda f: f.stat().st_mtime)
-                ts = datetime.fromtimestamp(newest.stat().st_mtime, tz=UTC)
+                # Compute mtime once per file; reuse the max value directly
+                # to avoid a second stat() call on the winning path entry.
+                sentinel_mtimes = [(f.stat().st_mtime, f) for f in sentinels]
+                newest_mtime, _ = max(sentinel_mtimes)
+                ts = datetime.fromtimestamp(newest_mtime, tz=UTC)
                 last_read = ts.strftime("%Y-%m-%d %H:%M UTC")
             else:
                 last_read = "[dim]never read[/dim]"

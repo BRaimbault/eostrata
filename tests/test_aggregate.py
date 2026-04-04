@@ -7,6 +7,8 @@ import pytest
 import xarray as xr
 
 from eostrata.aggregate import (
+    _chunked_aggregate,
+    _chunked_mean,
     _parse_datetime_interval,
     _strip_tz,
     apply_temporal_aggregation,
@@ -189,6 +191,13 @@ class TestApplyTemporalAggregation:
         result = apply_temporal_aggregation(da, datetime_str="2021-01-01/")
         assert float(result.mean()) == pytest.approx(2021.0)
 
+    def test_corrupt_time_axis_still_non_monotonic_after_sort_raises(self, monkeypatch):
+        """DataArray whose time axis stays non-monotonic after sortby raises ValueError."""
+        da = _make_da([2022, 2020, 2021])
+        monkeypatch.setattr(xr.DataArray, "sortby", lambda self, *a, **kw: self)
+        with pytest.raises(ValueError, match="corrupt"):
+            apply_temporal_aggregation(da, agg="mean")
+
     def test_duplicate_timestamps_deduplicated(self):
         """Duplicate timestamps are deduplicated before aggregation to avoid InvalidIndexError."""
         times = np.array(
@@ -206,6 +215,91 @@ class TestApplyTemporalAggregation:
         result = apply_temporal_aggregation(da, agg="mean")
         assert result.dims == ("y", "x")
         assert float(result.mean()) == pytest.approx((2021.0 + 2022.0) / 2)
+
+
+class TestChunkedAggregation:
+    """Batched helpers produce the same result as single-pass xarray reductions."""
+
+    def test_chunked_mean_exact(self):
+        da = _make_da([1, 2, 3, 4, 5])
+        result = _chunked_mean(da, batch_size=2)
+        expected = da.mean("time").values
+        np.testing.assert_allclose(result.values, expected, rtol=1e-5)
+
+    def test_chunked_mean_single_batch(self):
+        da = _make_da([10, 20])
+        result = _chunked_mean(da, batch_size=10)
+        np.testing.assert_allclose(result.values, da.mean("time").values, rtol=1e-5)
+
+    def test_chunked_mean_via_aggregate(self):
+        da = _make_da([1, 2, 3, 4])
+        result = _chunked_aggregate(da, "mean", batch_size=2)
+        np.testing.assert_allclose(result.values, da.mean("time").values, rtol=1e-5)
+
+    def test_chunked_sum(self):
+        da = _make_da([1, 2, 3, 4])
+        result = _chunked_aggregate(da, "sum", batch_size=2)
+        np.testing.assert_allclose(result.values, da.sum("time").values, rtol=1e-5)
+
+    def test_chunked_aggregate_unknown_agg_raises(self):
+        da = _make_da([2020, 2021])
+        with pytest.raises(ValueError, match="Unknown agg method"):
+            _chunked_aggregate(da, "median", batch_size=2)  # type: ignore[arg-type]
+
+    def test_chunked_reduce_empty_raises(self):
+        from eostrata.aggregate import _chunked_reduce
+
+        empty = xr.DataArray(
+            np.empty((0, 4, 4), dtype="float32"),
+            dims=("time", "y", "x"),
+            coords={
+                "time": np.array([], dtype="datetime64[ns]"),
+                "y": np.arange(4),
+                "x": np.arange(4),
+            },
+        )
+        with pytest.raises(ValueError, match="no time steps"):
+            _chunked_reduce(empty, lambda b: b.sum("time"), lambda a, b: a + b, batch_size=2)
+
+    def test_chunked_min(self):
+        da = _make_da([5, 2, 8, 1, 3])
+        result = _chunked_aggregate(da, "min", batch_size=2)
+        np.testing.assert_allclose(result.values, da.min("time").values, rtol=1e-5)
+
+    def test_chunked_max(self):
+        da = _make_da([5, 2, 8, 1, 3])
+        result = _chunked_aggregate(da, "max", batch_size=2)
+        np.testing.assert_allclose(result.values, da.max("time").values, rtol=1e-5)
+
+    def test_apply_uses_batched_path_when_limit_set(self, monkeypatch):
+        """apply_temporal_aggregation routes to batched path when limit is exceeded."""
+        import eostrata.aggregate as agg_mod
+        import eostrata.config as cfg
+
+        da = _make_da([2020, 2021, 2022, 2023, 2024])  # 5 timesteps
+        monkeypatch.setattr(cfg.settings, "max_aggregation_timesteps", 2)
+        # Force re-read of the setting inside the module
+        monkeypatch.setattr(agg_mod._eostrata_config, "settings", cfg.settings)
+
+        result = apply_temporal_aggregation(da, agg="mean")
+        expected = da.mean("time").values
+        np.testing.assert_allclose(result.values, expected, rtol=1e-5)
+
+    def test_apply_batched_anomaly(self, monkeypatch):
+        import eostrata.aggregate as agg_mod
+        import eostrata.config as cfg
+
+        da = _make_da([2018, 2019, 2020, 2021, 2022])
+        monkeypatch.setattr(cfg.settings, "max_aggregation_timesteps", 2)
+        monkeypatch.setattr(agg_mod._eostrata_config, "settings", cfg.settings)
+
+        result = apply_temporal_aggregation(
+            da,
+            agg="anomaly",
+            baseline="2018-01-01/2019-12-31",
+        )
+        expected = apply_temporal_aggregation(da, agg="anomaly", baseline="2018-01-01/2019-12-31")
+        np.testing.assert_allclose(result.values, expected.values, rtol=1e-5)
 
 
 class TestResolveAccessedTimes:

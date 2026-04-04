@@ -109,3 +109,15 @@ class TestSettings:
     def test_custom_cors_origins(self):
         s = Settings(cors_origins=["https://app.example.com", "https://staging.example.com"])
         assert "https://app.example.com" in s.cors_origins
+
+    def test_zarr_chunk_size_too_small_raises(self):
+        with pytest.raises(Exception, match="zarr_chunk_size"):
+            Settings(zarr_chunk_size=32)
+
+    def test_zarr_chunk_size_too_large_raises(self):
+        with pytest.raises(Exception, match="zarr_chunk_size"):
+            Settings(zarr_chunk_size=8192)
+
+    def test_max_aggregation_timesteps_negative_raises(self):
+        with pytest.raises(Exception, match="max_aggregation_timesteps"):
+            Settings(max_aggregation_timesteps=-1)

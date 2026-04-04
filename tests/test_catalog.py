@@ -79,6 +79,20 @@ class TestLoadOrCreate:
         loaded = load_or_create(tmp_path / "catalog.json")
         assert loaded.id == "eostrata"
 
+    def test_loads_from_disk_when_cache_is_stale(self, tmp_path, monkeypatch):
+        """load_or_create re-reads from disk when the cached mtime doesn't match."""
+        import eostrata.catalog as cat_mod
+
+        catalog_path = tmp_path / "catalog.json"
+        cat = _make_catalog()
+        save(cat, catalog_path)
+
+        # Invalidate the in-memory cache by making its mtime appear stale
+        monkeypatch.setattr(cat_mod, "_catalog_cache_mtime", -1.0)
+
+        loaded = cat_mod.load_or_create(catalog_path)
+        assert loaded.id == "eostrata"
+
 
 class TestSave:
     def test_writes_json(self, tmp_path):
@@ -407,3 +421,23 @@ class TestRemoveTimestamp:
         item = cat.get_child("worldpop").get_item("worldpop_nga")
         assert item.common_metadata.start_datetime.year == 2021
         assert item.common_metadata.end_datetime.year == 2021
+
+    def test_remove_timestamp_adds_utc_to_naive_datetime_strings(self, tmp_path):
+        """Naive ISO strings in PROP_DATETIMES get UTC timezone assigned during removal."""
+        cat = self._catalog_with_two_items(tmp_path)
+        item = cat.get_child("worldpop").get_item("worldpop_nga")
+
+        # Override PROP_DATETIMES with naive ISO strings (no tz suffix)
+        item.properties[PROP_DATETIMES] = [
+            "2020-01-01T00:00:00",
+            "2021-01-01T00:00:00",
+        ]
+
+        changed = remove_timestamp(cat, "worldpop/nga", "2020-01-01T00:00:00")
+        assert changed
+
+        item = cat.get_child("worldpop").get_item("worldpop_nga")
+        assert item is not None
+        # UTC should have been added to both start and end
+        assert item.common_metadata.start_datetime is not None
+        assert item.common_metadata.start_datetime.tzinfo is not None

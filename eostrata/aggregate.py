@@ -12,8 +12,12 @@ from typing import Literal
 
 import numpy as np
 import xarray as xr
+from pathlib import Path
+from rio_tiler.io.xarray import XarrayReader as _XarrayReader
 from titiler.xarray.io import Reader
 from titiler.xarray.io import get_variable as _base_get_variable
+
+from eostrata.cache import record_access
 
 logger = logging.getLogger(__name__)
 
@@ -261,12 +265,6 @@ class AggregatingReader(Reader):
 
     def __attrs_post_init__(self) -> None:
         """Open dataset, normalise coords, run get_variable, then collapse time."""
-        from pathlib import Path
-
-        from rio_tiler.io.xarray import XarrayReader as _XarrayReader
-
-        from eostrata.cache import record_access
-
         # Open the dataset (mirrors Reader.__attrs_post_init__)
         self.ds = self.opener(
             self.src_path,

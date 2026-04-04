@@ -100,7 +100,9 @@ class Settings(BaseSettings):
     @classmethod
     def validate_max_aggregation_timesteps(cls, v: int) -> int:
         if v < 0:
-            raise ValueError("max_aggregation_timesteps must be 0 (unlimited) or a positive integer")
+            raise ValueError(
+                "max_aggregation_timesteps must be 0 (unlimited) or a positive integer"
+            )
         return v
 
     # ── Ingestion ─────────────────────────────────────────────────────────────

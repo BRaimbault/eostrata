@@ -13,6 +13,7 @@ from stac_fastapi.types.core import BaseCoreClient
 from stac_fastapi.types.errors import NotFoundError
 from stac_fastapi.types.stac import Collection, Collections, Item, ItemCollection
 
+from eostrata.config import settings as _settings
 from eostrata.constants import (
     PROP_DATETIMES,
     PROP_SOURCE,
@@ -22,6 +23,14 @@ from eostrata.constants import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ── In-memory catalog cache ───────────────────────────────────────────────────
+# Avoids re-parsing catalog.json on every request.  Invalidated when the file's
+# mtime changes (i.e. after save()) or when the path changes.
+
+_catalog_cache: pystac.Catalog | None = None
+_catalog_cache_path: str = ""
+_catalog_cache_mtime: float = 0.0
 
 CATALOG_ID = "eostrata"
 CATALOG_DESCRIPTION = "eostrata earth observation data catalogue"
@@ -60,22 +69,52 @@ def create_empty() -> pystac.Catalog:
 
 
 def load_or_create(catalog_path: Path) -> pystac.Catalog:
-    """Load an existing catalog.json or create a new one."""
+    """Load an existing catalog.json or create a new one.
+
+    Results are cached in memory and reused as long as the file's mtime has not
+    changed.  This avoids re-parsing catalog.json on every tile/zonal-stats
+    request.  The cache is updated by ``save()`` after each write.
+    """
+    global _catalog_cache, _catalog_cache_path, _catalog_cache_mtime
+
     catalog_path = Path(catalog_path)
+    path_str = str(catalog_path)
+
     if catalog_path.exists():
+        mtime = catalog_path.stat().st_mtime
+        if (
+            _catalog_cache is not None
+            and path_str == _catalog_cache_path
+            and mtime == _catalog_cache_mtime
+        ):
+            return _catalog_cache
         logger.info("Loading existing catalog from %s", catalog_path)
-        return pystac.Catalog.from_file(str(catalog_path))
+        catalog = pystac.Catalog.from_file(str(catalog_path))
+        _catalog_cache = catalog
+        _catalog_cache_path = path_str
+        _catalog_cache_mtime = mtime
+        return catalog
+
     logger.info("No catalog found at %s — creating new one", catalog_path)
     return _make_catalog()
 
 
 def save(catalog: pystac.Catalog, catalog_path: Path) -> None:
     """Normalise links and write catalog.json to disk."""
+    global _catalog_cache, _catalog_cache_path, _catalog_cache_mtime
+
     catalog_path = Path(catalog_path)
     catalog_path.parent.mkdir(parents=True, exist_ok=True)
     catalog.normalize_hrefs(str(catalog_path.parent))
     catalog.save(dest_href=str(catalog_path.parent))
     logger.info("Catalog saved to %s", catalog_path)
+
+    # Update the in-memory cache so the next load_or_create() returns this
+    # catalog without re-parsing from disk.
+    if catalog_path.exists():
+        _catalog_cache = catalog
+        _catalog_cache_path = str(catalog_path)
+        _catalog_cache_mtime = catalog_path.stat().st_mtime
 
 
 def register_item(
@@ -199,7 +238,7 @@ def register_item(
     item.add_asset(
         "zarr",
         pystac.Asset(
-            href=str(Path(zarr_root) / zarr_group),
+            href=str(zarr_root / zarr_group),
             media_type="application/vnd+zarr",
             roles=["data"],
             extra_fields={
@@ -246,10 +285,16 @@ def remove_timestamp(
                 collection.remove_item(item.id)
                 logger.info("Removed STAC item '%s' (no timestamps remain)", item.id)
             else:
-                dts = [datetime.fromisoformat(dt) for dt in remaining]
-                start = min(dts).replace(tzinfo=UTC) if min(dts).tzinfo is None else min(dts)
-                end = max(dts).replace(tzinfo=UTC) if max(dts).tzinfo is None else max(dts)
-                item.properties[PROP_DATETIMES] = sorted(remaining)
+                # PROP_DATETIMES is always kept sorted (ISO 8601 sorts
+                # lexicographically = chronologically), so first/last are bounds.
+                remaining_sorted = sorted(remaining)
+                start = datetime.fromisoformat(remaining_sorted[0])
+                end = datetime.fromisoformat(remaining_sorted[-1])
+                if start.tzinfo is None:
+                    start = start.replace(tzinfo=UTC)
+                if end.tzinfo is None:
+                    end = end.replace(tzinfo=UTC)
+                item.properties[PROP_DATETIMES] = remaining_sorted
                 item.properties["start_datetime"] = start.isoformat()
                 item.properties["end_datetime"] = end.isoformat()
                 item.common_metadata.start_datetime = start
@@ -313,9 +358,7 @@ class PystacClient(BaseCoreClient):
     catalog_path: str = attr.ib(default=None)
 
     def _catalog(self) -> pystac.Catalog:
-        from eostrata.config import settings
-
-        path = self.catalog_path or str(settings.catalog_path)
+        path = self.catalog_path or str(_settings.catalog_path)
         return load_or_create(path)
 
     def all_collections(self, **kwargs: Any) -> Collections:

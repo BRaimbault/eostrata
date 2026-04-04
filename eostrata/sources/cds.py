@@ -176,10 +176,10 @@ def _netcdf_to_zarr(
                 # Filter out timestamps already present to avoid duplicate time values
                 try:
                     existing = xr.open_zarr(store_path, group=zarr_group, consolidated=False)
-                    existing_times = set(existing["time"].values.astype("datetime64[s]").tolist())
+                    existing_times_s = existing["time"].values.astype("datetime64[s]")
                     existing.close()
                     new_times_s = ds["time"].values.astype("datetime64[s]")
-                    new_mask = np.array([t not in existing_times for t in new_times_s])
+                    new_mask = ~np.isin(new_times_s, existing_times_s)
                     if not new_mask.any():
                         logger.info(
                             "All timestamps already present in '%s' — skipping append", zarr_group

@@ -112,6 +112,8 @@ def rebuild_catalog_from_zarr(
 
     from eostrata import catalog as cat
     from eostrata.cache import list_groups
+    from eostrata.constants import PROP_DATETIMES
+    from eostrata.sources.base import _REGISTRY as _src_registry
 
     zarr_root = Path(zarr_root)
     catalog_path = Path(catalog_path)
@@ -119,6 +121,10 @@ def rebuild_catalog_from_zarr(
     if not zarr_root.exists():
         logger.warning("Zarr root does not exist: %s", zarr_root)
         return {}
+
+    # Build prefix→source_cls map once (O(n_sources)) rather than doing an
+    # O(n_sources) scan inside the loop for every zarr group.
+    prefix_to_cls: dict = {cls.zarr_prefix: cls for cls in _src_registry.values()}
 
     catalogue = cat.create_empty()
     groups = list_groups(zarr_root)
@@ -151,13 +157,7 @@ def rebuild_catalog_from_zarr(
             ds.close()
             continue
 
-        from eostrata.sources.base import _REGISTRY as _src_registry
-
-        # Look up the source class by its zarr_prefix
-        source_cls = next(
-            (cls for cls in _src_registry.values() if cls.zarr_prefix == source_type),
-            None,
-        )
+        source_cls = prefix_to_cls.get(source_type)
         if source_cls is None:
             logger.warning("Unknown source type '%s' in '%s' — skipping", source_type, group_path)
             ds.close()
@@ -169,19 +169,35 @@ def rebuild_catalog_from_zarr(
         variable: str = meta["variable"]
         extra: dict = meta["extra"]
 
-        for ts in times:
-            dt = pd.Timestamp(ts).to_pydatetime().replace(tzinfo=UTC)
-            cat.register_item(
-                catalogue,
-                collection_id=collection_id,
-                item_id=item_id,
-                bbox=bbox,
-                datetime_=dt,
-                zarr_root=zarr_root,
-                zarr_group=group_path,
-                variable=variable,
-                extra_properties=extra,
-            )
+        # Sort all timestamps up-front and register the group in a single pass:
+        # register_item() once for the earliest datetime (creates the item), then
+        # patch PROP_DATETIMES directly for remaining timestamps.  This avoids
+        # calling register_item() N times, which would do a pystac get+remove+add
+        # cycle for each timestamp (O(N²) in pystac list operations per group).
+
+        dts = sorted(pd.Timestamp(ts).to_pydatetime().replace(tzinfo=UTC) for ts in times)
+        if not dts:
+            continue
+
+        registered_item = cat.register_item(
+            catalogue,
+            collection_id=collection_id,
+            item_id=item_id,
+            bbox=bbox,
+            datetime_=dts[0],
+            zarr_root=zarr_root,
+            zarr_group=group_path,
+            variable=variable,
+            extra_properties=extra,
+        )
+
+        if len(dts) > 1:
+            all_iso = [dt.isoformat() for dt in dts]
+            registered_item.properties[PROP_DATETIMES] = all_iso
+            registered_item.properties["start_datetime"] = all_iso[0]
+            registered_item.properties["end_datetime"] = all_iso[-1]
+            registered_item.common_metadata.start_datetime = dts[0]
+            registered_item.common_metadata.end_datetime = dts[-1]
 
         results[group_path] = len(times)
         logger.info("Rebuilt %d timestamps for '%s'", len(times), group_path)

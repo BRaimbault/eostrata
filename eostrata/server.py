@@ -25,6 +25,7 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pystac
@@ -39,10 +40,12 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from titiler.core.errors import DEFAULT_STATUS_CODES, add_exception_handlers
 from titiler.xarray.factory import TilerFactory
 
+from eostrata import cache as _cache
 from eostrata.aggregate import AggregatingReader
 from eostrata.catalog import PystacClient, load_or_create
 from eostrata.config import settings
 from eostrata.constants import PROP_DATETIMES, PROP_VARIABLE, PROP_ZARR_GROUP
+from eostrata.ogc.ingest import INGEST_SOURCES as _INGEST_SOURCES
 from eostrata.ogc.ingest import router as ingest_router
 from eostrata.ogc.processes import router as processes_router
 from eostrata.ogc.scheduler_router import router as scheduler_router
@@ -50,6 +53,22 @@ from eostrata.ogc.tiles import _VariablesExtension
 from eostrata.ogc.tiles import router as collection_tiles_router
 
 logger = logging.getLogger(__name__)
+
+# Pre-serialise static data once — built at import time, never changes.
+_INGEST_SOURCES_JSON: str = json.dumps(_INGEST_SOURCES)
+
+# config_data for the map viewer embeds settings values that are fixed for
+# the lifetime of the process — pre-compute once instead of per-request.
+_MAP_CONFIG_JSON: str = json.dumps(
+    {
+        "bbox": list(settings.bbox),
+        "quota_mb": settings.store_quota_mb,
+        "eviction_buffer_mb": settings.store_eviction_buffer_mb,
+        "zarr_root": str(settings.zarr_root),
+        "raw_dir": str(settings.raw_dir),
+        "catalog_path": str(settings.catalog_path),
+    }
+)
 
 # ── Lifespan: start / stop the background scheduler ───────────────────────────
 
@@ -474,15 +493,11 @@ def store_usage() -> dict:
     ``last_accessed`` is an ISO 8601 timestamp, or ``null`` if the group has
     never been read via the tile or zonal-stats endpoints.
     """
-    from datetime import UTC, datetime
-
-    from eostrata.cache import list_groups, list_timestamps, store_size_mb
-
-    used_mb = store_size_mb(settings.zarr_root)
+    used_mb = _cache.store_size_mb(settings.zarr_root)
     quota_mb = settings.store_quota_mb
     groups = []
-    for g_path, g_size_mb, _ in list_groups(settings.zarr_root):
-        ts_details = list_timestamps(settings.zarr_root, g_path)
+    for g_path, g_size_mb, _ in _cache.list_groups(settings.zarr_root):
+        ts_details = _cache.list_timestamps(settings.zarr_root, g_path)
         if not ts_details:
             continue  # skip empty/evicted groups with no time dimension
         timestamps = [
@@ -510,6 +525,13 @@ def store_usage() -> dict:
 
 _MAP_HTML = (Path(__file__).parent / "templates" / "map.html").read_text()
 _SCHEDULER_HTML = (Path(__file__).parent / "templates" / "scheduler.html").read_text()
+
+# Pre-apply the static substitutions (__CONFIG__ and __SOURCES__) so that
+# map_viewer() only needs one .replace() per request for __PRESELECT__.
+_MAP_HTML_STATIC = _MAP_HTML.replace("__CONFIG__", _MAP_CONFIG_JSON).replace(
+    "__SOURCES__", _INGEST_SOURCES_JSON
+)
+_SCHEDULER_HTML_STATIC = _SCHEDULER_HTML.replace("__SOURCES__", _INGEST_SOURCES_JSON)
 
 
 @app.get(
@@ -547,24 +569,7 @@ def map_viewer(
             "rescale": rescale or "",
         }
     )
-    config_data = json.dumps(
-        {
-            "bbox": list(settings.bbox),
-            "quota_mb": settings.store_quota_mb,
-            "eviction_buffer_mb": settings.store_eviction_buffer_mb,
-            "zarr_root": str(settings.zarr_root),
-            "raw_dir": str(settings.raw_dir),
-            "catalog_path": str(settings.catalog_path),
-        }
-    )
-    from eostrata.ogc.ingest import INGEST_SOURCES
-
-    sources_data = json.dumps(INGEST_SOURCES)
-    html = (
-        _MAP_HTML.replace("__PRESELECT__", preselect)
-        .replace("__CONFIG__", config_data)
-        .replace("__SOURCES__", sources_data)
-    )
+    html = _MAP_HTML_STATIC.replace("__PRESELECT__", preselect)
     return HTMLResponse(content=html)
 
 
@@ -586,15 +591,14 @@ def scheduler_ui() -> HTMLResponse:
     to add, edit, enable/disable, delete, and manually trigger jobs.
     Jobs are persisted to ``schedules.yml`` so they survive restarts.
     """
-    from eostrata.ogc.ingest import INGEST_SOURCES
-
-    sources_data = json.dumps(INGEST_SOURCES)
-    html = _SCHEDULER_HTML.replace("__SOURCES__", sources_data)
-    return HTMLResponse(content=html)
+    return HTMLResponse(content=_SCHEDULER_HTML_STATIC)
 
 
 # ── Dynamic OpenAPI schema — inject real catalog examples ─────────────────────
 
+
+_openapi_schema_cache: dict | None = None
+_openapi_catalog_mtime: float = 0.0
 
 _COLORMAP_EXAMPLES = {
     "viridis": {"value": "viridis", "summary": "viridis — sequential, perceptually uniform"},
@@ -659,7 +663,20 @@ def _catalog_openapi_examples() -> dict[str, dict[str, dict]]:
 
 
 def _dynamic_openapi() -> dict:
-    """Build the OpenAPI schema and inject live catalog examples into tile parameters."""
+    """Build the OpenAPI schema and inject live catalog examples into tile parameters.
+
+    The result is cached and only regenerated when the catalog file changes on
+    disk, so repeated /docs requests don't trigger a full catalog iteration.
+    """
+    global _openapi_schema_cache, _openapi_catalog_mtime
+
+    try:
+        catalog_mtime = settings.catalog_path.stat().st_mtime
+    except FileNotFoundError:
+        catalog_mtime = 0.0
+    if _openapi_schema_cache is not None and catalog_mtime == _openapi_catalog_mtime:
+        return _openapi_schema_cache
+
     schema = get_openapi(
         title=app.title,
         version=app.version,
@@ -693,6 +710,8 @@ def _dynamic_openapi() -> dict:
                 ):
                     param["examples"] = param_examples[name]
 
+    _openapi_schema_cache = schema
+    _openapi_catalog_mtime = catalog_mtime
     return schema
 
 

@@ -8,12 +8,16 @@ from __future__ import annotations
 
 import logging
 from contextvars import ContextVar
+from pathlib import Path
 from typing import Literal
 
 import numpy as np
 import xarray as xr
+from rio_tiler.io.xarray import XarrayReader as _XarrayReader
 from titiler.xarray.io import Reader
 from titiler.xarray.io import get_variable as _base_get_variable
+
+from eostrata.cache import record_access
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +46,15 @@ def _strip_tz(dt: str) -> str:
     string with a UTC offset``.  Since all eostrata data is stored in UTC,
     stripping the suffix is safe.
     """
-    # +HH:MM or Z — only strip after the time part (position > 10)
-    for i, ch in enumerate(dt):
-        if i > 10 and ch in ("+", "-", "Z"):
-            return dt[:i]
+    # Use C-level str.find() instead of a Python char-by-char loop.
+    # Z is the most common suffix for UTC strings; check it first.
+    if dt.endswith("Z"):
+        return dt[:-1]
+    # Search for + or - only after position 10 (skips the date dashes).
+    for sep in ("+", "-"):
+        idx = dt.find(sep, 11)
+        if idx != -1:
+            return dt[:idx]
     return dt
 
 
@@ -104,9 +113,13 @@ def apply_temporal_aggregation(
     # Sort the time axis so that slice operations work correctly.
     # ERA5 zarr data appended across multiple download runs can produce a
     # non-monotonic DatetimeIndex, causing pandas to reject label-based slices.
-    if not da.indexes["time"].is_monotonic_increasing:
+    # Cache the index in a local variable — da.indexes["time"] is looked up
+    # multiple times below and each lookup involves a dict access + property call.
+    time_idx = da.indexes["time"]
+    if not time_idx.is_monotonic_increasing:
         da = da.sortby("time")
-        if not da.indexes["time"].is_monotonic_increasing:
+        time_idx = da.indexes["time"]
+        if not time_idx.is_monotonic_increasing:
             raise ValueError(
                 "Time axis is not monotonic increasing even after sort — "
                 "the dataset may be corrupt."
@@ -114,14 +127,14 @@ def apply_temporal_aggregation(
 
     # Deduplicate the time axis — re-ingesting the same year produces duplicate
     # timestamps that cause .sel(method="nearest") to raise InvalidIndexError.
-    if not da.indexes["time"].is_unique:
-        n_dups = len(da.indexes["time"]) - da.indexes["time"].nunique()
+    if not time_idx.is_unique:
+        n_dups = len(time_idx) - time_idx.nunique()
         logger.warning(
             "Found %d duplicate timestamp(s) in time axis — keeping first occurrence. "
             "Re-ingest may have produced duplicates; consider rebuilding the catalogue.",
             n_dups,
         )
-        _, first_occurrence = np.unique(da.indexes["time"], return_index=True)
+        _, first_occurrence = np.unique(time_idx, return_index=True)
         da = da.isel(time=first_occurrence)
 
     t0, t1 = _parse_datetime_interval(datetime_str)
@@ -199,6 +212,10 @@ def resolve_accessed_times(
     if len(times) == 0:
         return []
 
+    # Pre-compute once — reused by both the main datetime and the baseline range
+    # when agg="anomaly" calls _in_range() twice.
+    times_s = times.astype("datetime64[s]")
+
     def _in_range(dt_str: str | None) -> list:
         if not dt_str:
             return [times[-1]]
@@ -207,23 +224,23 @@ def resolve_accessed_times(
             return [times[-1]]
         t0s = _strip_tz(t0)
         t1s = _strip_tz(t1) if t1 else t0s
-        times_s = times.astype("datetime64[s]")
         if t0s == t1s:
             target = np.datetime64(t0s, "s")
             idx = int(np.argmin(np.abs(times_s - target)))
             return [times[idx]]
         start = np.datetime64(t0s, "s")
         end = np.datetime64(t1s, "s")
-        return [times[i] for i, t in enumerate(times_s) if start <= t <= end]
+        mask = (times_s >= start) & (times_s <= end)
+        return list(times[mask])
 
     accessed = _in_range(datetime_str)
     if agg_method == "anomaly" and baseline:
         baseline_times = _in_range(baseline)
-        seen = {t.tobytes() for t in accessed}
+        seen = set(accessed)
         for t in baseline_times:
-            if t.tobytes() not in seen:
+            if t not in seen:
                 accessed.append(t)
-                seen.add(t.tobytes())
+                seen.add(t)
     return accessed
 
 
@@ -248,12 +265,6 @@ class AggregatingReader(Reader):
 
     def __attrs_post_init__(self) -> None:
         """Open dataset, normalise coords, run get_variable, then collapse time."""
-        from pathlib import Path
-
-        from rio_tiler.io.xarray import XarrayReader as _XarrayReader
-
-        from eostrata.cache import record_access
-
         # Open the dataset (mirrors Reader.__attrs_post_init__)
         self.ds = self.opener(
             self.src_path,

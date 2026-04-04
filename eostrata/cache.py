@@ -90,6 +90,13 @@ logger = logging.getLogger(__name__)
 
 _DEBOUNCE_S = 60  # minimum seconds between sentinel touches for the same timestamp
 
+# Per-process in-memory sentinel touch cache.
+# Key = str(sentinel_path), value = time.time() of last touch.
+# When this says the sentinel was touched within _DEBOUNCE_S, we skip both
+# the stat() syscall and the touch() — eliminating all I/O on hot tile paths.
+# Bounded by the number of distinct timestamps in the store (typically ≪ 10 000).
+_TOUCH_CACHE: dict[str, float] = {}
+
 # TTL cache for store_size_mb() — avoids rescanning all zarr chunks on every
 # quota check.  Key = str(zarr_root), value = (size_mb, monotonic_time).
 # Invalidated by evict_timestamp() so the post-eviction final check is accurate.
@@ -230,12 +237,19 @@ def record_access(zarr_root: Path, group_path: str, timestamps: list) -> None:
         for ts in timestamps:
             ts_iso = _ts_to_iso(ts)
             sentinel = adir / ts_iso
+            sentinel_key = str(sentinel)
+            # Fast path: in-process memory says we touched it recently — skip all I/O.
+            if now - _TOUCH_CACHE.get(sentinel_key, 0.0) < _DEBOUNCE_S:
+                continue
+            # Slow path: check the on-disk mtime (handles restarts / other workers).
             try:
                 if now - sentinel.stat().st_mtime < _DEBOUNCE_S:
+                    _TOUCH_CACHE[sentinel_key] = now
                     continue
             except FileNotFoundError:
                 pass
             sentinel.touch()
+            _TOUCH_CACHE[sentinel_key] = now
     except OSError:
         logger.debug("Could not update access sentinel for group '%s'", group_path)
 

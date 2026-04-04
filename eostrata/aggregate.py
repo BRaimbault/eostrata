@@ -236,11 +236,11 @@ def resolve_accessed_times(
     accessed = _in_range(datetime_str)
     if agg_method == "anomaly" and baseline:
         baseline_times = _in_range(baseline)
-        seen = {t.tobytes() for t in accessed}
+        seen = set(accessed)
         for t in baseline_times:
-            if t.tobytes() not in seen:
+            if t not in seen:
                 accessed.append(t)
-                seen.add(t.tobytes())
+                seen.add(t)
     return accessed
 
 

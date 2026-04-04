@@ -110,10 +110,9 @@ def _resolve(collection_id: str, item_id: str | None) -> dict:
         raise HTTPException(404, detail=f"Collection '{collection_id}' not found.")
 
     if item_id is None:
-        items = list(collection.get_items())
-        if not items:
+        item = next(iter(collection.get_items()), None)
+        if item is None:
             raise HTTPException(404, detail=f"Collection '{collection_id}' has no items.")
-        item = items[0]
     else:
         item = collection.get_item(item_id)
         if item is None:

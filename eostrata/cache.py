@@ -222,8 +222,11 @@ def record_access(zarr_root: Path, group_path: str, timestamps: list) -> None:
         for ts in timestamps:
             ts_iso = _ts_to_iso(ts)
             sentinel = adir / ts_iso
-            if sentinel.exists() and now - sentinel.stat().st_mtime < _DEBOUNCE_S:
-                continue
+            try:
+                if now - sentinel.stat().st_mtime < _DEBOUNCE_S:
+                    continue
+            except FileNotFoundError:
+                pass
             sentinel.touch()
     except OSError:
         logger.debug("Could not update access sentinel for group '%s'", group_path)
@@ -403,7 +406,10 @@ def list_timestamps(zarr_root: Path, group_path: str) -> list[tuple[str, float, 
     result: list[tuple[str, float, float, float]] = []
     for ts_iso, _ts in unique_times:
         sentinel = adir / ts_iso
-        last_access = sentinel.stat().st_mtime if sentinel.exists() else 0.0
+        try:
+            last_access = sentinel.stat().st_mtime
+        except FileNotFoundError:
+            last_access = 0.0
         result.append((ts_iso, per_ts_mb, last_access, ingestion_time))
 
     result.sort(key=lambda t: _eviction_sort_key(t[0], t[2], t[3]))

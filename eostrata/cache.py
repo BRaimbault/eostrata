@@ -81,6 +81,8 @@ import xarray as xr
 import zarr
 from filelock import FileLock
 
+from eostrata.config import settings as _settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -115,6 +117,7 @@ def _meta_root(zarr_root: Path) -> Path:
     return meta
 
 
+@lru_cache(maxsize=8)
 def _lock_dir(zarr_root: Path) -> Path:
     d = _meta_root(zarr_root) / "locks"
     d.mkdir(parents=True, exist_ok=True)
@@ -217,13 +220,11 @@ def record_access(zarr_root: Path, group_path: str, timestamps: list) -> None:
     timestamps:
         List of numpy datetime64 values that were touched by the request.
     """
-    from eostrata.config import settings
-
-    if not settings.track_access:
+    if not _settings.track_access:
         return
 
     try:
-        adir = _access_dir(Path(zarr_root), group_path)
+        adir = _access_dir(zarr_root, group_path)
         adir.mkdir(parents=True, exist_ok=True)
         now = time.time()
         for ts in timestamps:
@@ -389,7 +390,7 @@ def list_timestamps(zarr_root: Path, group_path: str) -> list[tuple[str, float, 
             seen.add(iso)
             unique_times.append((iso, ts))
 
-    group_dir = Path(zarr_root) / group_path
+    group_dir = zarr_root / group_path
 
     # Zarr data files only — no sentinel directories in the store.
     # Single stat() pass: collect size and mtime together to halve syscall count.
@@ -409,7 +410,7 @@ def list_timestamps(zarr_root: Path, group_path: str) -> list[tuple[str, float, 
     per_ts_mb = total_group_size_mb / len(unique_times) if unique_times else 0.0
 
     # Access sentinels live in the sibling meta directory
-    adir = _access_dir(Path(zarr_root), group_path)
+    adir = _access_dir(zarr_root, group_path)
     result: list[tuple[str, float, float, float]] = []
     for ts_iso, _ts in unique_times:
         sentinel = adir / ts_iso

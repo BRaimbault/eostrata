@@ -7,6 +7,7 @@ before TiTiler encodes the tile.  No pre-computed intermediates.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Literal
@@ -79,57 +80,50 @@ def _parse_datetime_interval(
     return datetime_str, datetime_str
 
 
-def _chunked_mean(da: xr.DataArray, batch_size: int) -> xr.DataArray:
-    """Compute da.mean("time") in batches of *batch_size* to bound peak RAM.
+def _chunked_reduce(
+    da: xr.DataArray,
+    batch_op: Callable[[xr.DataArray], xr.DataArray],
+    combine: Callable[[xr.DataArray, xr.DataArray], xr.DataArray],
+    batch_size: int,
+) -> xr.DataArray:
+    """Reduce *da* along time in sequential batches to bound peak RAM.
 
-    Each batch is materialised independently so at most batch_size spatial
-    tiles are in memory at once.  Results are combined with a weighted mean
-    that correctly handles the final batch being smaller than the others.
+    *batch_op* is applied to each batch (e.g. ``lambda b: b.sum("time")``).
+    *combine* merges partial results (e.g. ``lambda a, b: a + b``).
+    Each batch is materialised independently; at most one batch is in memory
+    at a time.
     """
+    result: xr.DataArray | None = None
     n = da.sizes["time"]
-    total: xr.DataArray | None = None
-    count = 0
     for start in range(0, n, batch_size):
-        batch = da.isel(time=slice(start, start + batch_size))
-        k = batch.sizes["time"]
-        batch_sum = batch.sum("time").compute()
-        total = batch_sum if total is None else total + batch_sum
-        count += k
-    assert total is not None
-    return total / count
+        part = batch_op(da.isel(time=slice(start, start + batch_size))).compute()
+        result = part if result is None else combine(result, part)
+    if result is None:
+        raise ValueError("Cannot reduce a DataArray with no time steps")
+    return result
+
+
+def _chunked_mean(da: xr.DataArray, batch_size: int) -> xr.DataArray:
+    """Compute da.mean("time") in batches, correctly weighted for unequal final batch."""
+    n = da.sizes["time"]
+    total = _chunked_reduce(da, lambda b: b.sum("time"), lambda a, b: a + b, batch_size)
+    return total / n
 
 
 def _chunked_aggregate(da: xr.DataArray, agg: AggMethod, batch_size: int) -> xr.DataArray:
     """Compute a reduction over time in batches of *batch_size* to bound peak RAM."""
-    n = da.sizes["time"]
-
     if agg == "mean":
         return _chunked_mean(da, batch_size)
-
     if agg == "sum":
-        total: xr.DataArray | None = None
-        for start in range(0, n, batch_size):
-            part = da.isel(time=slice(start, start + batch_size)).sum("time").compute()
-            total = part if total is None else total + part
-        assert total is not None
-        return total
-
+        return _chunked_reduce(da, lambda b: b.sum("time"), lambda a, b: a + b, batch_size)
     if agg == "min":
-        result: xr.DataArray | None = None
-        for start in range(0, n, batch_size):
-            part = da.isel(time=slice(start, start + batch_size)).min("time").compute()
-            result = part if result is None else result.where(result <= part, part)
-        assert result is not None
-        return result
-
+        return _chunked_reduce(
+            da, lambda b: b.min("time"), lambda a, b: a.where(a <= b, b), batch_size
+        )
     if agg == "max":
-        result = None
-        for start in range(0, n, batch_size):
-            part = da.isel(time=slice(start, start + batch_size)).max("time").compute()
-            result = part if result is None else result.where(result >= part, part)
-        assert result is not None
-        return result
-
+        return _chunked_reduce(
+            da, lambda b: b.max("time"), lambda a, b: a.where(a >= b, b), batch_size
+        )
     raise ValueError(f"Unknown agg method '{agg}'. Use: mean, sum, min, max, anomaly.")
 
 
@@ -218,34 +212,22 @@ def apply_temporal_aggregation(
         return da.isel(time=-1) if "time" in da.dims else da
 
     max_ts = _eostrata_config.settings.max_aggregation_timesteps
-    if max_ts > 0 and "time" in da.dims and da.sizes["time"] > max_ts:
+    use_batched = max_ts > 0 and "time" in da.dims and da.sizes["time"] > max_ts
+    if use_batched:
         logger.info(
             "Time range spans %d timesteps (limit %d) — using batched aggregation",
             da.sizes["time"],
             max_ts,
         )
-        if agg == "anomaly":
-            if not baseline:
-                raise ValueError("'anomaly' aggregation requires a 'baseline' interval.")
-            b0, b1 = _parse_datetime_interval(baseline)
-            if b0:
-                b0 = _strip_tz(b0)
-            if b1:
-                b1 = _strip_tz(b1)
-            baseline_da = da.sel(time=slice(b0, b1))
-            if baseline_da.sizes.get("time", 0) == 0:
-                raise ValueError(f"No data found for baseline='{baseline}'.")
-            return _chunked_mean(da, max_ts) - _chunked_mean(baseline_da, max_ts)
-        return _chunked_aggregate(da, agg, max_ts)
 
     if agg == "mean":
-        return da.mean("time")
+        return _chunked_mean(da, max_ts) if use_batched else da.mean("time")
     elif agg == "sum":
-        return da.sum("time")
+        return _chunked_aggregate(da, "sum", max_ts) if use_batched else da.sum("time")
     elif agg == "min":
-        return da.min("time")
+        return _chunked_aggregate(da, "min", max_ts) if use_batched else da.min("time")
     elif agg == "max":
-        return da.max("time")
+        return _chunked_aggregate(da, "max", max_ts) if use_batched else da.max("time")
     elif agg == "anomaly":
         if not baseline:
             raise ValueError("'anomaly' aggregation requires a 'baseline' interval.")
@@ -257,7 +239,10 @@ def apply_temporal_aggregation(
         baseline_da = da.sel(time=slice(b0, b1))
         if baseline_da.sizes.get("time", 0) == 0:
             raise ValueError(f"No data found for baseline='{baseline}'.")
-        return da.mean("time") - baseline_da.mean("time")
+        mean_fn: Callable[[xr.DataArray], xr.DataArray] = (
+            (lambda d: _chunked_mean(d, max_ts)) if use_batched else (lambda d: d.mean("time"))
+        )
+        return mean_fn(da) - mean_fn(baseline_da)
     else:
         raise ValueError(f"Unknown agg method '{agg}'. Use: mean, sum, min, max, anomaly.")
 

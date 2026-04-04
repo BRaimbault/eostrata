@@ -38,6 +38,7 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
+import eostrata.config as _eostrata_config
 from eostrata.constants import PROP_RESOLUTION, PROP_VARIABLE
 from eostrata.sources.base import BaseSource, register_source
 
@@ -187,8 +188,6 @@ def _cams_netcdf_to_zarr(
     zarr_root_path.mkdir(parents=True, exist_ok=True)
     store_path = str(zarr_root_path)
     group_exists = (zarr_root_path / zarr_group).exists()
-
-    import eostrata.config as _eostrata_config
 
     cy = cx = _eostrata_config.settings.zarr_chunk_size
     encoding: dict = {

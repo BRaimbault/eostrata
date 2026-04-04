@@ -42,6 +42,7 @@ import h5py
 import httpx
 import numpy as np
 
+import eostrata.config as _eostrata_config
 from eostrata.constants import PROP_RESOLUTION, PROP_SOURCE, PROP_VARIABLE
 from eostrata.sources.base import BaseSource, register_source
 from eostrata.store import _group_lock, geotiff_to_zarr  # noqa: F401 — imported for type hints only
@@ -302,7 +303,6 @@ def _write_daily_grid(
     variable_name: str,
 ) -> Any:  # xr.Dataset
     """Write a 2-D daily grid to the Zarr store (append or create)."""
-    import eostrata.config as _eostrata_config
     import xarray as xr
 
     cy = cx = _eostrata_config.settings.zarr_chunk_size

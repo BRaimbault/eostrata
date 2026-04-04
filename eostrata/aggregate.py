@@ -104,9 +104,13 @@ def apply_temporal_aggregation(
     # Sort the time axis so that slice operations work correctly.
     # ERA5 zarr data appended across multiple download runs can produce a
     # non-monotonic DatetimeIndex, causing pandas to reject label-based slices.
-    if not da.indexes["time"].is_monotonic_increasing:
+    # Cache the index in a local variable — da.indexes["time"] is looked up
+    # multiple times below and each lookup involves a dict access + property call.
+    time_idx = da.indexes["time"]
+    if not time_idx.is_monotonic_increasing:
         da = da.sortby("time")
-        if not da.indexes["time"].is_monotonic_increasing:
+        time_idx = da.indexes["time"]
+        if not time_idx.is_monotonic_increasing:
             raise ValueError(
                 "Time axis is not monotonic increasing even after sort — "
                 "the dataset may be corrupt."
@@ -114,14 +118,14 @@ def apply_temporal_aggregation(
 
     # Deduplicate the time axis — re-ingesting the same year produces duplicate
     # timestamps that cause .sel(method="nearest") to raise InvalidIndexError.
-    if not da.indexes["time"].is_unique:
-        n_dups = len(da.indexes["time"]) - da.indexes["time"].nunique()
+    if not time_idx.is_unique:
+        n_dups = len(time_idx) - time_idx.nunique()
         logger.warning(
             "Found %d duplicate timestamp(s) in time axis — keeping first occurrence. "
             "Re-ingest may have produced duplicates; consider rebuilding the catalogue.",
             n_dups,
         )
-        _, first_occurrence = np.unique(da.indexes["time"], return_index=True)
+        _, first_occurrence = np.unique(time_idx, return_index=True)
         da = da.isel(time=first_occurrence)
 
     t0, t1 = _parse_datetime_interval(datetime_str)

@@ -352,12 +352,18 @@ def list_timestamps(zarr_root: Path, group_path: str) -> list[tuple[str, float, 
         return []
 
     if "time" not in ds:
+        ds.close()
         return []
 
     try:
         times = ds["time"].values
     except Exception:
+        ds.close()
         return []
+    finally:
+        # Close zarr handles as soon as we have the time values in memory;
+        # the rest of the function works on plain Python/numpy objects.
+        ds.close()
 
     if len(times) == 0:
         return []
@@ -373,15 +379,18 @@ def list_timestamps(zarr_root: Path, group_path: str) -> list[tuple[str, float, 
 
     group_dir = Path(zarr_root) / group_path
 
-    # Zarr data files only — no sentinel directories in the store
-    data_files = list(group_dir.rglob("*") if group_dir.exists() else [])
-    data_files = [f for f in data_files if f.is_file()]
-    total_size_bytes = sum(f.stat().st_size for f in data_files)
+    # Zarr data files only — no sentinel directories in the store.
+    # Single stat() pass: collect size and mtime together to halve syscall count.
+    data_files = [f for f in (group_dir.rglob("*") if group_dir.exists() else []) if f.is_file()]
+    if data_files:
+        data_stats = [f.stat() for f in data_files]
+        total_size_bytes = sum(s.st_size for s in data_stats)
+        ingestion_time = min(s.st_mtime for s in data_stats)
+    else:
+        total_size_bytes = 0
+        ingestion_time = 0.0
     total_group_size_mb = total_size_bytes / (1024**2)
     per_ts_mb = total_group_size_mb / len(unique_times) if unique_times else 0.0
-
-    # Ingestion time proxy: earliest mtime of zarr data files
-    ingestion_time = min((f.stat().st_mtime for f in data_files), default=0.0)
 
     # Access sentinels live in the sibling meta directory
     adir = _access_dir(Path(zarr_root), group_path)

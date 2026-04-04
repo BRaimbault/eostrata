@@ -23,6 +23,14 @@ from eostrata.constants import (
 
 logger = logging.getLogger(__name__)
 
+# ── In-memory catalog cache ───────────────────────────────────────────────────
+# Avoids re-parsing catalog.json on every request.  Invalidated when the file's
+# mtime changes (i.e. after save()) or when the path changes.
+
+_catalog_cache: pystac.Catalog | None = None
+_catalog_cache_path: str = ""
+_catalog_cache_mtime: float = 0.0
+
 CATALOG_ID = "eostrata"
 CATALOG_DESCRIPTION = "eostrata earth observation data catalogue"
 
@@ -60,22 +68,52 @@ def create_empty() -> pystac.Catalog:
 
 
 def load_or_create(catalog_path: Path) -> pystac.Catalog:
-    """Load an existing catalog.json or create a new one."""
+    """Load an existing catalog.json or create a new one.
+
+    Results are cached in memory and reused as long as the file's mtime has not
+    changed.  This avoids re-parsing catalog.json on every tile/zonal-stats
+    request.  The cache is updated by ``save()`` after each write.
+    """
+    global _catalog_cache, _catalog_cache_path, _catalog_cache_mtime
+
     catalog_path = Path(catalog_path)
+    path_str = str(catalog_path)
+
     if catalog_path.exists():
+        mtime = catalog_path.stat().st_mtime
+        if (
+            _catalog_cache is not None
+            and path_str == _catalog_cache_path
+            and mtime == _catalog_cache_mtime
+        ):
+            return _catalog_cache
         logger.info("Loading existing catalog from %s", catalog_path)
-        return pystac.Catalog.from_file(str(catalog_path))
+        catalog = pystac.Catalog.from_file(str(catalog_path))
+        _catalog_cache = catalog
+        _catalog_cache_path = path_str
+        _catalog_cache_mtime = mtime
+        return catalog
+
     logger.info("No catalog found at %s — creating new one", catalog_path)
     return _make_catalog()
 
 
 def save(catalog: pystac.Catalog, catalog_path: Path) -> None:
     """Normalise links and write catalog.json to disk."""
+    global _catalog_cache, _catalog_cache_path, _catalog_cache_mtime
+
     catalog_path = Path(catalog_path)
     catalog_path.parent.mkdir(parents=True, exist_ok=True)
     catalog.normalize_hrefs(str(catalog_path.parent))
     catalog.save(dest_href=str(catalog_path.parent))
     logger.info("Catalog saved to %s", catalog_path)
+
+    # Update the in-memory cache so the next load_or_create() returns this
+    # catalog without re-parsing from disk.
+    if catalog_path.exists():
+        _catalog_cache = catalog
+        _catalog_cache_path = str(catalog_path)
+        _catalog_cache_mtime = catalog_path.stat().st_mtime
 
 
 def register_item(

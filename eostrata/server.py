@@ -597,6 +597,9 @@ def scheduler_ui() -> HTMLResponse:
 # ── Dynamic OpenAPI schema — inject real catalog examples ─────────────────────
 
 
+_openapi_schema_cache: dict | None = None
+_openapi_catalog_mtime: float = 0.0
+
 _COLORMAP_EXAMPLES = {
     "viridis": {"value": "viridis", "summary": "viridis — sequential, perceptually uniform"},
     "plasma": {"value": "plasma", "summary": "plasma — sequential, high contrast"},
@@ -660,7 +663,19 @@ def _catalog_openapi_examples() -> dict[str, dict[str, dict]]:
 
 
 def _dynamic_openapi() -> dict:
-    """Build the OpenAPI schema and inject live catalog examples into tile parameters."""
+    """Build the OpenAPI schema and inject live catalog examples into tile parameters.
+
+    The result is cached and only regenerated when the catalog file changes on
+    disk, so repeated /docs requests don't trigger a full catalog iteration.
+    """
+    global _openapi_schema_cache, _openapi_catalog_mtime
+
+    catalog_mtime = (
+        settings.catalog_path.stat().st_mtime if settings.catalog_path.exists() else 0.0
+    )
+    if _openapi_schema_cache is not None and catalog_mtime == _openapi_catalog_mtime:
+        return _openapi_schema_cache
+
     schema = get_openapi(
         title=app.title,
         version=app.version,
@@ -694,6 +709,8 @@ def _dynamic_openapi() -> dict:
                 ):
                     param["examples"] = param_examples[name]
 
+    _openapi_schema_cache = schema
+    _openapi_catalog_mtime = catalog_mtime
     return schema
 
 

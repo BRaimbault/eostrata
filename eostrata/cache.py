@@ -87,6 +87,12 @@ logger = logging.getLogger(__name__)
 
 _DEBOUNCE_S = 60  # minimum seconds between sentinel touches for the same timestamp
 
+# TTL cache for store_size_mb() — avoids rescanning all zarr chunks on every
+# quota check.  Key = str(zarr_root), value = (size_mb, monotonic_time).
+# Invalidated by evict_timestamp() so the post-eviction final check is accurate.
+_SIZE_CACHE: dict[str, tuple[float, float]] = {}
+_SIZE_CACHE_TTL = 30.0  # seconds
+
 
 def _meta_root(zarr_root: Path) -> Path:
     """Hidden state directory *alongside* the zarr store (not inside it).
@@ -222,13 +228,31 @@ def record_access(zarr_root: Path, group_path: str, timestamps: list) -> None:
         logger.debug("Could not update access sentinel for group '%s'", group_path)
 
 
+def _invalidate_size_cache(zarr_root: Path) -> None:
+    """Evict the cached store size for *zarr_root* so the next call re-measures."""
+    _SIZE_CACHE.pop(str(Path(zarr_root)), None)
+
+
 def store_size_mb(zarr_root: Path) -> float:
-    """Return the total on-disk size of *zarr_root* in megabytes."""
+    """Return the total on-disk size of *zarr_root* in megabytes.
+
+    Results are cached for ``_SIZE_CACHE_TTL`` seconds to avoid rescanning
+    thousands of zarr chunk files on every quota check.  The cache is
+    invalidated by ``evict_timestamp`` so post-eviction measurements are fresh.
+    """
     root = Path(zarr_root)
+    cache_key = str(root)
+    cached = _SIZE_CACHE.get(cache_key)
+    if cached is not None:
+        size_mb, cached_at = cached
+        if time.monotonic() - cached_at < _SIZE_CACHE_TTL:
+            return size_mb
     if not root.exists():
         return 0.0
     total = sum(f.stat().st_size for f in root.rglob("*") if f.is_file())
-    return total / (1024**2)
+    size_mb = total / (1024**2)
+    _SIZE_CACHE[cache_key] = (size_mb, time.monotonic())
+    return size_mb
 
 
 def list_groups(zarr_root: Path) -> list[tuple[str, float, float]]:
@@ -272,14 +296,13 @@ def list_groups(zarr_root: Path) -> list[tuple[str, float, float]]:
                 continue
             group_path = f"{source_dir.name}/{dataset_dir.name}"
 
-            # Size: only zarr data files (pure zarr hierarchy — no sentinel dirs)
-            size_mb = sum(f.stat().st_size for f in dataset_dir.rglob("*") if f.is_file()) / (
-                1024**2
-            )
+            # Single traversal: collect stats once for size + mtime computation
+            data_stats = [f.stat() for f in dataset_dir.rglob("*") if f.is_file()]
+            size_mb = sum(s.st_size for s in data_stats) / (1024**2)
 
             # Last access: max mtime across zarr data files AND access sentinels.
             # Sentinels live in the sibling meta directory, outside the zarr store.
-            data_mtimes = [f.stat().st_mtime for f in dataset_dir.rglob("*") if f.is_file()]
+            data_mtimes = [s.st_mtime for s in data_stats]
             adir = _access_dir(zarr_root, group_path)
             sentinel_mtimes = (
                 [f.stat().st_mtime for f in adir.rglob("*") if f.is_file()] if adir.exists() else []
@@ -496,6 +519,9 @@ def evict_timestamp(
         if old_access.exists():
             shutil.rmtree(old_access)
 
+    # Invalidate the size cache so the next store_size_mb() call re-measures.
+    _invalidate_size_cache(zarr_root)
+
     # Refresh the root consolidated metadata so tile requests don't read stale
     # time encoding from before the eviction.
     # Uses a thread + Future so the 30-second timeout works from any thread
@@ -602,7 +628,6 @@ def check_and_evict(
         all_timestamps.sort(key=lambda t: _eviction_sort_key(t[1], t[3], t[4]))
 
         for group_path, ts_iso, ts_size_mb, last_access, ingestion_time in all_timestamps:
-            current_mb = store_size_mb(zarr_root)  # re-measure after each eviction
             if current_mb <= target_mb:
                 break
             if last_access:
@@ -620,8 +645,10 @@ def check_and_evict(
                 ts_size_mb,
                 age_desc,
             )
-            evict_timestamp(zarr_root, group_path, ts_iso, catalog_path=catalog_path)
+            freed = evict_timestamp(zarr_root, group_path, ts_iso, catalog_path=catalog_path)
+            current_mb -= freed
 
+        # Re-measure after all evictions (cache was invalidated by evict_timestamp)
         remaining = store_size_mb(zarr_root)
         if remaining > quota_mb:
             raise RuntimeError(

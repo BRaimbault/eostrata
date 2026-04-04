@@ -42,10 +42,15 @@ def _strip_tz(dt: str) -> str:
     string with a UTC offset``.  Since all eostrata data is stored in UTC,
     stripping the suffix is safe.
     """
-    # +HH:MM or Z — only strip after the time part (position > 10)
-    for i, ch in enumerate(dt):
-        if i > 10 and ch in ("+", "-", "Z"):
-            return dt[:i]
+    # Use C-level str.find() instead of a Python char-by-char loop.
+    # Z is the most common suffix for UTC strings; check it first.
+    if dt.endswith("Z"):
+        return dt[:-1]
+    # Search for + or - only after position 10 (skips the date dashes).
+    for sep in ("+", "-"):
+        idx = dt.find(sep, 11)
+        if idx != -1:
+            return dt[:idx]
     return dt
 
 

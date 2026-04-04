@@ -73,6 +73,7 @@ import logging
 import shutil
 import time
 import uuid
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -94,6 +95,7 @@ _SIZE_CACHE: dict[str, tuple[float, float]] = {}
 _SIZE_CACHE_TTL = 30.0  # seconds
 
 
+@lru_cache(maxsize=8)
 def _meta_root(zarr_root: Path) -> Path:
     """Hidden state directory *alongside* the zarr store (not inside it).
 
@@ -103,8 +105,11 @@ def _meta_root(zarr_root: Path) -> Path:
 
     Convention: if ``zarr_root`` is ``data/zarr``, the meta directory is
     ``data/.zarr`` (same parent, dot-prefixed name).
+
+    Cached with lru_cache — the directory is created on the first call and
+    the Path is reused on all subsequent calls, avoiding a mkdir syscall on
+    every tile request (record_access → _access_dir → _meta_root).
     """
-    zarr_root = Path(zarr_root)
     meta = zarr_root.parent / f".{zarr_root.name}"
     meta.mkdir(parents=True, exist_ok=True)
     return meta

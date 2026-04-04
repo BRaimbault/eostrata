@@ -218,10 +218,11 @@ def record_access(zarr_root: Path, group_path: str, timestamps: list) -> None:
     try:
         adir = _access_dir(Path(zarr_root), group_path)
         adir.mkdir(parents=True, exist_ok=True)
+        now = time.time()
         for ts in timestamps:
             ts_iso = _ts_to_iso(ts)
             sentinel = adir / ts_iso
-            if sentinel.exists() and time.time() - sentinel.stat().st_mtime < _DEBOUNCE_S:
+            if sentinel.exists() and now - sentinel.stat().st_mtime < _DEBOUNCE_S:
                 continue
             sentinel.touch()
     except OSError:
@@ -382,9 +383,13 @@ def list_timestamps(zarr_root: Path, group_path: str) -> list[tuple[str, float, 
 
     # Zarr data files only — no sentinel directories in the store.
     # Single stat() pass: collect size and mtime together to halve syscall count.
-    data_files = [f for f in (group_dir.rglob("*") if group_dir.exists() else []) if f.is_file()]
-    if data_files:
-        data_stats = [f.stat() for f in data_files]
+    # Build data_stats directly (no intermediate data_files list).
+    data_stats = (
+        [f.stat() for f in group_dir.rglob("*") if f.is_file()]
+        if group_dir.exists()
+        else []
+    )
+    if data_stats:
         total_size_bytes = sum(s.st_size for s in data_stats)
         ingestion_time = min(s.st_mtime for s in data_stats)
     else:

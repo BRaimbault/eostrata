@@ -112,6 +112,8 @@ def rebuild_catalog_from_zarr(
 
     from eostrata import catalog as cat
     from eostrata.cache import list_groups
+    from eostrata.constants import PROP_DATETIMES
+    from eostrata.sources.base import _REGISTRY as _src_registry
 
     zarr_root = Path(zarr_root)
     catalog_path = Path(catalog_path)
@@ -119,6 +121,10 @@ def rebuild_catalog_from_zarr(
     if not zarr_root.exists():
         logger.warning("Zarr root does not exist: %s", zarr_root)
         return {}
+
+    # Build prefix→source_cls map once (O(n_sources)) rather than doing an
+    # O(n_sources) scan inside the loop for every zarr group.
+    prefix_to_cls: dict = {cls.zarr_prefix: cls for cls in _src_registry.values()}
 
     catalogue = cat.create_empty()
     groups = list_groups(zarr_root)
@@ -151,13 +157,7 @@ def rebuild_catalog_from_zarr(
             ds.close()
             continue
 
-        from eostrata.sources.base import _REGISTRY as _src_registry
-
-        # Look up the source class by its zarr_prefix
-        source_cls = next(
-            (cls for cls in _src_registry.values() if cls.zarr_prefix == source_type),
-            None,
-        )
+        source_cls = prefix_to_cls.get(source_type)
         if source_cls is None:
             logger.warning("Unknown source type '%s' in '%s' — skipping", source_type, group_path)
             ds.close()
@@ -174,7 +174,6 @@ def rebuild_catalog_from_zarr(
         # patch PROP_DATETIMES directly for remaining timestamps.  This avoids
         # calling register_item() N times, which would do a pystac get+remove+add
         # cycle for each timestamp (O(N²) in pystac list operations per group).
-        from eostrata.constants import PROP_DATETIMES
 
         dts = sorted(pd.Timestamp(ts).to_pydatetime().replace(tzinfo=UTC) for ts in times)
         if not dts:

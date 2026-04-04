@@ -43,6 +43,7 @@ from eostrata.aggregate import AggregatingReader
 from eostrata.catalog import PystacClient, load_or_create
 from eostrata.config import settings
 from eostrata.constants import PROP_DATETIMES, PROP_VARIABLE, PROP_ZARR_GROUP
+from eostrata.ogc.ingest import INGEST_SOURCES as _INGEST_SOURCES
 from eostrata.ogc.ingest import router as ingest_router
 from eostrata.ogc.processes import router as processes_router
 from eostrata.ogc.scheduler_router import router as scheduler_router
@@ -50,6 +51,11 @@ from eostrata.ogc.tiles import _VariablesExtension
 from eostrata.ogc.tiles import router as collection_tiles_router
 
 logger = logging.getLogger(__name__)
+
+# Pre-serialise INGEST_SOURCES once — it's built at import time and never
+# changes, so there's no point re-running json.dumps on every /map or
+# /scheduler request.
+_INGEST_SOURCES_JSON: str = json.dumps(_INGEST_SOURCES)
 
 # ── Lifespan: start / stop the background scheduler ───────────────────────────
 
@@ -558,13 +564,10 @@ def map_viewer(
             "catalog_path": str(settings.catalog_path),
         }
     )
-    from eostrata.ogc.ingest import INGEST_SOURCES
-
-    sources_data = json.dumps(INGEST_SOURCES)
     html = (
         _MAP_HTML.replace("__PRESELECT__", preselect)
         .replace("__CONFIG__", config_data)
-        .replace("__SOURCES__", sources_data)
+        .replace("__SOURCES__", _INGEST_SOURCES_JSON)
     )
     return HTMLResponse(content=html)
 
@@ -587,10 +590,7 @@ def scheduler_ui() -> HTMLResponse:
     to add, edit, enable/disable, delete, and manually trigger jobs.
     Jobs are persisted to ``schedules.yml`` so they survive restarts.
     """
-    from eostrata.ogc.ingest import INGEST_SOURCES
-
-    sources_data = json.dumps(INGEST_SOURCES)
-    html = _SCHEDULER_HTML.replace("__SOURCES__", sources_data)
+    html = _SCHEDULER_HTML.replace("__SOURCES__", _INGEST_SOURCES_JSON)
     return HTMLResponse(content=html)
 
 

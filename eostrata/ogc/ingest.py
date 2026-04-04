@@ -39,7 +39,8 @@ INGEST_PROCESS_IDS = [
 # automatically makes it available here.
 
 import eostrata.sources  # noqa: E402,F401 — triggers auto-discovery of all source modules
-from eostrata.sources.base import all_sources as _all_sources, get_source  # noqa: E402
+from eostrata.sources.base import all_sources as _all_sources  # noqa: E402
+from eostrata.sources.base import get_source  # noqa: E402
 
 INGEST_SOURCES = [
     {

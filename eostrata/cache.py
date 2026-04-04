@@ -396,9 +396,7 @@ def list_timestamps(zarr_root: Path, group_path: str) -> list[tuple[str, float, 
     # Single stat() pass: collect size and mtime together to halve syscall count.
     # Build data_stats directly (no intermediate data_files list).
     data_stats = (
-        [f.stat() for f in group_dir.rglob("*") if f.is_file()]
-        if group_dir.exists()
-        else []
+        [f.stat() for f in group_dir.rglob("*") if f.is_file()] if group_dir.exists() else []
     )
     if data_stats:
         total_size_bytes = sum(s.st_size for s in data_stats)

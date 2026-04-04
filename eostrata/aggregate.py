@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import logging
 from contextvars import ContextVar
+from pathlib import Path
 from typing import Literal
 
 import numpy as np
 import xarray as xr
-from pathlib import Path
 from rio_tiler.io.xarray import XarrayReader as _XarrayReader
 from titiler.xarray.io import Reader
 from titiler.xarray.io import get_variable as _base_get_variable

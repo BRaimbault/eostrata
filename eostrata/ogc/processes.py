@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import numpy as np
 import rioxarray  # noqa: F401 — registers .rio accessor on xarray
@@ -11,8 +12,6 @@ import xarray as xr
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-
-from pathlib import Path
 
 from eostrata.aggregate import apply_temporal_aggregation, resolve_accessed_times
 from eostrata.cache import record_access

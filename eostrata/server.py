@@ -529,10 +529,8 @@ _SCHEDULER_HTML = (Path(__file__).parent / "templates" / "scheduler.html").read_
 
 # Pre-apply the static substitutions (__CONFIG__ and __SOURCES__) so that
 # map_viewer() only needs one .replace() per request for __PRESELECT__.
-_MAP_HTML_STATIC = (
-    _MAP_HTML.replace("__CONFIG__", _MAP_CONFIG_JSON).replace(
-        "__SOURCES__", _INGEST_SOURCES_JSON
-    )
+_MAP_HTML_STATIC = _MAP_HTML.replace("__CONFIG__", _MAP_CONFIG_JSON).replace(
+    "__SOURCES__", _INGEST_SOURCES_JSON
 )
 _SCHEDULER_HTML_STATIC = _SCHEDULER_HTML.replace("__SOURCES__", _INGEST_SOURCES_JSON)
 

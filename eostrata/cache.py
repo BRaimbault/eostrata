@@ -181,7 +181,9 @@ def _eviction_sort_key(ts_iso: str, last_access: float, ingestion_time: float) -
 
 def _ts_to_iso(ts) -> str:
     """Convert a numpy datetime64 value to ``"YYYY-MM-DDTHH:MM:SS"``."""
-    return ts.astype("datetime64[s]").item().strftime("%Y-%m-%dT%H:%M:%S")
+    # str() on a datetime64[s] scalar produces the ISO string directly without
+    # creating an intermediate Python datetime object (avoids .item() + strftime).
+    return str(ts.astype("datetime64[s]"))
 
 
 def record_access(zarr_root: Path, group_path: str, timestamps: list) -> None:

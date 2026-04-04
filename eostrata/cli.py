@@ -206,14 +206,13 @@ def list_datasets(
         )
         for group_path, size_mb, _ in sorted(groups, key=lambda t: t[0]):
             adir = _access_dir(Path(_zarr_root), group_path)
-            sentinels = list(adir.iterdir()) if adir.exists() else []
-            if sentinels:
-                # Compute mtime once per file; reuse the max value directly
-                # to avoid a second stat() call on the winning path entry.
-                sentinel_mtimes = [(f.stat().st_mtime, f) for f in sentinels]
-                newest_mtime, _ = max(sentinel_mtimes)
-                ts = datetime.fromtimestamp(newest_mtime, tz=UTC)
-                last_read = ts.strftime("%Y-%m-%d %H:%M UTC")
+            if adir.exists():
+                try:
+                    newest_mtime = max(f.stat().st_mtime for f in adir.iterdir())
+                    ts = datetime.fromtimestamp(newest_mtime, tz=UTC)
+                    last_read = ts.strftime("%Y-%m-%d %H:%M UTC")
+                except ValueError:  # empty directory — max() of empty sequence
+                    last_read = "[dim]never read[/dim]"
             else:
                 last_read = "[dim]never read[/dim]"
             table.add_row(group_path, f"{size_mb:.1f} MB", last_read)

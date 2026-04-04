@@ -302,14 +302,15 @@ def list_groups(zarr_root: Path) -> list[tuple[str, float, float]]:
 
             # Last access: max mtime across zarr data files AND access sentinels.
             # Sentinels live in the sibling meta directory, outside the zarr store.
-            data_mtimes = [s.st_mtime for s in data_stats]
+            # Compute max directly from data_stats (no extra list allocation).
+            data_max_mtime = max((s.st_mtime for s in data_stats), default=0.0)
             adir = _access_dir(zarr_root, group_path)
-            sentinel_mtimes = (
-                [f.stat().st_mtime for f in adir.rglob("*") if f.is_file()] if adir.exists() else []
+            sentinel_max_mtime = (
+                max((f.stat().st_mtime for f in adir.rglob("*") if f.is_file()), default=0.0)
+                if adir.exists()
+                else 0.0
             )
-            last_access = (
-                max(data_mtimes + sentinel_mtimes) if (data_mtimes or sentinel_mtimes) else 0.0
-            )
+            last_access = max(data_max_mtime, sentinel_max_mtime)
 
             groups.append((group_path, size_mb, last_access))
 

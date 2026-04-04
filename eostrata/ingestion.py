@@ -169,19 +169,38 @@ def rebuild_catalog_from_zarr(
         variable: str = meta["variable"]
         extra: dict = meta["extra"]
 
-        for ts in times:
-            dt = pd.Timestamp(ts).to_pydatetime().replace(tzinfo=UTC)
-            cat.register_item(
-                catalogue,
-                collection_id=collection_id,
-                item_id=item_id,
-                bbox=bbox,
-                datetime_=dt,
-                zarr_root=zarr_root,
-                zarr_group=group_path,
-                variable=variable,
-                extra_properties=extra,
-            )
+        # Sort all timestamps up-front and register the group in a single pass:
+        # register_item() once for the earliest datetime (creates the item), then
+        # patch PROP_DATETIMES directly for remaining timestamps.  This avoids
+        # calling register_item() N times, which would do a pystac get+remove+add
+        # cycle for each timestamp (O(N²) in pystac list operations per group).
+        from eostrata.constants import PROP_DATETIMES
+
+        dts = sorted(pd.Timestamp(ts).to_pydatetime().replace(tzinfo=UTC) for ts in times)
+        if not dts:
+            continue
+
+        cat.register_item(
+            catalogue,
+            collection_id=collection_id,
+            item_id=item_id,
+            bbox=bbox,
+            datetime_=dts[0],
+            zarr_root=zarr_root,
+            zarr_group=group_path,
+            variable=variable,
+            extra_properties=extra,
+        )
+
+        if len(dts) > 1:
+            collection_obj = catalogue.get_child(collection_id)
+            registered_item = collection_obj.get_item(item_id)
+            all_iso = [dt.isoformat() for dt in dts]
+            registered_item.properties[PROP_DATETIMES] = all_iso
+            registered_item.properties["start_datetime"] = dts[0].isoformat()
+            registered_item.properties["end_datetime"] = dts[-1].isoformat()
+            registered_item.common_metadata.start_datetime = dts[0]
+            registered_item.common_metadata.end_datetime = dts[-1]
 
         results[group_path] = len(times)
         logger.info("Rebuilt %d timestamps for '%s'", len(times), group_path)

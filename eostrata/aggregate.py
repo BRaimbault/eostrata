@@ -199,6 +199,10 @@ def resolve_accessed_times(
     if len(times) == 0:
         return []
 
+    # Pre-compute once — reused by both the main datetime and the baseline range
+    # when agg="anomaly" calls _in_range() twice.
+    times_s = times.astype("datetime64[s]")
+
     def _in_range(dt_str: str | None) -> list:
         if not dt_str:
             return [times[-1]]
@@ -207,7 +211,6 @@ def resolve_accessed_times(
             return [times[-1]]
         t0s = _strip_tz(t0)
         t1s = _strip_tz(t1) if t1 else t0s
-        times_s = times.astype("datetime64[s]")
         if t0s == t1s:
             target = np.datetime64(t0s, "s")
             idx = int(np.argmin(np.abs(times_s - target)))

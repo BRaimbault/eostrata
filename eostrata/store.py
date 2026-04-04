@@ -143,7 +143,11 @@ def geotiff_to_zarr(
             # Check whether this timestamp is already in the store — skip if so
             try:
                 existing = xr.open_zarr(store_path, group=zarr_group, consolidated=False)
-                if "time" in existing and time_coord in existing["time"].values:
+                try:
+                    already_present = "time" in existing and time_coord in existing["time"].values
+                finally:
+                    existing.close()
+                if already_present:
                     logger.info(
                         "Timestamp %s already exists in '%s' — skipping duplicate write",
                         time_coord,

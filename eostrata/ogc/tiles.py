@@ -34,6 +34,7 @@ from eostrata.aggregate import (
     _CTX_AGG_METHOD,
     AggregatingReader,
 )
+from eostrata.catalog import load_or_create
 from eostrata.config import settings
 from eostrata.constants import PROP_VARIABLE, PROP_ZARR_GROUP, PROP_ZARR_ROOT
 
@@ -77,6 +78,10 @@ _tiler = TilerFactory(
 _internal_app = FastAPI()
 _internal_app.include_router(_tiler.router, prefix="/internal")
 
+# ASGITransport is stateless (just holds a reference to _internal_app) — create
+# once at module level so _delegate() doesn't allocate a new one per tile request.
+_transport = ASGITransport(app=_internal_app)
+
 
 def _resolve(collection_id: str, item_id: str | None) -> dict:
     """Resolve collection + optional item to zarr_root, zarr_group, variable.
@@ -86,8 +91,6 @@ def _resolve(collection_id: str, item_id: str | None) -> dict:
     catalog.json and load_or_create() returns a fresh pystac.Catalog instance).
     """
     global _resolve_cache, _resolve_cache_catalog_id
-
-    from eostrata.catalog import load_or_create
 
     catalog = load_or_create(settings.catalog_path)
 
@@ -130,9 +133,7 @@ def _resolve(collection_id: str, item_id: str | None) -> dict:
 
 async def _delegate(path: str, params: dict) -> Response:
     """Delegate a request to the internal TiTiler app and return its response."""
-    async with AsyncClient(
-        transport=ASGITransport(app=_internal_app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=_transport, base_url="http://test") as client:
         resp = await client.get(f"/internal/{path}", params=params)
 
     return Response(

@@ -323,12 +323,13 @@ def _write_daily_grid(
     from rasterio.crs import CRS
 
     ds = da.to_dataset()
+    crs_wkt = CRS.from_epsg(4326).to_wkt()
     ds["crs"] = xr.DataArray(
         np.int32(0),
         attrs={
             "grid_mapping_name": "latitude_longitude",
-            "crs_wkt": CRS.from_epsg(4326).to_wkt(),
-            "spatial_ref": CRS.from_epsg(4326).to_wkt(),
+            "crs_wkt": crs_wkt,
+            "spatial_ref": crs_wkt,
         },
     )
     ds.attrs["Conventions"] = "CF-1.8"

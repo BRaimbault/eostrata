@@ -109,12 +109,13 @@ def geotiff_to_zarr(
     # GeoZarr CRS variable: scalar holding the coordinate reference system.
     # Stores WKT2 in 'crs_wkt' (CF-1.8) and 'spatial_ref' (GDAL/PROJ compatibility).
     # zarr 3 writes this as dimension-less array metadata in zarr.json.
+    crs_wkt = crs.to_wkt(version="WKT2_2019")
     ds["crs"] = xr.DataArray(
         np.int32(0),
         attrs={
             "grid_mapping_name": "latitude_longitude",
-            "crs_wkt": crs.to_wkt(version="WKT2_2019"),
-            "spatial_ref": crs.to_wkt(version="WKT2_2019"),
+            "crs_wkt": crs_wkt,
+            "spatial_ref": crs_wkt,
         },
     )
 

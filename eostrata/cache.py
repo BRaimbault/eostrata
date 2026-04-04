@@ -82,7 +82,6 @@ import zarr
 from filelock import FileLock
 
 import eostrata.config as _eostrata_config
-from eostrata.config import settings as _settings
 
 logger = logging.getLogger(__name__)
 

@@ -40,8 +40,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from titiler.core.errors import DEFAULT_STATUS_CODES, add_exception_handlers
 from titiler.xarray.factory import TilerFactory
 
-from eostrata.aggregate import AggregatingReader
 from eostrata import cache as _cache
+from eostrata.aggregate import AggregatingReader
 from eostrata.catalog import PystacClient, load_or_create
 from eostrata.config import settings
 from eostrata.constants import PROP_DATETIMES, PROP_VARIABLE, PROP_ZARR_GROUP

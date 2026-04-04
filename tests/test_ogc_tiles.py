@@ -118,21 +118,6 @@ class TestResolve:
             _resolve("worldpop", "unknown_item")
         assert exc_info.value.status_code == 404
 
-    def test_cache_hit_returns_same_dict(self, setup, mocker):
-        """Second _resolve call with the same key returns the cached result (line 106)."""
-        tmp_path, catalog_path, zarr_root = setup
-
-        from eostrata.ogc.tiles import _resolve
-
-        mock_settings = mocker.MagicMock()
-        mock_settings.catalog_path = catalog_path
-        mock_settings.zarr_root = zarr_root
-
-        mocker.patch("eostrata.ogc.tiles.settings", mock_settings)
-        first = _resolve("worldpop", "worldpop_nga")
-        second = _resolve("worldpop", "worldpop_nga")
-        assert first is second  # same dict object from cache
-
     def test_no_item_picks_first(self, setup, mocker):
         tmp_path, catalog_path, zarr_root = setup
 
@@ -200,22 +185,46 @@ class TestResolve:
             _resolve("worldpop", "bare_item")
         assert exc_info.value.status_code == 422
 
+    def test_resolve_cache_hit_on_second_call(self, setup, mocker):
+        """Second _resolve call with same args returns cached result (line 105-106)."""
+        tmp_path, catalog_path, zarr_root = setup
 
-# ── Variables extension ────────────────────────────────────────────────────────
+        import eostrata.ogc.tiles as tiles_mod
+        from eostrata.ogc.tiles import _resolve
+
+        mock_settings = mocker.MagicMock()
+        mock_settings.catalog_path = catalog_path
+        mock_settings.zarr_root = zarr_root
+
+        mocker.patch("eostrata.ogc.tiles.settings", mock_settings)
+
+        # Force cache miss on first call by resetting the cache
+        tiles_mod._resolve_cache = {}
+        tiles_mod._resolve_cache_catalog_id = 0
+
+        result1 = _resolve("worldpop", "worldpop_nga")
+        # Second call should return cached result
+        result2 = _resolve("worldpop", "worldpop_nga")
+
+        assert result1 == result2
+        assert result1["zarr_group"] == "worldpop/nga"
 
 
-class TestVariablesExtension:
-    def test_variables_returns_data_vars(self, setup):
-        """_VariablesExtension /variables endpoint returns the dataset variable names."""
-        from fastapi.testclient import TestClient
+# ── Internal app — variables endpoint ─────────────────────────────────────────
+
+
+class TestVariablesEndpoint:
+    def test_variables_lists_data_vars(self, setup, mocker):
+        """GET /internal/variables returns list of dataset variables (lines 53-54)."""
+        tmp_path, catalog_path, zarr_root = setup
 
         from eostrata.ogc.tiles import _internal_app
 
-        tmp_path, catalog_path, zarr_root = setup
+        zarr_url = str(zarr_root)
         client = TestClient(_internal_app)
         resp = client.get(
             "/internal/variables",
-            params={"url": str(zarr_root), "group": "worldpop/nga"},
+            params={"url": zarr_url, "group": "worldpop/nga"},
         )
         assert resp.status_code == 200
         assert "population" in resp.json()

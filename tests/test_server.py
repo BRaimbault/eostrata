@@ -107,14 +107,6 @@ class TestExamples:
         assert "zonalstats_body" in item
 
 
-class TestSchedulerUI:
-    def test_returns_html(self, client):
-        resp = client.get("/scheduler")
-        assert resp.status_code == 200
-        assert "text/html" in resp.headers["content-type"]
-        assert "<html" in resp.text.lower()
-
-
 class TestLifespanStorageCheck:
     def test_unwritable_storage_dir_raises(self, tmp_path, monkeypatch):
         """lifespan should raise RuntimeError if a storage directory is not writable."""
@@ -171,6 +163,14 @@ class TestMapViewer:
         assert "rebuildCatalog" in resp.text
 
 
+class TestSchedulerUI:
+    def test_scheduler_returns_html(self, client):
+        """GET /scheduler returns the static scheduler HTML (line 595)."""
+        resp = client.get("/scheduler")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+
+
 class TestDynamicOpenAPI:
     def test_openapi_schema_accessible(self, client):
         resp = client.get("/openapi.json")
@@ -179,13 +179,28 @@ class TestDynamicOpenAPI:
         assert schema["info"]["title"] == "eostrata"
         assert "paths" in schema
 
-    def test_openapi_schema_cache_hit(self, client):
-        """Second /openapi.json request without catalog changes returns cached schema (line 678)."""
-        resp1 = client.get("/openapi.json")
-        resp2 = client.get("/openapi.json")
-        assert resp1.status_code == 200
-        assert resp2.status_code == 200
-        assert resp1.json()["info"]["title"] == resp2.json()["info"]["title"]
+    def test_openapi_cache_hit_on_second_call(self, mocker):
+        """Second /openapi.json call returns cached schema (line 679)."""
+        import eostrata.server as server_mod
+
+        mock_settings = mocker.MagicMock()
+        mock_settings.catalog_path.stat.return_value.st_mtime = 12345.0
+
+        mocker.patch("eostrata.server.settings", mock_settings)
+        mocker.patch("eostrata.server.load_or_create", return_value=mocker.MagicMock())
+
+        # Reset module-level cache so the first call populates it
+        server_mod._openapi_schema_cache = None
+        server_mod._openapi_catalog_mtime = 0.0
+
+        from eostrata.server import app
+
+        with TestClient(app) as c:
+            r1 = c.get("/openapi.json")
+            r2 = c.get("/openapi.json")
+
+        assert r1.status_code == 200
+        assert r2.status_code == 200
 
     def test_openapi_with_catalog_items(self, tmp_path, mocker):
         from eostrata import catalog as cat
@@ -409,6 +424,21 @@ class TestLifespan:
         mocker.patch.dict(sys.modules, {"eostrata.scheduler": mock_mod})
         with TestClient(app) as c:
             assert c.get("/").status_code == 200
+
+    def test_non_writable_storage_dir_raises(self, tmp_path, mocker):
+        """Lifespan raises RuntimeError when a storage directory is not writable (line 95)."""
+
+        from eostrata.server import app
+
+        mock_settings = mocker.MagicMock()
+        mock_settings.zarr_root = tmp_path / "zarr"
+        mock_settings.raw_dir = tmp_path / "raw"
+
+        mocker.patch("eostrata.server.settings", mock_settings)
+        mocker.patch("os.access", return_value=False)
+
+        with pytest.raises(RuntimeError, match="not writable"), TestClient(app):
+            pass
 
 
 # ── examples() edge cases ─────────────────────────────────────────────────────

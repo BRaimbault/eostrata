@@ -81,6 +81,8 @@ def _make_settings_mock(tmp_path: Path):
     s.catalog_path = tmp_path / "catalog.json"
     s.bbox = (2.0, 4.0, 15.0, 14.0)
     s.store_quota_mb = 0.0
+    s.zarr_chunk_size = 512
+    s.max_aggregation_timesteps = 0
     return s
 
 
@@ -903,17 +905,18 @@ class TestList:
         assert result.exit_code == 0
         assert "UTC" in result.output  # date is shown as "YYYY-MM-DD HH:MM UTC"
 
-    def test_list_empty_sentinel_dir_shows_never_read(self, tmp_path):
-        """Empty access-sentinel directory triggers the ValueError branch (lines 214-215)."""
+    def test_list_empty_access_dir_shows_never_read(self, tmp_path):
+        """An empty access-sentinel directory is handled gracefully (ValueError branch)."""
         from eostrata.cache import _access_dir
 
         zarr_root = tmp_path / "zarr"
         ds = xr.Dataset({"v": (("y", "x"), np.ones((4, 4)))})
         ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
 
-        # Create the sentinel directory but leave it empty (no sentinel files).
+        # Create the access dir but leave it empty so max() raises ValueError
         adir = _access_dir(zarr_root, "worldpop/nga")
         adir.mkdir(parents=True, exist_ok=True)
+        assert list(adir.iterdir()) == []
 
         result = runner.invoke(
             app,

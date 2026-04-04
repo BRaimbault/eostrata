@@ -31,6 +31,7 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
+import eostrata.config as _eostrata_config
 from eostrata.constants import PROP_RESOLUTION, PROP_VARIABLE
 from eostrata.sources.base import BaseSource, register_source
 from eostrata.store import _group_lock
@@ -162,7 +163,7 @@ def _netcdf_to_zarr(
     store_path = str(zarr_root_path)
     group_exists = (zarr_root_path / zarr_group).exists()
 
-    cy, cx = 512, 512
+    cy = cx = _eostrata_config.settings.zarr_chunk_size
     encoding: dict = {
         short: {
             "chunks": (1, cy, cx),

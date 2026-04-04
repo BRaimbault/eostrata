@@ -221,7 +221,8 @@ def resolve_accessed_times(
             return [times[idx]]
         start = np.datetime64(t0s, "s")
         end = np.datetime64(t1s, "s")
-        return [times[i] for i, t in enumerate(times_s) if start <= t <= end]
+        mask = (times_s >= start) & (times_s <= end)
+        return list(times[mask])
 
     accessed = _in_range(datetime_str)
     if agg_method == "anomaly" and baseline:

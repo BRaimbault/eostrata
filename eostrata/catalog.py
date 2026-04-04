@@ -285,8 +285,12 @@ def remove_timestamp(
                 logger.info("Removed STAC item '%s' (no timestamps remain)", item.id)
             else:
                 dts = [datetime.fromisoformat(dt) for dt in remaining]
-                start = min(dts).replace(tzinfo=UTC) if min(dts).tzinfo is None else min(dts)
-                end = max(dts).replace(tzinfo=UTC) if max(dts).tzinfo is None else max(dts)
+                start = min(dts)
+                end = max(dts)
+                if start.tzinfo is None:
+                    start = start.replace(tzinfo=UTC)
+                if end.tzinfo is None:
+                    end = end.replace(tzinfo=UTC)
                 item.properties[PROP_DATETIMES] = sorted(remaining)
                 item.properties["start_datetime"] = start.isoformat()
                 item.properties["end_datetime"] = end.isoformat()

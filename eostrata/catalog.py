@@ -13,6 +13,7 @@ from stac_fastapi.types.core import BaseCoreClient
 from stac_fastapi.types.errors import NotFoundError
 from stac_fastapi.types.stac import Collection, Collections, Item, ItemCollection
 
+from eostrata.config import settings as _settings
 from eostrata.constants import (
     PROP_DATETIMES,
     PROP_SOURCE,
@@ -357,9 +358,7 @@ class PystacClient(BaseCoreClient):
     catalog_path: str = attr.ib(default=None)
 
     def _catalog(self) -> pystac.Catalog:
-        from eostrata.config import settings
-
-        path = self.catalog_path or str(settings.catalog_path)
+        path = self.catalog_path or str(_settings.catalog_path)
         return load_or_create(path)
 
     def all_collections(self, **kwargs: Any) -> Collections:

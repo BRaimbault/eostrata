@@ -752,9 +752,8 @@
       return (start || '') + '/' + (end || '');
     }
 
-    function updateLayer() {
+    function currentParams() {
       const collId = document.getElementById('sel-collection').value;
-      if (!collId) { setStatus(''); return; }
       const itemId = document.getElementById('sel-item').value;
       const dt = buildDatetimeParam();
       const aggVal = dateMode === 'interval' ? document.getElementById('sel-agg').value : null;
@@ -762,6 +761,12 @@
         ? (document.getElementById('inp-baseline-start').value || '') + '/' +
           (document.getElementById('inp-baseline-end').value || '')
         : null;
+      return { collId, itemId, dt, aggVal, baselineVal };
+    }
+
+    function updateLayer() {
+      const { collId, itemId, dt, aggVal, baselineVal } = currentParams();
+      if (!collId) { setStatus(''); return; }
 
       if (dataLayer) { map.removeLayer(dataLayer); dataLayer = null; }
       dataLayer = L.tileLayer(buildTileUrl(collId, itemId, dt, aggVal, baselineVal), {
@@ -775,6 +780,13 @@
       if (dt) statusParts.push(dt.length > 10 ? dt : dt.slice(0, 10));
       if (aggVal) statusParts.push('agg=' + aggVal);
       setStatus(statusParts.join(' / '));
+
+      // Skip stats re-fetch when data params (collection/item/date/agg) haven't changed
+      const statsMatch = lastStats &&
+        lastStats.collId === collId && lastStats.itemId === itemId &&
+        lastStats.dt === dt && lastStats.aggParam === aggVal &&
+        lastStats.baselineParam === (baselineVal || null);
+      if (statsMatch) return;
 
       // Debounce stats fetch so rapid control changes don't spam the server
       lastStats = null;
@@ -929,7 +941,10 @@
       document.getElementById('sel-agg').addEventListener('change', onAggChange);
       document.getElementById('inp-baseline-start').addEventListener('change', updateLayer);
       document.getElementById('inp-baseline-end').addEventListener('change', updateLayer);
-      document.getElementById('sel-colormap').addEventListener('change', updateLayer);
+      document.getElementById('sel-colormap').addEventListener('change', () => {
+        const { collId, itemId, dt, aggVal, baselineVal } = currentParams();
+        if (collId) refreshTile(collId, itemId, dt, aggVal, baselineVal);
+      });
       document.getElementById('inp-rescale').addEventListener('input', () => {
         const chk = document.getElementById('chk-autoscale');
         if (chk.checked) {
@@ -937,7 +952,10 @@
           document.getElementById('inp-rescale').disabled = false;
         }
       });
-      document.getElementById('inp-rescale').addEventListener('change', updateLayer);
+      document.getElementById('inp-rescale').addEventListener('change', () => {
+        const { collId, itemId, dt, aggVal, baselineVal } = currentParams();
+        if (collId) refreshTile(collId, itemId, dt, aggVal, baselineVal);
+      });
       document.getElementById('chk-autoscale').addEventListener('change', () => {
         const chk = document.getElementById('chk-autoscale');
         document.getElementById('inp-rescale').disabled = chk.checked;

@@ -236,7 +236,7 @@ def _feature_stats(da: xr.DataArray, geometry: dict) -> dict:
         logger.warning("Clip failed: %s", exc)
         return {"error": str(exc)}
 
-    values = clipped.values.astype("float64")
+    values = clipped.values.astype("float64", copy=False)  # no-op if already float64
     valid = values[np.isfinite(values)]
 
     if valid.size == 0:

@@ -179,6 +179,14 @@ class TestDynamicOpenAPI:
         assert schema["info"]["title"] == "eostrata"
         assert "paths" in schema
 
+    def test_openapi_schema_cache_hit(self, client):
+        """Second /openapi.json request without catalog changes returns cached schema (line 678)."""
+        resp1 = client.get("/openapi.json")
+        resp2 = client.get("/openapi.json")
+        assert resp1.status_code == 200
+        assert resp2.status_code == 200
+        assert resp1.json()["info"]["title"] == resp2.json()["info"]["title"]
+
     def test_openapi_with_catalog_items(self, tmp_path, mocker):
         from eostrata import catalog as cat
 

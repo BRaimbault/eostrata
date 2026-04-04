@@ -981,6 +981,24 @@ class TestRebuildCatalogFromZarr:
 
         assert results == {"sentinel_ndvi/global": 3}
 
+    def test_group_with_empty_times_is_skipped(self, tmp_path):
+        """A group whose zarr has zero timestamps produces dts=[] and is skipped (line 180)."""
+        from eostrata.ingestion import rebuild_catalog_from_zarr
+
+        zarr_root = tmp_path / "zarr"
+        zarr_root.mkdir()
+        catalog_path = tmp_path / "catalog.json"
+        empty_ds = _mock_zarr_ds(np.array([], dtype="datetime64[ns]"))
+
+        with (
+            patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 0.0, 0.0)]),
+            patch("xarray.open_zarr", return_value=empty_ds),
+            patch("eostrata.catalog.save"),
+        ):
+            results = rebuild_catalog_from_zarr(zarr_root=zarr_root, catalog_path=catalog_path)
+
+        assert results == {}
+
 
 # ── Sentinel NDVI OGC execution ───────────────────────────────────────────────
 

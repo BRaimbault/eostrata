@@ -79,6 +79,23 @@ class TestLoadOrCreate:
         loaded = load_or_create(tmp_path / "catalog.json")
         assert loaded.id == "eostrata"
 
+    def test_loads_from_disk_on_cache_miss(self, tmp_path):
+        """File exists but cache points elsewhere — loads from disk (lines 91-96)."""
+        # Write two catalogs via save() so the in-memory cache ends up pointing at path_a.
+        path_a = tmp_path / "a" / "catalog.json"
+        save(_make_catalog(), path_a)  # cache now keyed to path_a
+
+        # Write a second catalog to path_b *without* going through save(), so the
+        # cache never learns about path_b and load_or_create must read from disk.
+        path_b = tmp_path / "b" / "catalog.json"
+        cat_b = _make_catalog()
+        path_b.parent.mkdir(parents=True, exist_ok=True)
+        cat_b.normalize_hrefs(str(path_b.parent))
+        cat_b.save(dest_href=str(path_b.parent))
+
+        loaded = load_or_create(path_b)
+        assert loaded.id == "eostrata"
+
 
 class TestSave:
     def test_writes_json(self, tmp_path):
@@ -407,3 +424,31 @@ class TestRemoveTimestamp:
         item = cat.get_child("worldpop").get_item("worldpop_nga")
         assert item.common_metadata.start_datetime.year == 2021
         assert item.common_metadata.end_datetime.year == 2021
+
+    def test_naive_datetime_strings_get_utc_applied(self, tmp_path):
+        """Timezone-naive ISO strings in PROP_DATETIMES hit the replace(tzinfo=UTC) branches."""
+        cat = _make_catalog()
+        # Register with tz-aware datetime so the item exists.
+        register_item(
+            cat,
+            collection_id="worldpop",
+            item_id="worldpop_nga",
+            bbox=_BBOX,
+            datetime_=_DT,
+            zarr_root=tmp_path / "zarr",
+            zarr_group="worldpop/nga",
+            variable="population",
+        )
+        item = cat.get_child("worldpop").get_item("worldpop_nga")
+        # Overwrite PROP_DATETIMES with timezone-naive strings (simulates legacy data).
+        item.properties[PROP_DATETIMES] = [
+            "2020-01-01T00:00:00",
+            "2021-01-01T00:00:00",
+        ]
+
+        changed = remove_timestamp(cat, "worldpop/nga", "2020-01-01T00:00:00")
+        assert changed
+        # Item still exists (one timestamp remains) and dates are UTC-aware.
+        remaining_item = cat.get_child("worldpop").get_item("worldpop_nga")
+        assert remaining_item is not None
+        assert remaining_item.common_metadata.start_datetime.tzinfo is not None

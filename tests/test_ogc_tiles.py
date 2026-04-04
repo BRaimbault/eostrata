@@ -118,6 +118,21 @@ class TestResolve:
             _resolve("worldpop", "unknown_item")
         assert exc_info.value.status_code == 404
 
+    def test_cache_hit_returns_same_dict(self, setup, mocker):
+        """Second _resolve call with the same key returns the cached result (line 106)."""
+        tmp_path, catalog_path, zarr_root = setup
+
+        from eostrata.ogc.tiles import _resolve
+
+        mock_settings = mocker.MagicMock()
+        mock_settings.catalog_path = catalog_path
+        mock_settings.zarr_root = zarr_root
+
+        mocker.patch("eostrata.ogc.tiles.settings", mock_settings)
+        first = _resolve("worldpop", "worldpop_nga")
+        second = _resolve("worldpop", "worldpop_nga")
+        assert first is second  # same dict object from cache
+
     def test_no_item_picks_first(self, setup, mocker):
         tmp_path, catalog_path, zarr_root = setup
 

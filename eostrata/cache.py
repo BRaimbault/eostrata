@@ -73,12 +73,15 @@ import logging
 import shutil
 import time
 import uuid
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
 import xarray as xr
 import zarr
 from filelock import FileLock
+
+import eostrata.config as _eostrata_config
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +90,21 @@ logger = logging.getLogger(__name__)
 
 _DEBOUNCE_S = 60  # minimum seconds between sentinel touches for the same timestamp
 
+# Per-process in-memory sentinel touch cache.
+# Key = str(sentinel_path), value = time.time() of last touch.
+# When this says the sentinel was touched within _DEBOUNCE_S, we skip both
+# the stat() syscall and the touch() — eliminating all I/O on hot tile paths.
+# Bounded by the number of distinct timestamps in the store (typically ≪ 10 000).
+_TOUCH_CACHE: dict[str, float] = {}
 
+# TTL cache for store_size_mb() — avoids rescanning all zarr chunks on every
+# quota check.  Key = str(zarr_root), value = (size_mb, monotonic_time).
+# Invalidated by evict_timestamp() so the post-eviction final check is accurate.
+_SIZE_CACHE: dict[str, tuple[float, float]] = {}
+_SIZE_CACHE_TTL = 30.0  # seconds
+
+
+@lru_cache(maxsize=8)
 def _meta_root(zarr_root: Path) -> Path:
     """Hidden state directory *alongside* the zarr store (not inside it).
 
@@ -97,13 +114,17 @@ def _meta_root(zarr_root: Path) -> Path:
 
     Convention: if ``zarr_root`` is ``data/zarr``, the meta directory is
     ``data/.zarr`` (same parent, dot-prefixed name).
+
+    Cached with lru_cache — the directory is created on the first call and
+    the Path is reused on all subsequent calls, avoiding a mkdir syscall on
+    every tile request (record_access → _access_dir → _meta_root).
     """
-    zarr_root = Path(zarr_root)
     meta = zarr_root.parent / f".{zarr_root.name}"
     meta.mkdir(parents=True, exist_ok=True)
     return meta
 
 
+@lru_cache(maxsize=8)
 def _lock_dir(zarr_root: Path) -> Path:
     d = _meta_root(zarr_root) / "locks"
     d.mkdir(parents=True, exist_ok=True)
@@ -175,7 +196,9 @@ def _eviction_sort_key(ts_iso: str, last_access: float, ingestion_time: float) -
 
 def _ts_to_iso(ts) -> str:
     """Convert a numpy datetime64 value to ``"YYYY-MM-DDTHH:MM:SS"``."""
-    return ts.astype("datetime64[s]").item().strftime("%Y-%m-%dT%H:%M:%S")
+    # str() on a datetime64[s] scalar produces the ISO string directly without
+    # creating an intermediate Python datetime object (avoids .item() + strftime).
+    return str(ts.astype("datetime64[s]"))
 
 
 def record_access(zarr_root: Path, group_path: str, timestamps: list) -> None:
@@ -204,31 +227,58 @@ def record_access(zarr_root: Path, group_path: str, timestamps: list) -> None:
     timestamps:
         List of numpy datetime64 values that were touched by the request.
     """
-    from eostrata.config import settings
-
-    if not settings.track_access:
+    if not _eostrata_config.settings.track_access:
         return
 
     try:
-        adir = _access_dir(Path(zarr_root), group_path)
+        adir = _access_dir(zarr_root, group_path)
         adir.mkdir(parents=True, exist_ok=True)
+        now = time.time()
         for ts in timestamps:
             ts_iso = _ts_to_iso(ts)
             sentinel = adir / ts_iso
-            if sentinel.exists() and time.time() - sentinel.stat().st_mtime < _DEBOUNCE_S:
+            sentinel_key = str(sentinel)
+            # Fast path: in-process memory says we touched it recently — skip all I/O.
+            if now - _TOUCH_CACHE.get(sentinel_key, 0.0) < _DEBOUNCE_S:
                 continue
+            # Slow path: check the on-disk mtime (handles restarts / other workers).
+            try:
+                if now - sentinel.stat().st_mtime < _DEBOUNCE_S:
+                    _TOUCH_CACHE[sentinel_key] = now
+                    continue
+            except FileNotFoundError:
+                pass
             sentinel.touch()
+            _TOUCH_CACHE[sentinel_key] = now
     except OSError:
         logger.debug("Could not update access sentinel for group '%s'", group_path)
 
 
+def _invalidate_size_cache(zarr_root: Path) -> None:
+    """Evict the cached store size for *zarr_root* so the next call re-measures."""
+    _SIZE_CACHE.pop(str(zarr_root), None)
+
+
 def store_size_mb(zarr_root: Path) -> float:
-    """Return the total on-disk size of *zarr_root* in megabytes."""
+    """Return the total on-disk size of *zarr_root* in megabytes.
+
+    Results are cached for ``_SIZE_CACHE_TTL`` seconds to avoid rescanning
+    thousands of zarr chunk files on every quota check.  The cache is
+    invalidated by ``evict_timestamp`` so post-eviction measurements are fresh.
+    """
     root = Path(zarr_root)
+    cache_key = str(root)
+    cached = _SIZE_CACHE.get(cache_key)
+    if cached is not None:
+        size_mb, cached_at = cached
+        if time.monotonic() - cached_at < _SIZE_CACHE_TTL:
+            return size_mb
     if not root.exists():
         return 0.0
     total = sum(f.stat().st_size for f in root.rglob("*") if f.is_file())
-    return total / (1024**2)
+    size_mb = total / (1024**2)
+    _SIZE_CACHE[cache_key] = (size_mb, time.monotonic())
+    return size_mb
 
 
 def list_groups(zarr_root: Path) -> list[tuple[str, float, float]]:
@@ -272,21 +322,21 @@ def list_groups(zarr_root: Path) -> list[tuple[str, float, float]]:
                 continue
             group_path = f"{source_dir.name}/{dataset_dir.name}"
 
-            # Size: only zarr data files (pure zarr hierarchy — no sentinel dirs)
-            size_mb = sum(f.stat().st_size for f in dataset_dir.rglob("*") if f.is_file()) / (
-                1024**2
-            )
+            # Single traversal: collect stats once for size + mtime computation
+            data_stats = [f.stat() for f in dataset_dir.rglob("*") if f.is_file()]
+            size_mb = sum(s.st_size for s in data_stats) / (1024**2)
 
             # Last access: max mtime across zarr data files AND access sentinels.
             # Sentinels live in the sibling meta directory, outside the zarr store.
-            data_mtimes = [f.stat().st_mtime for f in dataset_dir.rglob("*") if f.is_file()]
+            # Compute max directly from data_stats (no extra list allocation).
+            data_max_mtime = max((s.st_mtime for s in data_stats), default=0.0)
             adir = _access_dir(zarr_root, group_path)
-            sentinel_mtimes = (
-                [f.stat().st_mtime for f in adir.rglob("*") if f.is_file()] if adir.exists() else []
+            sentinel_max_mtime = (
+                max((f.stat().st_mtime for f in adir.rglob("*") if f.is_file()), default=0.0)
+                if adir.exists()
+                else 0.0
             )
-            last_access = (
-                max(data_mtimes + sentinel_mtimes) if (data_mtimes or sentinel_mtimes) else 0.0
-            )
+            last_access = max(data_max_mtime, sentinel_max_mtime)
 
             groups.append((group_path, size_mb, last_access))
 
@@ -329,12 +379,18 @@ def list_timestamps(zarr_root: Path, group_path: str) -> list[tuple[str, float, 
         return []
 
     if "time" not in ds:
+        ds.close()
         return []
 
     try:
         times = ds["time"].values
     except Exception:
+        ds.close()
         return []
+    finally:
+        # Close zarr handles as soon as we have the time values in memory;
+        # the rest of the function works on plain Python/numpy objects.
+        ds.close()
 
     if len(times) == 0:
         return []
@@ -348,24 +404,32 @@ def list_timestamps(zarr_root: Path, group_path: str) -> list[tuple[str, float, 
             seen.add(iso)
             unique_times.append((iso, ts))
 
-    group_dir = Path(zarr_root) / group_path
+    group_dir = zarr_root / group_path
 
-    # Zarr data files only — no sentinel directories in the store
-    data_files = list(group_dir.rglob("*") if group_dir.exists() else [])
-    data_files = [f for f in data_files if f.is_file()]
-    total_size_bytes = sum(f.stat().st_size for f in data_files)
+    # Zarr data files only — no sentinel directories in the store.
+    # Single stat() pass: collect size and mtime together to halve syscall count.
+    # Build data_stats directly (no intermediate data_files list).
+    data_stats = (
+        [f.stat() for f in group_dir.rglob("*") if f.is_file()] if group_dir.exists() else []
+    )
+    if data_stats:
+        total_size_bytes = sum(s.st_size for s in data_stats)
+        ingestion_time = min(s.st_mtime for s in data_stats)
+    else:
+        total_size_bytes = 0
+        ingestion_time = 0.0
     total_group_size_mb = total_size_bytes / (1024**2)
     per_ts_mb = total_group_size_mb / len(unique_times) if unique_times else 0.0
 
-    # Ingestion time proxy: earliest mtime of zarr data files
-    ingestion_time = min((f.stat().st_mtime for f in data_files), default=0.0)
-
     # Access sentinels live in the sibling meta directory
-    adir = _access_dir(Path(zarr_root), group_path)
+    adir = _access_dir(zarr_root, group_path)
     result: list[tuple[str, float, float, float]] = []
     for ts_iso, _ts in unique_times:
         sentinel = adir / ts_iso
-        last_access = sentinel.stat().st_mtime if sentinel.exists() else 0.0
+        try:
+            last_access = sentinel.stat().st_mtime
+        except FileNotFoundError:
+            last_access = 0.0
         result.append((ts_iso, per_ts_mb, last_access, ingestion_time))
 
     result.sort(key=lambda t: _eviction_sort_key(t[0], t[2], t[3]))
@@ -437,11 +501,13 @@ def evict_timestamp(
             return 0.0
 
         if "time" not in ds:
+            ds.close()
             return 0.0
 
         times = ds["time"].values
         n_times = len(times)
         if n_times == 0:
+            ds.close()
             return 0.0
 
         # Compare at second precision
@@ -451,6 +517,7 @@ def evict_timestamp(
 
         if mask.all():
             # Timestamp not found (already evicted by a concurrent call)
+            ds.close()
             return 0.0
 
         # Estimate freed size (pure zarr data files only)
@@ -467,6 +534,7 @@ def evict_timestamp(
         tmp_name = f"._tmp_{Path(group_path).name}_{uuid.uuid4().hex[:8]}"
         tmp_group_path = str(Path(group_path).parent / tmp_name)
         remaining.drop_encoding().to_zarr(str(zarr_root), group=tmp_group_path, mode="w")
+        ds.close()  # release zarr handles after write completes
 
         target = zarr_root / group_path
         tmp_target = zarr_root / tmp_group_path
@@ -495,6 +563,9 @@ def evict_timestamp(
             dst_access.rename(src_access)
         if old_access.exists():
             shutil.rmtree(old_access)
+
+    # Invalidate the size cache so the next store_size_mb() call re-measures.
+    _invalidate_size_cache(zarr_root)
 
     # Refresh the root consolidated metadata so tile requests don't read stale
     # time encoding from before the eviction.
@@ -602,7 +673,7 @@ def check_and_evict(
         all_timestamps.sort(key=lambda t: _eviction_sort_key(t[1], t[3], t[4]))
 
         for group_path, ts_iso, ts_size_mb, last_access, ingestion_time in all_timestamps:
-            current_mb = store_size_mb(zarr_root)  # re-measure after each eviction
+            current_mb = store_size_mb(zarr_root)
             if current_mb <= target_mb:
                 break
             if last_access:
@@ -622,6 +693,7 @@ def check_and_evict(
             )
             evict_timestamp(zarr_root, group_path, ts_iso, catalog_path=catalog_path)
 
+        # Re-measure after all evictions (cache was invalidated by evict_timestamp)
         remaining = store_size_mb(zarr_root)
         if remaining > quota_mb:
             raise RuntimeError(

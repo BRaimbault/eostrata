@@ -40,6 +40,7 @@ INGEST_PROCESS_IDS = [
 
 import eostrata.sources  # noqa: E402,F401 — triggers auto-discovery of all source modules
 from eostrata.sources.base import all_sources as _all_sources  # noqa: E402
+from eostrata.sources.base import get_source  # noqa: E402
 
 INGEST_SOURCES = [
     {
@@ -198,8 +199,6 @@ class IngestInputs(BaseModel):
 
     @model_validator(mode="after")
     def check_source_fields(self) -> IngestInputs:
-        from eostrata.sources.base import get_source
-
         try:
             source_cls = get_source(self.source)
         except ValueError:  # pragma: no cover
@@ -323,8 +322,6 @@ def execute_ingest(body: IngestExecutionRequest, response: Response) -> dict:
 
     inp = body.inputs
     logger.info("API POST /processes/ingest/execution %s", inp.model_dump(exclude_none=True))
-
-    from eostrata.sources.base import get_source
 
     source_cls = get_source(inp.source)
     source = source_cls()

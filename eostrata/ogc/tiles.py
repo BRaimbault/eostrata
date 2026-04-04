@@ -34,6 +34,7 @@ from eostrata.aggregate import (
     _CTX_AGG_METHOD,
     AggregatingReader,
 )
+from eostrata.catalog import load_or_create
 from eostrata.config import settings
 from eostrata.constants import PROP_VARIABLE, PROP_ZARR_GROUP, PROP_ZARR_ROOT
 
@@ -57,6 +58,17 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Tiles"])
 
+# ── Item resolution cache ─────────────────────────────────────────────────────
+# _resolve() is called on every tile, tilejson, info and map request.  With the
+# catalog already memoised in catalog.py the pystac object is shared, but
+# catalog.get_child() and collection.get_item() still do O(n) list scans.
+# Cache the resolved result keyed on (collection_id, item_id) and invalidate
+# when the catalog object is replaced (new ingest → catalog.save() → new mtime
+# → load_or_create() returns a fresh object with a different id()).
+
+_resolve_cache: dict[tuple[str, str | None], dict] = {}
+_resolve_cache_catalog_id: int = 0
+
 # Internal TiTiler factory and app — built once at import time, reused per request
 _tiler = TilerFactory(
     reader=AggregatingReader,
@@ -66,21 +78,41 @@ _tiler = TilerFactory(
 _internal_app = FastAPI()
 _internal_app.include_router(_tiler.router, prefix="/internal")
 
+# ASGITransport is stateless (just holds a reference to _internal_app) — create
+# once at module level so _delegate() doesn't allocate a new one per tile request.
+_transport = ASGITransport(app=_internal_app)
+
 
 def _resolve(collection_id: str, item_id: str | None) -> dict:
-    """Resolve collection + optional item to zarr_root, zarr_group, variable."""
-    from eostrata.catalog import load_or_create
+    """Resolve collection + optional item to zarr_root, zarr_group, variable.
+
+    Results are cached by (collection_id, item_id) and invalidated automatically
+    when the underlying catalog object changes (i.e. after a new ingest writes
+    catalog.json and load_or_create() returns a fresh pystac.Catalog instance).
+    """
+    global _resolve_cache, _resolve_cache_catalog_id
 
     catalog = load_or_create(settings.catalog_path)
+
+    # Invalidate when catalog is replaced (object identity changes)
+    cat_id = id(catalog)
+    if cat_id != _resolve_cache_catalog_id:
+        _resolve_cache = {}
+        _resolve_cache_catalog_id = cat_id
+
+    cache_key = (collection_id, item_id)
+    cached = _resolve_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     collection = catalog.get_child(collection_id)
     if collection is None:
         raise HTTPException(404, detail=f"Collection '{collection_id}' not found.")
 
     if item_id is None:
-        items = list(collection.get_items())
-        if not items:
+        item = next(iter(collection.get_items()), None)
+        if item is None:
             raise HTTPException(404, detail=f"Collection '{collection_id}' has no items.")
-        item = items[0]
     else:
         item = collection.get_item(item_id)
         if item is None:
@@ -89,18 +121,18 @@ def _resolve(collection_id: str, item_id: str | None) -> dict:
     if "zarr" not in item.assets:
         raise HTTPException(422, detail=f"Item '{item.id}' has no zarr asset.")
 
-    return {
+    result = {
         "zarr_root": item.properties.get(PROP_ZARR_ROOT, str(settings.zarr_root)),
         "zarr_group": item.properties[PROP_ZARR_GROUP],
         "variable": item.properties[PROP_VARIABLE],
     }
+    _resolve_cache[cache_key] = result
+    return result
 
 
 async def _delegate(path: str, params: dict) -> Response:
     """Delegate a request to the internal TiTiler app and return its response."""
-    async with AsyncClient(
-        transport=ASGITransport(app=_internal_app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=_transport, base_url="http://test") as client:
         resp = await client.get(f"/internal/{path}", params=params)
 
     return Response(

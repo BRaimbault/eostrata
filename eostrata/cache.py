@@ -241,7 +241,7 @@ def record_access(zarr_root: Path, group_path: str, timestamps: list) -> None:
 
 def _invalidate_size_cache(zarr_root: Path) -> None:
     """Evict the cached store size for *zarr_root* so the next call re-measures."""
-    _SIZE_CACHE.pop(str(Path(zarr_root)), None)
+    _SIZE_CACHE.pop(str(zarr_root), None)
 
 
 def store_size_mb(zarr_root: Path) -> float:

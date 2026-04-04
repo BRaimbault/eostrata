@@ -284,14 +284,16 @@ def remove_timestamp(
                 collection.remove_item(item.id)
                 logger.info("Removed STAC item '%s' (no timestamps remain)", item.id)
             else:
-                dts = [datetime.fromisoformat(dt) for dt in remaining]
-                start = min(dts)
-                end = max(dts)
+                # PROP_DATETIMES is always kept sorted (ISO 8601 sorts
+                # lexicographically = chronologically), so first/last are bounds.
+                remaining_sorted = sorted(remaining)
+                start = datetime.fromisoformat(remaining_sorted[0])
+                end = datetime.fromisoformat(remaining_sorted[-1])
                 if start.tzinfo is None:
                     start = start.replace(tzinfo=UTC)
                 if end.tzinfo is None:
                     end = end.replace(tzinfo=UTC)
-                item.properties[PROP_DATETIMES] = sorted(remaining)
+                item.properties[PROP_DATETIMES] = remaining_sorted
                 item.properties["start_datetime"] = start.isoformat()
                 item.properties["end_datetime"] = end.isoformat()
                 item.common_metadata.start_datetime = start

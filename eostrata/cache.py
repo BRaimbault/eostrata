@@ -469,11 +469,13 @@ def evict_timestamp(
             return 0.0
 
         if "time" not in ds:
+            ds.close()
             return 0.0
 
         times = ds["time"].values
         n_times = len(times)
         if n_times == 0:
+            ds.close()
             return 0.0
 
         # Compare at second precision
@@ -483,6 +485,7 @@ def evict_timestamp(
 
         if mask.all():
             # Timestamp not found (already evicted by a concurrent call)
+            ds.close()
             return 0.0
 
         # Estimate freed size (pure zarr data files only)
@@ -499,6 +502,7 @@ def evict_timestamp(
         tmp_name = f"._tmp_{Path(group_path).name}_{uuid.uuid4().hex[:8]}"
         tmp_group_path = str(Path(group_path).parent / tmp_name)
         remaining.drop_encoding().to_zarr(str(zarr_root), group=tmp_group_path, mode="w")
+        ds.close()  # release zarr handles after write completes
 
         target = zarr_root / group_path
         tmp_target = zarr_root / tmp_group_path

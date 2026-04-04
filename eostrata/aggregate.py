@@ -79,6 +79,60 @@ def _parse_datetime_interval(
     return datetime_str, datetime_str
 
 
+def _chunked_mean(da: xr.DataArray, batch_size: int) -> xr.DataArray:
+    """Compute da.mean("time") in batches of *batch_size* to bound peak RAM.
+
+    Each batch is materialised independently so at most batch_size spatial
+    tiles are in memory at once.  Results are combined with a weighted mean
+    that correctly handles the final batch being smaller than the others.
+    """
+    n = da.sizes["time"]
+    total: xr.DataArray | None = None
+    count = 0
+    for start in range(0, n, batch_size):
+        batch = da.isel(time=slice(start, start + batch_size))
+        k = batch.sizes["time"]
+        batch_sum = batch.sum("time").compute()
+        total = batch_sum if total is None else total + batch_sum
+        count += k
+    assert total is not None
+    return total / count
+
+
+def _chunked_aggregate(da: xr.DataArray, agg: AggMethod, batch_size: int) -> xr.DataArray:
+    """Compute a reduction over time in batches of *batch_size* to bound peak RAM."""
+    n = da.sizes["time"]
+
+    if agg == "mean":
+        return _chunked_mean(da, batch_size)
+
+    if agg == "sum":
+        total: xr.DataArray | None = None
+        for start in range(0, n, batch_size):
+            part = da.isel(time=slice(start, start + batch_size)).sum("time").compute()
+            total = part if total is None else total + part
+        assert total is not None
+        return total
+
+    if agg == "min":
+        result: xr.DataArray | None = None
+        for start in range(0, n, batch_size):
+            part = da.isel(time=slice(start, start + batch_size)).min("time").compute()
+            result = part if result is None else result.where(result <= part, part)
+        assert result is not None
+        return result
+
+    if agg == "max":
+        result = None
+        for start in range(0, n, batch_size):
+            part = da.isel(time=slice(start, start + batch_size)).max("time").compute()
+            result = part if result is None else result.where(result >= part, part)
+        assert result is not None
+        return result
+
+    raise ValueError(f"Unknown agg method '{agg}'. Use: mean, sum, min, max, anomaly.")
+
+
 def apply_temporal_aggregation(
     da: xr.DataArray,
     *,
@@ -158,19 +212,31 @@ def apply_temporal_aggregation(
     if da.sizes.get("time", 1) == 0:
         raise ValueError(f"No data found for datetime='{datetime_str}'.")
 
-    # Enforce the per-request timestep cap before loading data into memory.
-    max_ts = _eostrata_config.settings.max_aggregation_timesteps
-    if max_ts > 0 and "time" in da.dims and da.sizes["time"] > max_ts:
-        raise ValueError(
-            f"Requested time range spans {da.sizes['time']} timesteps, "
-            f"which exceeds the server limit of {max_ts}. "
-            "Narrow your datetime interval or use a single point in time."
-        )
-
     # Reduction
     if agg is None:
         # No aggregation — use last available timestep
         return da.isel(time=-1) if "time" in da.dims else da
+
+    max_ts = _eostrata_config.settings.max_aggregation_timesteps
+    if max_ts > 0 and "time" in da.dims and da.sizes["time"] > max_ts:
+        logger.info(
+            "Time range spans %d timesteps (limit %d) — using batched aggregation",
+            da.sizes["time"],
+            max_ts,
+        )
+        if agg == "anomaly":
+            if not baseline:
+                raise ValueError("'anomaly' aggregation requires a 'baseline' interval.")
+            b0, b1 = _parse_datetime_interval(baseline)
+            if b0:
+                b0 = _strip_tz(b0)
+            if b1:
+                b1 = _strip_tz(b1)
+            baseline_da = da.sel(time=slice(b0, b1))
+            if baseline_da.sizes.get("time", 0) == 0:
+                raise ValueError(f"No data found for baseline='{baseline}'.")
+            return _chunked_mean(da, max_ts) - _chunked_mean(baseline_da, max_ts)
+        return _chunked_aggregate(da, agg, max_ts)
 
     if agg == "mean":
         return da.mean("time")

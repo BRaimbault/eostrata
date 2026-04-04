@@ -84,10 +84,11 @@ class Settings(BaseSettings):
             raise ValueError("zarr_chunk_size must be between 64 and 4096")
         return v
 
-    # Maximum number of timesteps that may be loaded into memory for a single
-    # temporal aggregation (mean, sum, min, max, anomaly).  Requests that would
-    # load more timesteps receive a 400 error with a clear message.
-    # Set to 0 to allow unlimited timesteps (default, pre-existing behaviour).
+    # Batch size for temporal aggregation (mean, sum, min, max, anomaly).
+    # When a request spans more timesteps than this limit, the reduction is split
+    # into sequential batches whose partial results are combined into a correct
+    # final answer — so requests always succeed, just with more I/O passes.
+    # Set to 0 to process all timesteps in a single pass (default, lowest latency).
     #
     # Recommended values by available RAM:
     #   ≤ 512 MB → 12  (e.g. one calendar year of monthly data)

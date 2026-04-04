@@ -81,6 +81,8 @@ def _make_settings_mock(tmp_path: Path):
     s.catalog_path = tmp_path / "catalog.json"
     s.bbox = (2.0, 4.0, 15.0, 14.0)
     s.store_quota_mb = 0.0
+    s.zarr_chunk_size = 512
+    s.max_aggregation_timesteps = 0
     return s
 
 

@@ -2,21 +2,23 @@
 
 *One tool to fetch, store, aggregate, and serve earth observation layers.*
 
+**Live demo: [eostrata.onrender.com](https://eostrata.onrender.com/)**
+
 ---
 
 ## Features
 
 - **Multi-source ingestion**: fetches earth observation data through a unified `BaseSource` plugin interface. New sources register with a single decorator — the scheduler, catalogue, map UI, and store pick them up automatically.
 
-  | Source | Description | Resolution |
-  |---|---|---|
-  | `worldpop` | WorldPop population count rasters | Annual |
-  | `chirps` | CHIRPS precipitation | Monthly |
-  | `cds` | CDS / ERA5 climate reanalysis | Monthly |
-  | `cams` | CAMS EAC4 air quality reanalysis | Monthly |
-  | `tropomi` | Sentinel-5P TROPOMI air quality columns | Daily |
-  | `sentinel_ndvi` | CGLS Sentinel-3 NDVI 300m composites | Dekadal |
-  | _your source_ | _one `.py` file, one decorator_ | _any_ |
+  | Source id | Collection | Description | Resolution |
+  |---|---|---|---|
+  | `worldpop` | `worldpop` | WorldPop — Global population (1 km, annual) | Annual |
+  | `chirps` | `chirps` | CHIRPS — Precipitation (0.05°, monthly) | Monthly |
+  | `cds` | `era5` | ERA5 — Climate reanalysis (0.25°, monthly) | Monthly |
+  | `cams` | `cams` | CAMS EAC4 — Air quality reanalysis (0.75°, monthly) | Monthly |
+  | `tropomi` | `tropomi` | TROPOMI — S5P air quality columns (0.1°, daily) | Daily |
+  | `sentinel_ndvi` | `sentinel_ndvi` | Sentinel-3 NDVI — CGLS composites (300 m, dekadal) | Dekadal |
+  | _your source_ | _your id_ | _one `.py` file, one decorator_ | _any_ |
 
 - **Zarr collection store**: each ingested resource is stored as a CF-compliant (Climate and Forecast conventions - standard naming for dimensions, coordinates, units and fill values) Zarr collection with `x`, `y`, and `time` dimensions, locally or on cloud object storage. When the storage quota is reached, data is evicted before new downloads proceed.
 

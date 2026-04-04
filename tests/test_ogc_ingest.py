@@ -85,6 +85,15 @@ class TestInputValidation:
         resp = client.post("/processes/ingest/execution", json={"inputs": {}})
         assert resp.status_code == 422
 
+    def test_too_many_queued_returns_429(self, client):
+        from unittest.mock import MagicMock, patch
+
+        mock_settings = MagicMock()
+        mock_settings.ingest_max_queued = 0
+        with patch("eostrata.ogc.ingest.settings", mock_settings):
+            resp = client.post("/processes/ingest/execution", json={"inputs": {"source": "chirps"}})
+        assert resp.status_code == 429
+
     def test_invalid_source_returns_422(self, client):
         resp = client.post("/processes/ingest/execution", json={"inputs": {"source": "sentinel"}})
         assert resp.status_code == 422
@@ -1009,6 +1018,24 @@ class TestRebuildCatalogFromZarr:
             results = rebuild_catalog_from_zarr(zarr_root=zarr_root, catalog_path=catalog_path)
 
         assert results == {"sentinel_ndvi/global": 3}
+
+    def test_group_with_empty_times_is_skipped(self, tmp_path):
+        """A group whose zarr has zero timestamps produces dts=[] and is skipped (line 180)."""
+        from eostrata.ingestion import rebuild_catalog_from_zarr
+
+        zarr_root = tmp_path / "zarr"
+        zarr_root.mkdir()
+        catalog_path = tmp_path / "catalog.json"
+        empty_ds = _mock_zarr_ds(np.array([], dtype="datetime64[ns]"))
+
+        with (
+            patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 0.0, 0.0)]),
+            patch("xarray.open_zarr", return_value=empty_ds),
+            patch("eostrata.catalog.save"),
+        ):
+            results = rebuild_catalog_from_zarr(zarr_root=zarr_root, catalog_path=catalog_path)
+
+        assert results == {}
 
 
 # ── Sentinel NDVI OGC execution ───────────────────────────────────────────────

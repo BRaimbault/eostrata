@@ -40,7 +40,7 @@ class WorldPopSource(BaseSource):
 
     id = "worldpop"
     collection_id = "worldpop"
-    collection_title = "WorldPop population"
+    collection_title = "WorldPop — Global population (1 km, annual)"
     collection_description = "Global population rasters from WorldPop (worldpop.org)"
     zarr_prefix = "worldpop"
     temporal_resolution = "annual"
@@ -52,7 +52,7 @@ class WorldPopSource(BaseSource):
     @classmethod
     def catalog_meta(cls, dataset_name: str) -> dict:
         return {
-            "item_id": f"worldpop_{dataset_name}",
+            "item_id": dataset_name,
             "variable": cls.VARIABLE,
             "extra": {"eostrata:iso3": dataset_name.upper(), PROP_VARIABLE: cls.VARIABLE},
         }
@@ -99,7 +99,7 @@ class WorldPopSource(BaseSource):
 
     def stac_item_id(self, *, iso3: str, **_: Any) -> str:
         """One STAC item per country — datetime interval updated on each download."""
-        return f"worldpop_{iso3.lower()}"
+        return iso3.lower()
 
     def stac_properties(self, *, iso3: str, year: int, **_: Any) -> dict:
         return {

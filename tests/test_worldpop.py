@@ -45,8 +45,8 @@ class TestWorldPopSource:
         assert self.source.zarr_group(iso3="nga") == "worldpop/nga"
 
     def test_stac_item_id(self):
-        assert self.source.stac_item_id(iso3="NGA") == "worldpop_nga"
-        assert self.source.stac_item_id(iso3="nga") == "worldpop_nga"
+        assert self.source.stac_item_id(iso3="NGA") == "nga"
+        assert self.source.stac_item_id(iso3="nga") == "nga"
 
     def test_stac_properties(self):
         props = self.source.stac_properties(iso3="NGA", year=2020)

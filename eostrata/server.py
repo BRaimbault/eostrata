@@ -110,10 +110,7 @@ async def lifespan(app: FastAPI):
         set_scheduler(scheduler)
         scheduler.start()
     except ImportError:
-        logger.info(
-            "APScheduler or PyYAML not installed — scheduler disabled. "
-            "Run: uv add apscheduler pyyaml"
-        )
+        logger.info("APScheduler or PyYAML not installed — scheduler disabled.")
     except Exception as exc:  # noqa: BLE001
         logger.warning("Scheduler failed to start: %s", exc)
 
@@ -202,7 +199,8 @@ app = FastAPI(
         "One tool to fetch, store, aggregate, and serve earth observation layers.\n\n"
         "**Quick start**: call [/examples](/examples) to see what data is currently available "
         "and get copy-pasteable parameter values for every endpoint. "
-        "Open [/map](/map) to browse layers interactively in the browser."
+        "Open [/map](/map) to browse layers interactively in the browser. "
+        "Open [/scheduler](/scheduler) to manage automated scheduled ingestion jobs."
     ),
     version="0.1.0",
     docs_url="/docs",
@@ -337,7 +335,8 @@ def landing_page() -> dict:
             {"rel": "self", "href": "/", "type": "application/json"},
             {"rel": "conformance", "href": "/conformance", "type": "application/json"},
             {"rel": "data", "href": "/collections", "type": "application/json"},
-            {"rel": "search", "href": "/stac/search", "type": "application/json"},
+            {"rel": "stac", "href": "/stac", "type": "application/json"},
+            {"rel": "map", "href": "/map", "type": "text/html"},
             {"rel": "docs", "href": "/docs", "type": "text/html"},
             {"rel": "scheduler", "href": "/scheduler", "type": "text/html"},
         ],

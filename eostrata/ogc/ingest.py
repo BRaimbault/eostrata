@@ -45,7 +45,7 @@ from eostrata.sources.base import get_source  # noqa: E402
 INGEST_SOURCES = [
     {
         "id": cls.id,
-        "label": f"{cls.id} — {cls.collection_title}",
+        "label": cls.collection_title,
         "fields": cls.ui_fields,
         "variables": cls.VARIABLES if cls.VARIABLES else [cls.VARIABLE],
         "variable_descriptions": cls.VARIABLE_DESCRIPTIONS,

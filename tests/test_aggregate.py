@@ -78,6 +78,19 @@ class TestApplyTemporalAggregation:
         assert result.dims == ("y", "x")
         assert float(result.mean()) == pytest.approx(1.0)
 
+    def test_irrecoverably_non_monotonic_time_raises(self):
+        """sortby that still produces non-monotonic time should raise ValueError."""
+        from unittest.mock import patch
+
+        da = _make_da([2022, 2021, 2020])  # reversed = non-monotonic
+        # Patch sortby to return the same non-sorted DataArray so the second
+        # monotonicity check also fails, reaching the raise on line 110.
+        with (
+            patch.object(type(da), "sortby", return_value=da),
+            pytest.raises(ValueError, match="not monotonic"),
+        ):
+            apply_temporal_aggregation(da)
+
     def test_no_args_returns_last_timestep(self):
         da = _make_da([2020, 2021, 2022])
         result = apply_temporal_aggregation(da)

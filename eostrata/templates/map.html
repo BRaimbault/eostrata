@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8"/>
   <title>eostrata viewer</title>
@@ -23,7 +23,8 @@
     #controls {
       position: absolute; top: 10px; left: 10px; z-index: 1000;
       background: #fff; padding: 14px 16px; border-radius: 8px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.18); min-width: 290px; max-width: 310px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+      width: 300px; box-sizing: border-box; overflow: hidden;
     }
     #controls h3 {
       margin: 0; font-size: 14px; font-weight: 600; color: #111827;
@@ -321,16 +322,29 @@
       <label>Colormap</label>
       <select id="sel-colormap">
         <option value="">default</option>
-        <option value="viridis">viridis</option>
-        <option value="plasma">plasma</option>
-        <option value="inferno">inferno</option>
-        <option value="magma">magma</option>
-        <option value="coolwarm">coolwarm</option>
+        <optgroup label="Sequential">
+          <option value="viridis" selected>viridis</option>
+          <option value="plasma">plasma</option>
+          <option value="inferno">inferno</option>
+          <option value="magma">magma</option>
+          <option value="blues">blues</option>
+          <option value="greens">greens</option>
+          <option value="reds">reds</option>
+          <option value="ylorbr">ylorbr</option>
+          <option value="ylorrd">ylorrd</option>
+        </optgroup>
+        <optgroup label="Diverging">
+          <option value="coolwarm">coolwarm</option>
+          <option value="rdbu">rdbu</option>
+          <option value="rdylgn">rdylgn</option>
+          <option value="spectral">spectral</option>
+          <option value="bwr">bwr</option>
+        </optgroup>
       </select>
-      <label>Rescale (min,max)</label>
-      <input id="inp-rescale" type="text" placeholder="e.g. 0,1000"/>
+      <label>Value range (min,max)</label>
+      <input id="inp-rescale" type="text" placeholder="e.g. 0,1000 — blank = auto" disabled/>
       <label class="label-checkbox">
-        <input id="chk-autoscale" type="checkbox"/>
+        <input id="chk-autoscale" type="checkbox" checked/>
         Auto-scale from stats
       </label>
 
@@ -338,7 +352,7 @@
       <div id="status"></div>
       <div id="stats-section">
         <hr class="section-divider"/>
-        <h4>Zonal stats — bbox</h4>
+        <h4>Statistics — bbox</h4>
         <div id="stats-grid"></div>
         <div id="stats-msg"></div>
       </div>
@@ -518,10 +532,13 @@
       const tbody = document.getElementById('cfg-sources-tbody');
       SOURCES.forEach(function(s) {
         const descs = s.variable_descriptions || {};
-        const varHtml = (s.variables || []).map(function(v) {
-          const d = descs[v] ? v + ' — ' + descs[v] : v;
-          return '<div class="vars">' + d + '</div>';
-        }).join('');
+        const vars = s.variables || [];
+        const fullDescs = vars.map(function(v) {
+          return descs[v] ? v + ' — ' + descs[v] : v;
+        }).join(' · ');
+        const varHtml = vars.length
+          ? '<span class="vars" title="' + fullDescs + '">' + vars.join(', ') + '</span>'
+          : '';
         const tr = document.createElement('tr');
         tr.innerHTML =
           '<td>' + s.id + '</td>' +
@@ -735,9 +752,8 @@
       return (start || '') + '/' + (end || '');
     }
 
-    function updateLayer() {
+    function currentParams() {
       const collId = document.getElementById('sel-collection').value;
-      if (!collId) { setStatus(''); return; }
       const itemId = document.getElementById('sel-item').value;
       const dt = buildDatetimeParam();
       const aggVal = dateMode === 'interval' ? document.getElementById('sel-agg').value : null;
@@ -745,11 +761,12 @@
         ? (document.getElementById('inp-baseline-start').value || '') + '/' +
           (document.getElementById('inp-baseline-end').value || '')
         : null;
+      return { collId, itemId, dt, aggVal, baselineVal };
+    }
 
-      if (dataLayer) { map.removeLayer(dataLayer); dataLayer = null; }
-      dataLayer = L.tileLayer(buildTileUrl(collId, itemId, dt, aggVal, baselineVal), {
-        tileSize: 256, opacity: 0.8, errorTileUrl: ''
-      }).addTo(map);
+    function updateLayer() {
+      const { collId, itemId, dt, aggVal, baselineVal } = currentParams();
+      if (!collId) { setStatus(''); return; }
 
       let statusParts = [collId];
       if (itemId) statusParts.push(itemId);
@@ -757,8 +774,37 @@
       if (aggVal) statusParts.push('agg=' + aggVal);
       setStatus(statusParts.join(' / '));
 
+      // Skip stats re-fetch when data params (collection/item/date/agg) haven't changed
+      const statsMatch = lastStats &&
+        lastStats.collId === collId && lastStats.itemId === itemId &&
+        lastStats.dt === dt && lastStats.aggParam === aggVal &&
+        lastStats.baselineParam === (baselineVal || null);
+      if (statsMatch) {
+        // Stats are already correct — just rebuild the tile (rescale is already set).
+        if (dataLayer) { map.removeLayer(dataLayer); dataLayer = null; }
+        dataLayer = L.tileLayer(buildTileUrl(collId, itemId, dt, aggVal, baselineVal), {
+          tileSize: 256, opacity: 0.8, errorTileUrl: ''
+        }).addTo(map);
+        return;
+      }
+
+      // When auto-scale is on and the item has zonal-stats configured, defer adding the
+      // tile layer until stats arrive so the first render already has the correct rescale.
+      const autoscale = document.getElementById('chk-autoscale').checked;
+      const itemMeta = itemId && (catalog[collId] || []).find(i => i.item_id === itemId);
+      const deferForStats = autoscale && itemMeta?.zonalstats_body;
+
+      if (dataLayer) { map.removeLayer(dataLayer); dataLayer = null; }
+      if (!deferForStats) {
+        dataLayer = L.tileLayer(buildTileUrl(collId, itemId, dt, aggVal, baselineVal), {
+          tileSize: 256, opacity: 0.8, errorTileUrl: ''
+        }).addTo(map);
+      }
+      // else: tile will be added by applyAutoScale → refreshTile once stats resolve
+
       // Debounce stats fetch so rapid control changes don't spam the server
       lastStats = null;
+      _pendingTile = deferForStats ? { collId, itemId, dt, aggVal, baselineVal } : null;
       if (statsTimer) clearTimeout(statsTimer);
       if (itemId) {
         document.getElementById('stats-section').style.display = 'block';
@@ -771,7 +817,8 @@
     }
 
     let statsTimer = null;
-    let lastStats = null; // most recent successful stats payload
+    let lastStats = null;   // most recent successful stats payload
+    let _pendingTile = null; // deferred tile params when waiting for auto-scale stats
 
     function buildTileUrl(collId, itemId, dt, aggVal, baselineVal) {
       const cmap = document.getElementById('sel-colormap').value;
@@ -787,11 +834,21 @@
         + (params.length ? '?' + params.join('&') : '');
     }
 
+    function _renderPendingTile() {
+      // Render a deferred tile (auto-scale path) if one is waiting.
+      if (!_pendingTile) return;
+      const { collId, itemId, dt, aggVal, baselineVal } = _pendingTile;
+      _pendingTile = null;
+      refreshTile(collId, itemId, dt, aggVal, baselineVal);
+    }
+
     function refreshTile(collId, itemId, dt, aggVal, baselineVal) {
       // Rebuild the tile layer only — no stats re-fetch, no status update.
       if (dataLayer) { map.removeLayer(dataLayer); dataLayer = null; }
       dataLayer = L.tileLayer(buildTileUrl(collId, itemId, dt, aggVal, baselineVal), {
-        tileSize: 256, opacity: 0.8, errorTileUrl: ''
+        tileSize: 256,
+        opacity: 0.8,
+        errorTileUrl: ''
       }).addTo(map);
     }
 
@@ -837,17 +894,20 @@
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({}));
           statsMsg.textContent = 'Error: ' + (err.detail || resp.statusText);
+          _renderPendingTile();
           return;
         }
         const data = await resp.json();
         stats = data.features?.[0]?.statistics;
       } catch (e) {
         statsMsg.textContent = 'Request failed.';
+        _renderPendingTile();
         return;
       }
 
       if (!stats || stats.error) {
         statsMsg.textContent = stats?.error || 'No statistics returned.';
+        _renderPendingTile();
         return;
       }
 
@@ -884,13 +944,95 @@
     }
 
     function applyAutoScale(stats, collId, itemId, dt, aggParam, baselineParam) {
+      _pendingTile = null; // tile will be rendered by the refreshTile call below
       const range = _autoScaleRange(stats);
-      if (!range) return;
-      const [lo, hi] = range.map(v => parseFloat(v.toFixed(4)));
-      const inp = document.getElementById('inp-rescale');
-      inp.value = lo + ',' + hi;
-      inp.disabled = true;
+      if (range) {
+        const [lo, hi] = range.map(v => parseFloat(v.toFixed(4)));
+        const inp = document.getElementById('inp-rescale');
+        inp.value = lo + ',' + hi;
+        inp.disabled = true;
+      }
       refreshTile(collId, itemId, dt, aggParam, baselineParam);
+    }
+
+    // Event listeners are attached once; guarded so both loadCatalog() and
+    // refreshCatalog() can call _setupListeners() without duplicating handlers.
+    let _listenersSetUp = false;
+    function _setupListeners() {
+      if (_listenersSetUp) return;
+      _listenersSetUp = true;
+      const collSel = document.getElementById('sel-collection');
+      collSel.addEventListener('change', () => onCollectionChange());
+      document.getElementById('sel-item').addEventListener('change', () => onItemChange());
+      document.getElementById('sel-datetime').addEventListener('change', updateLayer);
+      document.getElementById('inp-start').addEventListener('change', updateLayer);
+      document.getElementById('inp-end').addEventListener('change', updateLayer);
+      document.getElementById('sel-agg').addEventListener('change', onAggChange);
+      document.getElementById('inp-baseline-start').addEventListener('change', updateLayer);
+      document.getElementById('inp-baseline-end').addEventListener('change', updateLayer);
+      document.getElementById('sel-colormap').addEventListener('change', () => {
+        const { collId, itemId, dt, aggVal, baselineVal } = currentParams();
+        if (collId) refreshTile(collId, itemId, dt, aggVal, baselineVal);
+      });
+      document.getElementById('inp-rescale').addEventListener('input', () => {
+        const chk = document.getElementById('chk-autoscale');
+        if (chk.checked) {
+          chk.checked = false;
+          document.getElementById('inp-rescale').disabled = false;
+        }
+      });
+      document.getElementById('inp-rescale').addEventListener('change', () => {
+        const { collId, itemId, dt, aggVal, baselineVal } = currentParams();
+        if (collId) refreshTile(collId, itemId, dt, aggVal, baselineVal);
+      });
+      document.getElementById('chk-autoscale').addEventListener('change', () => {
+        const chk = document.getElementById('chk-autoscale');
+        document.getElementById('inp-rescale').disabled = chk.checked;
+        if (chk.checked && lastStats) {
+          const { stats, collId, itemId, dt, aggParam, baselineParam } = lastStats;
+          applyAutoScale(stats, collId, itemId, dt, aggParam, baselineParam);
+        }
+      });
+    }
+
+    // Refresh catalog data in-place (preserves current map selection if still valid)
+    async function refreshCatalog() {
+      let data;
+      try {
+        const resp = await fetch('/examples');
+        data = await resp.json();
+      } catch (e) { return; }
+      if (!data.items || data.items.length === 0) return;
+
+      const collSel = document.getElementById('sel-collection');
+      const prevCollId = collSel.value;
+      const prevItemId = document.getElementById('sel-item').value;
+
+      // Rebuild catalog dict and collection dropdown from scratch
+      for (const k in catalog) delete catalog[k];
+      collSel.innerHTML = '';
+      for (const it of data.items) {
+        if (!catalog[it.collection_id]) {
+          catalog[it.collection_id] = [];
+          const opt = document.createElement('option');
+          opt.value = it.collection_id;
+          opt.textContent = it.collection_id;
+          collSel.appendChild(opt);
+        }
+        catalog[it.collection_id].push(it);
+      }
+
+      // Hide the "no data" warning if it was showing
+      document.getElementById('warning').style.display = 'none';
+      // Attach event listeners if this is the first time we have data
+      _setupListeners();
+      // Restore previous collection/item selection if still available
+      if (prevCollId && catalog[prevCollId]) {
+        collSel.value = prevCollId;
+        onCollectionChange(prevItemId);
+      } else {
+        onCollectionChange();
+      }
     }
 
     async function loadCatalog() {
@@ -923,32 +1065,7 @@
         }
         catalog[it.collection_id].push(it);
       }
-      collSel.addEventListener('change', () => onCollectionChange());
-      document.getElementById('sel-item').addEventListener('change', () => onItemChange());
-      document.getElementById('sel-datetime').addEventListener('change', updateLayer);
-      document.getElementById('inp-start').addEventListener('change', updateLayer);
-      document.getElementById('inp-end').addEventListener('change', updateLayer);
-      document.getElementById('sel-agg').addEventListener('change', onAggChange);
-      document.getElementById('inp-baseline-start').addEventListener('change', updateLayer);
-      document.getElementById('inp-baseline-end').addEventListener('change', updateLayer);
-      document.getElementById('sel-colormap').addEventListener('change', updateLayer);
-      document.getElementById('inp-rescale').addEventListener('input', () => {
-        // Editing the rescale field manually → untick auto-scale
-        const chk = document.getElementById('chk-autoscale');
-        if (chk.checked) {
-          chk.checked = false;
-          document.getElementById('inp-rescale').disabled = false;
-        }
-      });
-      document.getElementById('inp-rescale').addEventListener('change', updateLayer);
-      document.getElementById('chk-autoscale').addEventListener('change', () => {
-        const chk = document.getElementById('chk-autoscale');
-        document.getElementById('inp-rescale').disabled = chk.checked;
-        if (chk.checked && lastStats) {
-          const { stats, collId, itemId, dt, aggParam, baselineParam } = lastStats;
-          applyAutoScale(stats, collId, itemId, dt, aggParam, baselineParam);
-        }
-      });
+      _setupListeners();
 
       // Apply pre-selected values from query params
       if (PRESELECT.collection && catalog[PRESELECT.collection]) {
@@ -1102,6 +1219,7 @@
     // ── Jobs list ────────────────────────────────────────────────────────────
 
     let _jobPoller = null;
+    let _prevRunningIds = new Set(); // track running→done transitions
 
     function startJobPoller() {
       if (_jobPoller) return; // already polling
@@ -1121,6 +1239,16 @@
       } catch (e) { return; }
 
       const jobs = (data.jobs || []).slice().reverse(); // newest first
+
+      // Detect jobs that just transitioned running → successful
+      const prevRunning = _prevRunningIds;
+      _prevRunningIds = new Set(jobs.filter(j => j.status === 'running').map(j => j.jobID));
+      const anyJustSucceeded = jobs.some(j => j.status === 'successful' && prevRunning.has(j.jobID));
+      if (anyJustSucceeded) {
+        _quotaLoaded = false; // force quota tab to reload next open
+        refreshCatalog();
+      }
+
       const el   = document.getElementById('jobs-list');
       if (!jobs.length) {
         el.innerHTML = '<span style="font-size:12px;color:#9ca3af">No jobs yet.</span>';

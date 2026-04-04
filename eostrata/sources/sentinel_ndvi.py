@@ -138,7 +138,7 @@ class SentinelNDVISource(BaseSource):
 
     id = "sentinel_ndvi"
     collection_id = "sentinel_ndvi"
-    collection_title = "Sentinel NDVI (CGLS)"
+    collection_title = "Sentinel-3 NDVI — CGLS composites (300 m, dekadal)"
     collection_description = (
         "Sentinel-3 NDVI 300m dekadal composites from the Copernicus Global Land Service"
     )
@@ -151,7 +151,7 @@ class SentinelNDVISource(BaseSource):
     @classmethod
     def catalog_meta(cls, dataset_name: str) -> dict:
         return {
-            "item_id": "sentinel_ndvi_global",
+            "item_id": "global",
             "variable": cls.VARIABLE,
             "extra": {PROP_VARIABLE: cls.VARIABLE, PROP_SOURCE: "Sentinel-3 OLCI"},
         }
@@ -217,7 +217,7 @@ class SentinelNDVISource(BaseSource):
 
     def stac_item_id(self, **_: Any) -> str:
         """Single STAC item for the global Sentinel NDVI collection."""
-        return "sentinel_ndvi_global"
+        return "global"
 
     def stac_properties(self, *, year: int, month: int, dekad: int = 1, **_: Any) -> dict:
         start_day = _DEKAD_START_DAYS[dekad]

@@ -228,9 +228,11 @@ class CDSSource(BaseSource):
     """ERA5 monthly reanalysis from the Copernicus Climate Data Store."""
 
     id = "cds"
-    collection_id = "cds"
-    collection_title = "CDS / ERA5 climate reanalysis"
-    collection_description = "Climate reanalysis data from the Copernicus Climate Data Store"
+    collection_id = "era5"
+    collection_title = "ERA5 — Climate reanalysis (0.25°, monthly)"
+    collection_description = (
+        "Monthly climate reanalysis from the Copernicus Climate Data Store (ERA5)"
+    )
     zarr_prefix = "era5"
     temporal_resolution = "monthly"
     default_lag_days = 90  # ERA5 has ~3-month production lag
@@ -249,7 +251,7 @@ class CDSSource(BaseSource):
     def catalog_meta(cls, dataset_name: str) -> dict:
         # dataset_name IS the variable (e.g. "t2m" from "era5/t2m")
         return {
-            "item_id": f"era5_{dataset_name}",
+            "item_id": dataset_name,
             "variable": dataset_name,
             "extra": {PROP_VARIABLE: dataset_name},
         }
@@ -319,7 +321,7 @@ class CDSSource(BaseSource):
 
     def stac_item_id(self, *, variable: str = "t2m", **_: Any) -> str:
         """One STAC item per ERA5 variable."""
-        return f"era5_{variable}"
+        return variable
 
     def stac_properties(self, *, variable: str = "t2m", year: int, **_: Any) -> dict:
         cds_name = _VARIABLE_MAP.get(variable, variable)

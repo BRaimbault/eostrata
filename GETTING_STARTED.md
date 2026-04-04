@@ -2,6 +2,8 @@
 
 This guide walks through downloading earth observation data, storing it as Zarr, and serving it as map tiles, a STAC catalogue, and zonal statistics.
 
+**Live demo: [eostrata.onrender.com](https://eostrata.onrender.com/)**
+
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
@@ -41,7 +43,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ## Installation
 
 ```bash
-git clone https://github.com/your-org/eostrata.git
+git clone https://github.com/BRaimbault/eostrata.git
 cd eostrata
 uv sync
 ```
@@ -218,7 +220,7 @@ Each country gets its own Zarr group (`worldpop/nga`, `worldpop/ken`, …) and S
 |---|---|
 | Zarr group | `data/zarr/worldpop/<iso3_lower>/` |
 | Variable | `population` |
-| STAC item id | `worldpop_<iso3_lower>` |
+| STAC item id | `<iso3_lower>` |
 | Time resolution | annual (one timestep per year) |
 
 ---
@@ -253,7 +255,7 @@ uv run eostrata download chirps --years 2022,2023 --months 1,2,3,4,5,6,7,8,9,10,
 |---|---|
 | Zarr group | `data/zarr/chirps/global/` |
 | Variable | `precipitation` |
-| STAC item id | `chirps_global` |
+| STAC item id | `global` |
 | Time resolution | monthly (one timestep per month) |
 
 ---
@@ -265,8 +267,7 @@ Monthly-averaged ERA5 reanalysis from the [Copernicus Climate Data Store](https:
 **Setup required** — ERA5 needs a CDS account and API credentials before you can download:
 
 1. Register at [cds.climate.copernicus.eu](https://cds.climate.copernicus.eu)
-2. Install the optional dependency: `uv sync --extra cds`
-3. Create `~/.cdsapirc`:
+2. Create `~/.cdsapirc`:
 ```
 url: https://cds.climate.copernicus.eu/api
 key: <your-api-key>
@@ -320,7 +321,7 @@ uv run eostrata download cds --variable u10 --year 2023
 |---|---|
 | Zarr group | `data/zarr/era5/t2m/` |
 | Variable | `t2m` |
-| STAC item id | `era5_t2m` |
+| STAC item id | `t2m` |
 | Time resolution | monthly (one timestep per month) |
 
 ---
@@ -332,8 +333,7 @@ Monthly-averaged surface air quality from the [Copernicus Atmosphere Monitoring 
 **Setup required** — CAMS needs an ADS account and API credentials:
 
 1. Register at [ads.atmosphere.copernicus.eu](https://ads.atmosphere.copernicus.eu)
-2. Install the optional dependency: `uv sync --extra cds` (uses the same `cdsapi` library)
-3. Create `~/.adsapirc`:
+2. Create `~/.adsapirc`:
 ```
 url: https://ads.atmosphere.copernicus.eu/api
 key: <your-api-key>
@@ -358,7 +358,7 @@ uv run eostrata download cams --variable no2 --year 2023 --months 1,2,3
 |---|---|
 | Zarr group | `data/zarr/cams/pm2p5/` |
 | Variable | `pm2p5` |
-| STAC item id | `cams_pm2p5` |
+| STAC item id | `pm2p5` |
 | Time resolution | monthly (one timestep per month) |
 
 ---
@@ -401,7 +401,7 @@ uv run eostrata download tropomi --variable co --year 2024 --month 1 --days ALL
 |---|---|
 | Zarr group | `data/zarr/tropomi/no2/` |
 | Variable | `no2` |
-| STAC item id | `tropomi_no2` |
+| STAC item id | `no2` |
 | Time resolution | daily (one timestep per day) |
 
 ---
@@ -433,7 +433,7 @@ Dekad 1 = days 1–10, dekad 2 = days 11–20, dekad 3 = days 21–end of month.
 |---|---|
 | Zarr group | `data/zarr/sentinel_ndvi/global/` |
 | Variable | `ndvi` |
-| STAC item id | `sentinel_ndvi_global` |
+| STAC item id | `global` |
 | Time resolution | dekadal (three timesteps per month) |
 
 ---
@@ -547,15 +547,15 @@ Shows static configuration: bounding box, storage paths, and a reference table o
 You can also deep-link directly to a specific view with query parameters:
 
 ```
-http://127.0.0.1:8000/map?collection=worldpop&item=worldpop_nga&datetime=2020-01-01&rescale=0,1000&colormap_name=viridis
+http://127.0.0.1:8000/map?collection=worldpop&item=nga&datetime=2020-01-01&rescale=0,1000&colormap_name=viridis
 ```
 
 **Supported query parameters:**
 
 | Parameter | Description | Example |
 |---|---|---|
-| `collection` | Collection id to pre-select | `worldpop`, `chirps`, `cds` |
-| `item` | STAC item id within the collection | `worldpop_nga` |
+| `collection` | Collection id to pre-select | `worldpop`, `chirps`, `era5` |
+| `item` | STAC item id within the collection | `nga` |
 | `datetime` | ISO 8601 datetime or interval for time selection | `2021-01-01` or `2021-01-01/2022-12-31` |
 | `agg` | Temporal aggregation method applied over `datetime` interval | `mean`, `sum`, `min`, `max`, `anomaly` |
 | `baseline` | ISO 8601 interval for anomaly baseline (required when `agg=anomaly`) | `2015-01-01/2020-12-31` |
@@ -582,7 +582,7 @@ Each item represents one country. The `datetime` interval spans all ingested yea
 
 ```json
 {
-  "id": "worldpop_nga",
+  "id": "nga",
   "properties": {
     "start_datetime": "2020-01-01T00:00:00+00:00",
     "end_datetime": "2022-01-01T00:00:00+00:00",

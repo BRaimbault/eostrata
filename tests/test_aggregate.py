@@ -191,6 +191,13 @@ class TestApplyTemporalAggregation:
         result = apply_temporal_aggregation(da, datetime_str="2021-01-01/")
         assert float(result.mean()) == pytest.approx(2021.0)
 
+    def test_corrupt_time_axis_still_non_monotonic_after_sort_raises(self, monkeypatch):
+        """DataArray whose time axis stays non-monotonic after sortby raises ValueError."""
+        da = _make_da([2022, 2020, 2021])
+        monkeypatch.setattr(xr.DataArray, "sortby", lambda self, *a, **kw: self)
+        with pytest.raises(ValueError, match="corrupt"):
+            apply_temporal_aggregation(da, agg="mean")
+
     def test_duplicate_timestamps_deduplicated(self):
         """Duplicate timestamps are deduplicated before aggregation to avoid InvalidIndexError."""
         times = np.array(

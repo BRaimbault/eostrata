@@ -134,6 +134,24 @@ class TestInputValidation:
 # ── WorldPop execution ────────────────────────────────────────────────────────
 
 
+class TestQueueFull:
+    def test_returns_429_when_pending_jobs_at_limit(self, client):
+        """POST returns 429 when pending job count equals ingest_max_queued."""
+        from unittest.mock import MagicMock
+
+        # Create enough mock running jobs to fill the queue
+        from eostrata.config import settings
+
+        mock_jobs = [MagicMock(status="running") for _ in range(settings.ingest_max_queued)]
+        with patch("eostrata.ogc.ingest.jobs.list_jobs", return_value=mock_jobs):
+            resp = client.post(
+                "/processes/ingest/execution",
+                json={"inputs": {"source": "worldpop", "iso3": "NGA"}},
+            )
+        assert resp.status_code == 429
+        assert "Too many" in resp.json()["detail"]
+
+
 class TestWorldPopExecution:
     def test_returns_201_with_job_id(self, client, sync_executor):
         with patch("eostrata.ingestion.run_ingest", return_value=([], True)):
@@ -946,6 +964,26 @@ class TestRebuildCatalogFromZarr:
         with (
             patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 10.0, 0.0)]),
             patch("xarray.open_zarr", return_value=bad_ds),
+            patch("eostrata.catalog.save"),
+        ):
+            results = rebuild_catalog_from_zarr(zarr_root=zarr_root, catalog_path=catalog_path)
+
+        assert results == {}
+
+    def test_empty_times_group_skipped(self, tmp_path):
+        """Groups with an empty time array are skipped (line 179-180)."""
+        from eostrata.ingestion import rebuild_catalog_from_zarr
+
+        zarr_root = tmp_path / "zarr"
+        zarr_root.mkdir()
+        catalog_path = tmp_path / "catalog.json"
+
+        empty_ds = MagicMock()
+        empty_ds.time.values = np.array([])
+
+        with (
+            patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 10.0, 0.0)]),
+            patch("xarray.open_zarr", return_value=empty_ds),
             patch("eostrata.catalog.save"),
         ):
             results = rebuild_catalog_from_zarr(zarr_root=zarr_root, catalog_path=catalog_path)

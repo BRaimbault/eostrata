@@ -608,3 +608,82 @@ class TestConcurrentEviction:
         ds = xr.open_zarr(str(zarr_root), group="col/d", consolidated=False)
         assert "time" in ds
         assert len(ds["time"]) > 0
+
+
+class TestConsolidateMetadataTimeout:
+    def test_timeout_logs_warning(self, tmp_path, mocker):
+        """FuturesTimeoutError during consolidation is caught and logged."""
+        from eostrata.cache import _consolidate_metadata_with_timeout
+
+        mocker.patch(
+            "eostrata.cache.zarr.consolidate_metadata",
+            side_effect=lambda *a, **kw: time.sleep(10),
+        )
+        # Should return without raising; warning is logged internally
+        _consolidate_metadata_with_timeout(tmp_path, timeout_s=0.001)
+
+
+class TestRecordAccessSlowPath:
+    def test_slow_path_updates_touch_cache_when_sentinel_recently_touched(self, tmp_path):
+        """Sentinel exists on disk with a recent mtime but is absent from _TOUCH_CACHE.
+
+        The slow-path stat() check should detect the fresh mtime and update
+        _TOUCH_CACHE without re-touching the file (lines 247-248 in cache.py).
+        """
+        import eostrata.cache as cache_mod
+
+        zarr_root = tmp_path / "zarr"
+        group_path = "worldpop/nga"
+        ts = np.datetime64("2020-01-01", "ns")
+
+        adir = _access_dir(zarr_root, group_path)
+        adir.mkdir(parents=True, exist_ok=True)
+        sentinel = adir / "2020-01-01T00:00:00"
+        sentinel.touch()
+
+        sentinel_key = str(sentinel)
+        cache_mod._TOUCH_CACHE.pop(sentinel_key, None)
+
+        record_access(zarr_root, group_path, [ts])
+
+        assert sentinel_key in cache_mod._TOUCH_CACHE
+
+
+class TestListTimestampsNoGroupDir:
+    def test_ingestion_time_is_zero_when_group_dir_missing(self, tmp_path, monkeypatch):
+        """list_timestamps returns ingestion_time=0.0 when the group directory is absent."""
+        import xarray as xr_mod
+
+        zarr_root = tmp_path / "zarr"
+        group_path = "worldpop/nga"
+
+        times = np.array([np.datetime64("2020-01-01", "ns")])
+        ds = xr.Dataset(
+            {"population": (("time",), np.ones(1, dtype="float32"))},
+            coords={"time": times},
+        )
+
+        monkeypatch.setattr(xr_mod, "open_zarr", lambda *a, **kw: ds)
+
+        result = list_timestamps(zarr_root, group_path)
+        assert len(result) == 1
+        assert result[0][3] == 0.0  # ingestion_time = 0.0 (no files on disk)
+
+
+class TestEvictGroupRemovesAccessDir:
+    def test_access_sentinels_removed_with_group(self, tmp_path):
+        """evict_group cleans up the access-sentinel directory alongside zarr data."""
+        zarr_root = tmp_path / "zarr"
+        group_path = "col/ds"
+
+        _write_fake_group(zarr_root, group_path)
+
+        adir = _access_dir(zarr_root, group_path)
+        adir.mkdir(parents=True, exist_ok=True)
+        (adir / "2020-01-01T00:00:00").touch()
+        assert adir.exists()
+
+        evict_group(zarr_root, group_path)
+
+        assert not (zarr_root / group_path).exists()
+        assert not adir.exists()

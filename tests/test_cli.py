@@ -905,6 +905,32 @@ class TestList:
         assert result.exit_code == 0
         assert "UTC" in result.output  # date is shown as "YYYY-MM-DD HH:MM UTC"
 
+    def test_list_empty_access_dir_shows_never_read(self, tmp_path):
+        """An empty access-sentinel directory is handled gracefully (ValueError branch)."""
+        from eostrata.cache import _access_dir
+
+        zarr_root = tmp_path / "zarr"
+        ds = xr.Dataset({"v": (("y", "x"), np.ones((4, 4)))})
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w")
+
+        # Create the access dir but leave it empty so max() raises ValueError
+        adir = _access_dir(zarr_root, "worldpop/nga")
+        adir.mkdir(parents=True, exist_ok=True)
+        assert list(adir.iterdir()) == []
+
+        result = runner.invoke(
+            app,
+            [
+                "list",
+                "--zarr-root",
+                str(zarr_root),
+                "--catalog-path",
+                str(tmp_path / "catalog.json"),
+            ],
+        )
+        assert result.exit_code == 0
+        assert "never read" in result.output
+
     def test_list_no_quota(self, tmp_path):
         """When no quota is configured, list shows size without percentage."""
         zarr_root = tmp_path / "zarr"

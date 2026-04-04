@@ -25,6 +25,7 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pystac
@@ -40,6 +41,7 @@ from titiler.core.errors import DEFAULT_STATUS_CODES, add_exception_handlers
 from titiler.xarray.factory import TilerFactory
 
 from eostrata.aggregate import AggregatingReader
+from eostrata.cache import list_groups, list_timestamps, store_size_mb
 from eostrata.catalog import PystacClient, load_or_create
 from eostrata.config import settings
 from eostrata.constants import PROP_DATETIMES, PROP_VARIABLE, PROP_ZARR_GROUP
@@ -52,10 +54,21 @@ from eostrata.ogc.tiles import router as collection_tiles_router
 
 logger = logging.getLogger(__name__)
 
-# Pre-serialise INGEST_SOURCES once — it's built at import time and never
-# changes, so there's no point re-running json.dumps on every /map or
-# /scheduler request.
+# Pre-serialise static data once — built at import time, never changes.
 _INGEST_SOURCES_JSON: str = json.dumps(_INGEST_SOURCES)
+
+# config_data for the map viewer embeds settings values that are fixed for
+# the lifetime of the process — pre-compute once instead of per-request.
+_MAP_CONFIG_JSON: str = json.dumps(
+    {
+        "bbox": list(settings.bbox),
+        "quota_mb": settings.store_quota_mb,
+        "eviction_buffer_mb": settings.store_eviction_buffer_mb,
+        "zarr_root": str(settings.zarr_root),
+        "raw_dir": str(settings.raw_dir),
+        "catalog_path": str(settings.catalog_path),
+    }
+)
 
 # ── Lifespan: start / stop the background scheduler ───────────────────────────
 
@@ -481,10 +494,6 @@ def store_usage() -> dict:
     ``last_accessed`` is an ISO 8601 timestamp, or ``null`` if the group has
     never been read via the tile or zonal-stats endpoints.
     """
-    from datetime import UTC, datetime
-
-    from eostrata.cache import list_groups, list_timestamps, store_size_mb
-
     used_mb = store_size_mb(settings.zarr_root)
     quota_mb = settings.store_quota_mb
     groups = []
@@ -517,6 +526,15 @@ def store_usage() -> dict:
 
 _MAP_HTML = (Path(__file__).parent / "templates" / "map.html").read_text()
 _SCHEDULER_HTML = (Path(__file__).parent / "templates" / "scheduler.html").read_text()
+
+# Pre-apply the static substitutions (__CONFIG__ and __SOURCES__) so that
+# map_viewer() only needs one .replace() per request for __PRESELECT__.
+_MAP_HTML_STATIC = (
+    _MAP_HTML.replace("__CONFIG__", _MAP_CONFIG_JSON).replace(
+        "__SOURCES__", _INGEST_SOURCES_JSON
+    )
+)
+_SCHEDULER_HTML_STATIC = _SCHEDULER_HTML.replace("__SOURCES__", _INGEST_SOURCES_JSON)
 
 
 @app.get(
@@ -554,21 +572,7 @@ def map_viewer(
             "rescale": rescale or "",
         }
     )
-    config_data = json.dumps(
-        {
-            "bbox": list(settings.bbox),
-            "quota_mb": settings.store_quota_mb,
-            "eviction_buffer_mb": settings.store_eviction_buffer_mb,
-            "zarr_root": str(settings.zarr_root),
-            "raw_dir": str(settings.raw_dir),
-            "catalog_path": str(settings.catalog_path),
-        }
-    )
-    html = (
-        _MAP_HTML.replace("__PRESELECT__", preselect)
-        .replace("__CONFIG__", config_data)
-        .replace("__SOURCES__", _INGEST_SOURCES_JSON)
-    )
+    html = _MAP_HTML_STATIC.replace("__PRESELECT__", preselect)
     return HTMLResponse(content=html)
 
 
@@ -590,8 +594,7 @@ def scheduler_ui() -> HTMLResponse:
     to add, edit, enable/disable, delete, and manually trigger jobs.
     Jobs are persisted to ``schedules.yml`` so they survive restarts.
     """
-    html = _SCHEDULER_HTML.replace("__SOURCES__", _INGEST_SOURCES_JSON)
-    return HTMLResponse(content=html)
+    return HTMLResponse(content=_SCHEDULER_HTML_STATIC)
 
 
 # ── Dynamic OpenAPI schema — inject real catalog examples ─────────────────────

@@ -81,6 +81,7 @@ import xarray as xr
 import zarr
 from filelock import FileLock
 
+import eostrata.config as _eostrata_config
 from eostrata.config import settings as _settings
 
 logger = logging.getLogger(__name__)
@@ -227,7 +228,7 @@ def record_access(zarr_root: Path, group_path: str, timestamps: list) -> None:
     timestamps:
         List of numpy datetime64 values that were touched by the request.
     """
-    if not _settings.track_access:
+    if not _eostrata_config.settings.track_access:
         return
 
     try:
@@ -673,6 +674,7 @@ def check_and_evict(
         all_timestamps.sort(key=lambda t: _eviction_sort_key(t[1], t[3], t[4]))
 
         for group_path, ts_iso, ts_size_mb, last_access, ingestion_time in all_timestamps:
+            current_mb = store_size_mb(zarr_root)
             if current_mb <= target_mb:
                 break
             if last_access:
@@ -690,8 +692,7 @@ def check_and_evict(
                 ts_size_mb,
                 age_desc,
             )
-            freed = evict_timestamp(zarr_root, group_path, ts_iso, catalog_path=catalog_path)
-            current_mb -= freed
+            evict_timestamp(zarr_root, group_path, ts_iso, catalog_path=catalog_path)
 
         # Re-measure after all evictions (cache was invalidated by evict_timestamp)
         remaining = store_size_mb(zarr_root)

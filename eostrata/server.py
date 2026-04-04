@@ -41,7 +41,7 @@ from titiler.core.errors import DEFAULT_STATUS_CODES, add_exception_handlers
 from titiler.xarray.factory import TilerFactory
 
 from eostrata.aggregate import AggregatingReader
-from eostrata.cache import list_groups, list_timestamps, store_size_mb
+from eostrata import cache as _cache
 from eostrata.catalog import PystacClient, load_or_create
 from eostrata.config import settings
 from eostrata.constants import PROP_DATETIMES, PROP_VARIABLE, PROP_ZARR_GROUP
@@ -494,11 +494,11 @@ def store_usage() -> dict:
     ``last_accessed`` is an ISO 8601 timestamp, or ``null`` if the group has
     never been read via the tile or zonal-stats endpoints.
     """
-    used_mb = store_size_mb(settings.zarr_root)
+    used_mb = _cache.store_size_mb(settings.zarr_root)
     quota_mb = settings.store_quota_mb
     groups = []
-    for g_path, g_size_mb, _ in list_groups(settings.zarr_root):
-        ts_details = list_timestamps(settings.zarr_root, g_path)
+    for g_path, g_size_mb, _ in _cache.list_groups(settings.zarr_root):
+        ts_details = _cache.list_timestamps(settings.zarr_root, g_path)
         if not ts_details:
             continue  # skip empty/evicted groups with no time dimension
         timestamps = [

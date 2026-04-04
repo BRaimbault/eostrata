@@ -509,6 +509,12 @@ scheduler = [
     { name = "pyyaml" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-cov" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "apscheduler", marker = "extra == 'scheduler'", specifier = ">=3.11" },
@@ -544,6 +550,12 @@ requires-dist = [
     { name = "zarr", specifier = ">=3.1" },
 ]
 provides-extras = ["scheduler", "cds", "dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-cov", specifier = ">=7.1.0" },
+]
 
 [[package]]
 name = "fastapi"

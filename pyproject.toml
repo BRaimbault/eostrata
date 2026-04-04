@@ -104,3 +104,9 @@ omit = ["tests/*", "eostrata/sources/_template.py"]
 show_missing = true
 skip_covered = false
 
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-cov>=7.1.0",
+]
+

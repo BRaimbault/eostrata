@@ -169,9 +169,13 @@ def _load_array(
     agg: str | None = None,
     baseline: str | None = None,
 ) -> xr.DataArray:
-    """Open the Zarr group and return the requested variable as a 2D DataArray.
+    """Open the Zarr group and return the requested variable as a loaded 2D DataArray.
 
     Applies temporal aggregation when the array has a ``time`` dimension.
+    The DataArray is fully materialised into memory before returning so that
+    callers (e.g. the zonal-stats feature loop) can clip it N times without
+    triggering N separate zarr reads.  The underlying dataset is closed before
+    this function returns to avoid open file-handle accumulation under load.
     """
     from pathlib import Path
 
@@ -180,40 +184,47 @@ def _load_array(
 
     store_path = url or str(settings.zarr_root)
     ds = xr.open_zarr(store_path, group=group, consolidated=True)
-    if variable not in ds:
-        available = [v for v in ds.data_vars if v != "crs"]
-        raise HTTPException(
-            status_code=422,
-            detail=f"Variable '{variable}' not found. Available: {available}",
-        )
-    da = ds[variable]
-
-    # Normalise ERA5 time coordinate: valid_time → time
-    if "valid_time" in da.coords and "time" not in da.dims:
-        da = da.assign_coords(time=da["valid_time"]).swap_dims({"valid_time": "time"})
-
-    # Record per-timestamp access BEFORE apply_temporal_aggregation collapses the time dim.
-    accessed = resolve_accessed_times(da, datetime, agg, baseline)
-    if accessed:
-        record_access(Path(store_path), group, accessed)
-
-    if "time" in da.dims:
-        try:
-            da = apply_temporal_aggregation(
-                da,
-                datetime_str=datetime,
-                agg=agg,
-                baseline=baseline,
+    try:
+        if variable not in ds:
+            available = [v for v in ds.data_vars if v != "crs"]
+            raise HTTPException(
+                status_code=422,
+                detail=f"Variable '{variable}' not found. Available: {available}",
             )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        da = ds[variable]
 
-    da = da.squeeze()
-    # Write CRS from the dataset's crs variable if present
-    if "crs" in ds and "crs_wkt" in ds["crs"].attrs:
-        da = da.rio.write_crs(ds["crs"].attrs["crs_wkt"])
-    else:
-        da = da.rio.write_crs("EPSG:4326")
+        # Normalise ERA5 time coordinate: valid_time → time
+        if "valid_time" in da.coords and "time" not in da.dims:
+            da = da.assign_coords(time=da["valid_time"]).swap_dims({"valid_time": "time"})
+
+        # Record per-timestamp access BEFORE apply_temporal_aggregation collapses the time dim.
+        accessed = resolve_accessed_times(da, datetime, agg, baseline)
+        if accessed:
+            record_access(Path(store_path), group, accessed)
+
+        if "time" in da.dims:
+            try:
+                da = apply_temporal_aggregation(
+                    da,
+                    datetime_str=datetime,
+                    agg=agg,
+                    baseline=baseline,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        da = da.squeeze()
+        # Write CRS from the dataset's crs variable if present
+        if "crs" in ds and "crs_wkt" in ds["crs"].attrs:
+            da = da.rio.write_crs(ds["crs"].attrs["crs_wkt"])
+        else:
+            da = da.rio.write_crs("EPSG:4326")
+
+        # Materialise into memory so the zarr store can be released and callers
+        # can clip the same in-memory array N times (once per input polygon).
+        da = da.load()
+    finally:
+        ds.close()
     return da
 
 

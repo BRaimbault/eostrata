@@ -768,13 +768,6 @@
       const { collId, itemId, dt, aggVal, baselineVal } = currentParams();
       if (!collId) { setStatus(''); return; }
 
-      if (dataLayer) { map.removeLayer(dataLayer); dataLayer = null; }
-      dataLayer = L.tileLayer(buildTileUrl(collId, itemId, dt, aggVal, baselineVal), {
-        tileSize: 256,
-        opacity: 0.8,
-        errorTileUrl: ''
-      }).addTo(map);
-
       let statusParts = [collId];
       if (itemId) statusParts.push(itemId);
       if (dt) statusParts.push(dt.length > 10 ? dt : dt.slice(0, 10));
@@ -786,10 +779,32 @@
         lastStats.collId === collId && lastStats.itemId === itemId &&
         lastStats.dt === dt && lastStats.aggParam === aggVal &&
         lastStats.baselineParam === (baselineVal || null);
-      if (statsMatch) return;
+      if (statsMatch) {
+        // Stats are already correct — just rebuild the tile (rescale is already set).
+        if (dataLayer) { map.removeLayer(dataLayer); dataLayer = null; }
+        dataLayer = L.tileLayer(buildTileUrl(collId, itemId, dt, aggVal, baselineVal), {
+          tileSize: 256, opacity: 0.8, errorTileUrl: ''
+        }).addTo(map);
+        return;
+      }
+
+      // When auto-scale is on and the item has zonal-stats configured, defer adding the
+      // tile layer until stats arrive so the first render already has the correct rescale.
+      const autoscale = document.getElementById('chk-autoscale').checked;
+      const itemMeta = itemId && (catalog[collId] || []).find(i => i.item_id === itemId);
+      const deferForStats = autoscale && itemMeta?.zonalstats_body;
+
+      if (dataLayer) { map.removeLayer(dataLayer); dataLayer = null; }
+      if (!deferForStats) {
+        dataLayer = L.tileLayer(buildTileUrl(collId, itemId, dt, aggVal, baselineVal), {
+          tileSize: 256, opacity: 0.8, errorTileUrl: ''
+        }).addTo(map);
+      }
+      // else: tile will be added by applyAutoScale → refreshTile once stats resolve
 
       // Debounce stats fetch so rapid control changes don't spam the server
       lastStats = null;
+      _pendingTile = deferForStats ? { collId, itemId, dt, aggVal, baselineVal } : null;
       if (statsTimer) clearTimeout(statsTimer);
       if (itemId) {
         document.getElementById('stats-section').style.display = 'block';
@@ -802,7 +817,8 @@
     }
 
     let statsTimer = null;
-    let lastStats = null; // most recent successful stats payload
+    let lastStats = null;   // most recent successful stats payload
+    let _pendingTile = null; // deferred tile params when waiting for auto-scale stats
 
     function buildTileUrl(collId, itemId, dt, aggVal, baselineVal) {
       const cmap = document.getElementById('sel-colormap').value;
@@ -816,6 +832,14 @@
       if (rescale) params.push('rescale=' + encodeURIComponent(rescale));
       return '/collections/' + collId + '/tiles/WebMercatorQuad/{z}/{x}/{y}'
         + (params.length ? '?' + params.join('&') : '');
+    }
+
+    function _renderPendingTile() {
+      // Render a deferred tile (auto-scale path) if one is waiting.
+      if (!_pendingTile) return;
+      const { collId, itemId, dt, aggVal, baselineVal } = _pendingTile;
+      _pendingTile = null;
+      refreshTile(collId, itemId, dt, aggVal, baselineVal);
     }
 
     function refreshTile(collId, itemId, dt, aggVal, baselineVal) {
@@ -870,17 +894,20 @@
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({}));
           statsMsg.textContent = 'Error: ' + (err.detail || resp.statusText);
+          _renderPendingTile();
           return;
         }
         const data = await resp.json();
         stats = data.features?.[0]?.statistics;
       } catch (e) {
         statsMsg.textContent = 'Request failed.';
+        _renderPendingTile();
         return;
       }
 
       if (!stats || stats.error) {
         statsMsg.textContent = stats?.error || 'No statistics returned.';
+        _renderPendingTile();
         return;
       }
 
@@ -917,12 +944,14 @@
     }
 
     function applyAutoScale(stats, collId, itemId, dt, aggParam, baselineParam) {
+      _pendingTile = null; // tile will be rendered by the refreshTile call below
       const range = _autoScaleRange(stats);
-      if (!range) return;
-      const [lo, hi] = range.map(v => parseFloat(v.toFixed(4)));
-      const inp = document.getElementById('inp-rescale');
-      inp.value = lo + ',' + hi;
-      inp.disabled = true;
+      if (range) {
+        const [lo, hi] = range.map(v => parseFloat(v.toFixed(4)));
+        const inp = document.getElementById('inp-rescale');
+        inp.value = lo + ',' + hi;
+        inp.disabled = true;
+      }
       refreshTile(collId, itemId, dt, aggParam, baselineParam);
     }
 

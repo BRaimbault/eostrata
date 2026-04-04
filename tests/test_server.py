@@ -130,10 +130,12 @@ class TestLifespanStorageCheck:
 
         from eostrata.server import app
 
-        with patch("os.access", return_value=False):
-            with pytest.raises(RuntimeError, match="not writable"):
-                with TestClient(app):
-                    pass
+        with (
+            patch("os.access", return_value=False),
+            pytest.raises(RuntimeError, match="not writable"),
+            TestClient(app),
+        ):
+            pass
 
 
 class TestMapViewer:

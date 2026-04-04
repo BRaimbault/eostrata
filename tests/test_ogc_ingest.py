@@ -91,9 +91,7 @@ class TestInputValidation:
         mock_settings = MagicMock()
         mock_settings.ingest_max_queued = 0
         with patch("eostrata.ogc.ingest.settings", mock_settings):
-            resp = client.post(
-                "/processes/ingest/execution", json={"inputs": {"source": "chirps"}}
-            )
+            resp = client.post("/processes/ingest/execution", json={"inputs": {"source": "chirps"}})
         assert resp.status_code == 429
 
     def test_invalid_source_returns_422(self, client):

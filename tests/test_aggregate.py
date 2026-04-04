@@ -83,9 +83,11 @@ class TestApplyTemporalAggregation:
         da = _make_da([2022, 2021, 2020])  # reversed = non-monotonic
         # Patch sortby to return the same non-sorted DataArray so the second
         # monotonicity check also fails, reaching the raise on line 110.
-        with patch.object(type(da), "sortby", return_value=da):
-            with pytest.raises(ValueError, match="not monotonic"):
-                apply_temporal_aggregation(da)
+        with (
+            patch.object(type(da), "sortby", return_value=da),
+            pytest.raises(ValueError, match="not monotonic"),
+        ):
+            apply_temporal_aggregation(da)
 
     def test_no_args_returns_last_timestep(self):
         da = _make_da([2020, 2021, 2022])

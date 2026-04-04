@@ -302,9 +302,10 @@ def _write_daily_grid(
     variable_name: str,
 ) -> Any:  # xr.Dataset
     """Write a 2-D daily grid to the Zarr store (append or create)."""
+    import eostrata.config as _eostrata_config
     import xarray as xr
 
-    cy, cx = 512, 512
+    cy = cx = _eostrata_config.settings.zarr_chunk_size
 
     coords = {
         "time": np.array([time_coord], dtype="datetime64[ns]"),

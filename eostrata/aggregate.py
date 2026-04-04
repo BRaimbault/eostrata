@@ -17,6 +17,7 @@ from rio_tiler.io.xarray import XarrayReader as _XarrayReader
 from titiler.xarray.io import Reader
 from titiler.xarray.io import get_variable as _base_get_variable
 
+import eostrata.config as _eostrata_config
 from eostrata.cache import record_access
 
 logger = logging.getLogger(__name__)
@@ -156,6 +157,15 @@ def apply_temporal_aggregation(
 
     if da.sizes.get("time", 1) == 0:
         raise ValueError(f"No data found for datetime='{datetime_str}'.")
+
+    # Enforce the per-request timestep cap before loading data into memory.
+    max_ts = _eostrata_config.settings.max_aggregation_timesteps
+    if max_ts > 0 and "time" in da.dims and da.sizes["time"] > max_ts:
+        raise ValueError(
+            f"Requested time range spans {da.sizes['time']} timesteps, "
+            f"which exceeds the server limit of {max_ts}. "
+            "Narrow your datetime interval or use a single point in time."
+        )
 
     # Reduction
     if agg is None:

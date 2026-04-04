@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -61,6 +61,46 @@ class Settings(BaseSettings):
     # Whether to update per-timestamp access sentinels on tile/zonal-stats requests.
     # When False, last_access reflects the ingestion time only.
     track_access: bool = True
+
+    # ── Memory tuning ─────────────────────────────────────────────────────────
+    # Spatial chunk tile size for Zarr writes (applied to both x and y dimensions).
+    # Each in-memory tile during reads or writes is chunk_size² × 4 bytes (float32).
+    # Halving this value quarters the per-operation memory footprint at the cost of
+    # more I/O operations.
+    #
+    # Recommended values by available RAM:
+    #   ≤ 512 MB  → 128 or 256
+    #     1–2 GB  → 256 or 512  (default)
+    #       ≥ 4GB → 512 or 1024
+    #
+    # NOTE: changing this only affects newly written Zarr groups; existing groups
+    # retain their original chunk layout.
+    zarr_chunk_size: int = 512
+
+    @field_validator("zarr_chunk_size")
+    @classmethod
+    def validate_zarr_chunk_size(cls, v: int) -> int:
+        if v < 64 or v > 4096:
+            raise ValueError("zarr_chunk_size must be between 64 and 4096")
+        return v
+
+    # Maximum number of timesteps that may be loaded into memory for a single
+    # temporal aggregation (mean, sum, min, max, anomaly).  Requests that would
+    # load more timesteps receive a 400 error with a clear message.
+    # Set to 0 to allow unlimited timesteps (default, pre-existing behaviour).
+    #
+    # Recommended values by available RAM:
+    #   ≤ 512 MB → 12  (e.g. one calendar year of monthly data)
+    #     1–2 GB → 60  (five years of monthly data)
+    #      ≥ 4GB → 0   (unlimited)
+    max_aggregation_timesteps: int = 0
+
+    @field_validator("max_aggregation_timesteps")
+    @classmethod
+    def validate_max_aggregation_timesteps(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("max_aggregation_timesteps must be 0 (unlimited) or a positive integer")
+        return v
 
     # ── Ingestion ─────────────────────────────────────────────────────────────
     # Maximum number of concurrent ingestion jobs.  Increase for deployments

@@ -16,6 +16,7 @@ from shapely.geometry import box
 # _group_lock is defined in cache.py (single source of truth for the lock path).
 # Imported here so tropomi.py and cds.py can also import it from store.py without
 # creating a circular dependency (cache → store would be circular; store → cache is fine).
+import eostrata.config as _eostrata_config
 from eostrata.cache import _group_lock  # noqa: F401 — re-exported
 
 logger = logging.getLogger(__name__)
@@ -60,7 +61,8 @@ def geotiff_to_zarr(
     xr.Dataset
         The dataset that was written.
     """
-    chunk_sizes = chunks or {"y": 512, "x": 512}
+    default_tile = _eostrata_config.settings.zarr_chunk_size
+    chunk_sizes = chunks or {"y": default_tile, "x": default_tile}
     zarr_root = Path(zarr_root)
     zarr_root.mkdir(parents=True, exist_ok=True)
 

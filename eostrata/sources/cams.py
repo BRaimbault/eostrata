@@ -188,7 +188,9 @@ def _cams_netcdf_to_zarr(
     store_path = str(zarr_root_path)
     group_exists = (zarr_root_path / zarr_group).exists()
 
-    cy, cx = 512, 512
+    import eostrata.config as _eostrata_config
+
+    cy = cx = _eostrata_config.settings.zarr_chunk_size
     encoding: dict = {
         short: {
             "chunks": (1, cy, cx),

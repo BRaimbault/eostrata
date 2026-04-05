@@ -70,3 +70,28 @@ class TestSetupLogging:
         log_path = tmp_path / "nested" / "deep" / "eostrata.log"
         _run_setup_logging(log_file=str(log_path), rich_console=False)
         assert log_path.parent.exists()
+
+
+class TestSuppressPollingFilter:
+    def test_allows_non_polling_requests(self):
+        from eostrata.log import _SuppressPollingFilter
+
+        f = _SuppressPollingFilter()
+        record = __import__("logging").makeLogRecord(
+            {"msg": 'GET /collections/worldpop HTTP/1.1" 200'}
+        )
+        assert f.filter(record) is True
+
+    def test_suppresses_jobs_endpoint(self):
+        from eostrata.log import _SuppressPollingFilter
+
+        f = _SuppressPollingFilter()
+        record = __import__("logging").makeLogRecord({"msg": 'GET /processes/jobs HTTP/1.1" 200'})
+        assert f.filter(record) is False
+
+    def test_suppresses_store_usage_endpoint(self):
+        from eostrata.log import _SuppressPollingFilter
+
+        f = _SuppressPollingFilter()
+        record = __import__("logging").makeLogRecord({"msg": 'GET /store-usage HTTP/1.1" 200'})
+        assert f.filter(record) is False

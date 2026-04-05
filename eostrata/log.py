@@ -14,6 +14,23 @@ import logging
 import logging.handlers
 from pathlib import Path
 
+# Endpoints polled on a tight loop by the browser (job status, store usage).
+# Suppress their access-log entries to avoid filling logs with noise.
+_POLLING_PATHS = frozenset(
+    [
+        "/processes/jobs",
+        "/store-usage",
+    ]
+)
+
+
+class _SuppressPollingFilter(logging.Filter):
+    """Drop uvicorn access-log records for high-frequency polling endpoints."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not any(path in msg for path in _POLLING_PATHS)
+
 
 def setup_logging(
     verbose: bool = False,
@@ -84,3 +101,7 @@ def setup_logging(
             logging.getLogger(uvicorn_logger_name).addHandler(file_handler)
 
         logging.getLogger(__name__).debug("File logging enabled: %s", log_path)
+
+    # Suppress high-frequency polling requests from the access log regardless
+    # of whether file logging is enabled (applies to the console too).
+    logging.getLogger("uvicorn.access").addFilter(_SuppressPollingFilter())

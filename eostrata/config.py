@@ -105,6 +105,20 @@ class Settings(BaseSettings):
             )
         return v
 
+    # Maximum number of concurrent temporal aggregations (tile renders + zonalstats)
+    # that may run at the same time.  Each aggregation loads one or more full spatial
+    # slices into memory; on memory-constrained instances (≤ 512 MB) set this to 1
+    # so that operations are serialised and never overlap.
+    # 0 means unlimited (rely on the OS / worker count).
+    max_concurrent_aggregations: int = 1
+
+    @field_validator("max_concurrent_aggregations")
+    @classmethod
+    def validate_max_concurrent_aggregations(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("max_concurrent_aggregations must be 0 (unlimited) or a positive integer")
+        return v
+
     # ── Ingestion ─────────────────────────────────────────────────────────────
     # Maximum number of concurrent ingestion jobs.  Increase for deployments
     # that serve many users submitting ingest requests simultaneously.

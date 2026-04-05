@@ -71,6 +71,7 @@ _MAP_CONFIG_JSON: str = json.dumps(
         "log_file": str(settings.log_file),
         "zarr_chunk_size": settings.zarr_chunk_size,
         "max_aggregation_timesteps": settings.max_aggregation_timesteps,
+        "max_concurrent_aggregations": settings.max_concurrent_aggregations,
         "ingest_max_workers": settings.ingest_max_workers,
         "ingest_max_queued": settings.ingest_max_queued,
         "cors_origins": settings.cors_origins,

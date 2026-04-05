@@ -12,6 +12,8 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Literal
 
+import threading
+
 import numpy as np
 import xarray as xr
 from rio_tiler.io.xarray import XarrayReader as _XarrayReader
@@ -20,6 +22,24 @@ from titiler.xarray.io import get_variable as _base_get_variable
 
 import eostrata.config as _eostrata_config
 from eostrata.cache import record_access
+
+# Semaphore that caps concurrent heavy aggregation operations.
+# Initialised lazily from settings so tests can override max_concurrent_aggregations.
+_agg_semaphore: threading.Semaphore | None = None
+_agg_semaphore_lock = threading.Lock()
+
+
+def _get_agg_semaphore() -> threading.Semaphore | None:
+    """Return the global aggregation semaphore, creating it on first call."""
+    global _agg_semaphore
+    limit = _eostrata_config.settings.max_concurrent_aggregations
+    if limit <= 0:
+        return None
+    if _agg_semaphore is None or _agg_semaphore._value != limit:  # type: ignore[attr-defined]
+        with _agg_semaphore_lock:
+            if _agg_semaphore is None or _agg_semaphore._value != limit:  # type: ignore[attr-defined]
+                _agg_semaphore = threading.Semaphore(limit)
+    return _agg_semaphore
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +57,16 @@ AggMethod = Literal["mean", "sum", "min", "max", "anomaly"]
 _CTX_AGG_DATETIME: ContextVar[str | None] = ContextVar("agg_datetime", default=None)
 _CTX_AGG_METHOD: ContextVar[str | None] = ContextVar("agg_method", default=None)
 _CTX_AGG_BASELINE: ContextVar[str | None] = ContextVar("agg_baseline", default=None)
+
+
+class _nullctx:
+    """No-op context manager used when max_concurrent_aggregations=0 (unlimited)."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        pass
 
 
 def _strip_tz(dt: str) -> str:
@@ -211,40 +241,45 @@ def apply_temporal_aggregation(
         # No aggregation — use last available timestep
         return da.isel(time=-1) if "time" in da.dims else da
 
+    n_ts = da.sizes.get("time", 1)
     max_ts = _eostrata_config.settings.max_aggregation_timesteps
-    use_batched = max_ts > 0 and "time" in da.dims and da.sizes["time"] > max_ts
+    use_batched = max_ts > 0 and "time" in da.dims and n_ts > max_ts
     if use_batched:
         logger.info(
             "Time range spans %d timesteps (limit %d) — using batched aggregation",
-            da.sizes["time"],
+            n_ts,
             max_ts,
         )
-
-    if agg == "mean":
-        return _chunked_mean(da, max_ts) if use_batched else da.mean("time")
-    elif agg == "sum":
-        return _chunked_aggregate(da, "sum", max_ts) if use_batched else da.sum("time")
-    elif agg == "min":
-        return _chunked_aggregate(da, "min", max_ts) if use_batched else da.min("time")
-    elif agg == "max":
-        return _chunked_aggregate(da, "max", max_ts) if use_batched else da.max("time")
-    elif agg == "anomaly":
-        if not baseline:
-            raise ValueError("'anomaly' aggregation requires a 'baseline' interval.")
-        b0, b1 = _parse_datetime_interval(baseline)
-        if b0:
-            b0 = _strip_tz(b0)
-        if b1:
-            b1 = _strip_tz(b1)
-        baseline_da = da.sel(time=slice(b0, b1))
-        if baseline_da.sizes.get("time", 0) == 0:
-            raise ValueError(f"No data found for baseline='{baseline}'.")
-        mean_fn: Callable[[xr.DataArray], xr.DataArray] = (
-            (lambda d: _chunked_mean(d, max_ts)) if use_batched else (lambda d: d.mean("time"))
-        )
-        return mean_fn(da) - mean_fn(baseline_da)
     else:
-        raise ValueError(f"Unknown agg method '{agg}'. Use: mean, sum, min, max, anomaly.")
+        logger.info("Aggregating %d timestep(s) with agg=%s", n_ts, agg)
+
+    sem = _get_agg_semaphore()
+    with sem if sem is not None else _nullctx():
+        if agg == "mean":
+            return _chunked_mean(da, max_ts) if use_batched else da.mean("time").compute()
+        elif agg == "sum":
+            return _chunked_aggregate(da, "sum", max_ts) if use_batched else da.sum("time").compute()
+        elif agg == "min":
+            return _chunked_aggregate(da, "min", max_ts) if use_batched else da.min("time").compute()
+        elif agg == "max":
+            return _chunked_aggregate(da, "max", max_ts) if use_batched else da.max("time").compute()
+        elif agg == "anomaly":
+            if not baseline:
+                raise ValueError("'anomaly' aggregation requires a 'baseline' interval.")
+            b0, b1 = _parse_datetime_interval(baseline)
+            if b0:
+                b0 = _strip_tz(b0)
+            if b1:
+                b1 = _strip_tz(b1)
+            baseline_da = da.sel(time=slice(b0, b1))
+            if baseline_da.sizes.get("time", 0) == 0:
+                raise ValueError(f"No data found for baseline='{baseline}'.")
+            mean_fn: Callable[[xr.DataArray], xr.DataArray] = (
+                (lambda d: _chunked_mean(d, max_ts)) if use_batched else (lambda d: d.mean("time").compute())
+            )
+            return mean_fn(da) - mean_fn(baseline_da)
+        else:
+            raise ValueError(f"Unknown agg method '{agg}'. Use: mean, sum, min, max, anomaly.")
 
 
 def resolve_accessed_times(

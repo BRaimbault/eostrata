@@ -383,3 +383,43 @@ class TestResolveAccessedTimes:
             ds, "2020-01-01/2021-12-31", "anomaly", "2020-01-01/2021-12-31"
         )
         assert len(result) == 2
+
+
+class TestAggSemaphore:
+    def test_unlimited_returns_none(self, monkeypatch):
+        from eostrata.config import settings
+        import eostrata.aggregate as agg_mod
+
+        monkeypatch.setattr(settings, "max_concurrent_aggregations", 0)
+        agg_mod._agg_semaphore = None
+        assert agg_mod._get_agg_semaphore() is None
+
+    def test_nullctx_is_noop(self):
+        from eostrata.aggregate import _nullctx
+
+        with _nullctx() as ctx:
+            assert ctx is not None  # just exercises enter/exit
+
+    def test_semaphore_created_with_limit(self, monkeypatch):
+        from eostrata.config import settings
+        import eostrata.aggregate as agg_mod
+
+        monkeypatch.setattr(settings, "max_concurrent_aggregations", 2)
+        agg_mod._agg_semaphore = None
+        sem = agg_mod._get_agg_semaphore()
+        assert sem is not None
+
+
+class TestMaxConcurrentAggregationsValidator:
+    def test_negative_raises(self):
+        import pytest
+        from pydantic import ValidationError
+        from eostrata.config import Settings
+
+        with pytest.raises(ValidationError):
+            Settings(max_concurrent_aggregations=-1)
+
+    def test_zero_is_valid(self):
+        from eostrata.config import Settings
+        s = Settings(max_concurrent_aggregations=0)
+        assert s.max_concurrent_aggregations == 0

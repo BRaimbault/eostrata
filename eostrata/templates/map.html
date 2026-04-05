@@ -491,6 +491,7 @@
         <div class="cfg-grid">
           <span class="cfg-key">Chunk size</span><span id="cfg-chunk-size" class="cfg-val"></span>
           <span class="cfg-key">Agg batch</span><span id="cfg-agg-batch" class="cfg-val"></span>
+          <span class="cfg-key">Concurrent agg</span><span id="cfg-concurrent-agg" class="cfg-val"></span>
           <span class="cfg-key">Track access</span><span id="cfg-track-access" class="cfg-val"></span>
           <span class="cfg-key">CORS origins</span><span id="cfg-cors" class="cfg-val"></span>
         </div>
@@ -563,6 +564,8 @@
       document.getElementById('cfg-chunk-size').textContent = CONFIG.zarr_chunk_size + ' px';
       document.getElementById('cfg-agg-batch').textContent  =
         CONFIG.max_aggregation_timesteps > 0 ? CONFIG.max_aggregation_timesteps + ' timesteps' : 'Unlimited';
+      document.getElementById('cfg-concurrent-agg').textContent =
+        CONFIG.max_concurrent_aggregations > 0 ? CONFIG.max_concurrent_aggregations : 'Unlimited';
       document.getElementById('cfg-track-access').textContent = CONFIG.track_access ? 'Yes' : 'No';
       document.getElementById('cfg-cors').textContent =
         (CONFIG.cors_origins || []).join(', ') || '(none)';

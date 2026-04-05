@@ -415,7 +415,10 @@
     <div id="tab-quota-content" class="tab-panel" style="display:none">
 
       <div class="cfg-section">
-        <div class="cfg-hdr">Disk usage</div>
+        <div class="cfg-hdr" style="display:flex;align-items:center;justify-content:space-between">
+          Disk usage
+          <button id="btn-quota-refresh" onclick="populateQuota()" style="font-size:11px;padding:2px 8px;border:1px solid #d1d5db;border-radius:4px;background:#f9fafb;cursor:pointer;color:#374151">↻ Refresh</button>
+        </div>
         <div class="cfg-grid">
           <span class="cfg-key">Used</span><span id="cfg-used" class="cfg-val"></span>
           <span class="cfg-key">Quota</span><span id="cfg-quota" class="cfg-val"></span>
@@ -558,8 +561,12 @@
       });
     })();
 
-    // Populate quota tab values (fetches /store-usage — lazy, called on first tab open)
+    // Populate quota tab values (fetches /store-usage — lazy on first open, manual via refresh button)
     function populateQuota() {
+      _quotaReset();
+      const btn = document.getElementById('btn-quota-refresh');
+      if (btn) { btn.disabled = true; btn.textContent = '↻ …'; }
+
       const fmtMb = function(mb) {
         return mb >= 1024 ? (mb / 1024).toFixed(2) + ' GB' : mb.toFixed(1) + ' MB';
       };
@@ -658,7 +665,10 @@
           });
           document.getElementById('cfg-groups-wrap').style.display = 'block';
         }
-      }).catch(function() {});
+      }).finally(function() {
+        const btn = document.getElementById('btn-quota-refresh');
+        if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
+      });
     }
 
     let dataLayer = null;
@@ -1119,6 +1129,15 @@
       });
       if (tab === 'ingest') loadJobs();
       if (tab === 'quota' && !_quotaLoaded) { _quotaLoaded = true; populateQuota(); }
+    }
+
+    function _quotaReset() {
+      document.getElementById('cfg-used').textContent = '…';
+      document.getElementById('cfg-quota-bar-wrap').style.display = 'none';
+      document.getElementById('cfg-quota-bar').style.width = '0%';
+      document.getElementById('cfg-quota-pct').textContent = '';
+      document.getElementById('cfg-groups-wrap').style.display = 'none';
+      document.getElementById('cfg-groups-tbody').innerHTML = '';
     }
 
     // ── Ingest tab ───────────────────────────────────────────────────────────

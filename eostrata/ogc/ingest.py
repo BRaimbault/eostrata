@@ -101,7 +101,7 @@ _INGEST_DESCRIPTION = {
             "title": "Months",
             "description": (
                 "List of months 1-12, or the string 'ALL' for every month "
-                "(chirps/cds/sentinel_ndvi only; default: latest available)."
+                "(chirps/cds/ndvi only; default: latest available)."
             ),
             "schema": {
                 "oneOf": [
@@ -114,7 +114,7 @@ _INGEST_DESCRIPTION = {
             "title": "Dekads",
             "description": (
                 "List of dekads 1-3, or the string 'ALL' for all three dekads "
-                "(sentinel_ndvi only; default: latest available)."
+                "(ndvi only; default: latest available)."
             ),
             "schema": {
                 "oneOf": [
@@ -170,10 +170,10 @@ class IngestInputs(BaseModel):
     years: list[int] | None = Field(None, description="Years to ingest")
     months: list[Month] | Literal["ALL"] | None = Field(
         None,
-        description="Months 1-12 to ingest, or 'ALL' for every month (chirps/cds/sentinel_ndvi)",
+        description="Months 1-12 to ingest, or 'ALL' for every month (chirps/cds/ndvi)",
     )
     dekads: list[Dekad] | Literal["ALL"] | None = Field(
-        None, description="Dekads 1-3 to ingest, or 'ALL' for all three (sentinel_ndvi only)"
+        None, description="Dekads 1-3 to ingest, or 'ALL' for all three (ndvi only)"
     )
     days: list[Day] | Literal["ALL"] | None = Field(
         None,
@@ -221,7 +221,7 @@ class IngestExecutionRequest(BaseModel):
                 {"inputs": {"source": "cds", "variable": "t2m", "years": [2023]}},
                 {
                     "inputs": {
-                        "source": "sentinel_ndvi",
+                        "source": "cgls",
                         "years": [2024],
                         "months": [1],
                         "dekads": [1, 2, 3],

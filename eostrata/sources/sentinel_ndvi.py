@@ -136,13 +136,13 @@ def _download(url: str, dest: Path, *, api_key: str = "") -> Path:
 class SentinelNDVISource(BaseSource):
     """Sentinel-3 NDVI 300m dekadal composites from the Copernicus Global Land Service."""
 
-    id = "sentinel_ndvi"
-    collection_id = "sentinel_ndvi"
+    id = "cgls"
+    collection_id = "cgls"
     collection_title = "Sentinel-3 NDVI — CGLS composites (300 m, dekadal)"
     collection_description = (
         "Sentinel-3 NDVI 300m dekadal composites from the Copernicus Global Land Service"
     )
-    zarr_prefix = "sentinel_ndvi"
+    zarr_prefix = "cgls"
     temporal_resolution = "dekadal"
     default_lag_days = 5  # ~5 days after dekad end before publication
     VARIABLE = "ndvi"
@@ -184,7 +184,7 @@ class SentinelNDVISource(BaseSource):
         """
         start_day = _DEKAD_START_DAYS[dekad]
         filename = f"ndvi_300m_v2_{year:04d}{month:02d}{start_day:02d}.tif"
-        dest = Path(raw_dir) / "sentinel_ndvi" / filename
+        dest = Path(raw_dir) / "cgls" / filename
 
         if dest.exists():
             logger.info("Already available: %s", dest.name)
@@ -207,7 +207,7 @@ class SentinelNDVISource(BaseSource):
         dekad: int = 1,
         **_: Any,
     ) -> Any:  # xr.Dataset
-        """Clip *path* to *bbox* and append to the global sentinel_ndvi Zarr group."""
+        """Clip *path* to *bbox* and append to the global ndvi Zarr group."""
         start_day = _DEKAD_START_DAYS[dekad]
         time_coord = np.datetime64(f"{year:04d}-{month:02d}-{start_day:02d}", "ns")
         return geotiff_to_zarr(
@@ -221,7 +221,7 @@ class SentinelNDVISource(BaseSource):
 
     def zarr_group(self, **_: Any) -> str:
         """Single global Zarr group — all dekads as time-steps."""
-        return "sentinel_ndvi/global"
+        return "cgls/global"
 
     def stac_item_id(self, **_: Any) -> str:
         """Single STAC item for the global Sentinel NDVI collection."""

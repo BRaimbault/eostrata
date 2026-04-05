@@ -79,13 +79,13 @@ class TestSentinelNDVISource:
         self.source = SentinelNDVISource()
 
     def test_metadata(self):
-        assert self.source.id == "sentinel_ndvi"
-        assert self.source.collection_id == "sentinel_ndvi"
+        assert self.source.id == "cgls"
+        assert self.source.collection_id == "cgls"
         assert self.source.temporal_resolution == "dekadal"
         assert self.source.VARIABLE == "ndvi"
 
     def test_zarr_group(self):
-        assert self.source.zarr_group() == "sentinel_ndvi/global"
+        assert self.source.zarr_group() == "cgls/global"
 
     def test_stac_item_id(self):
         assert self.source.stac_item_id() == "global"
@@ -159,7 +159,7 @@ class TestSentinelNDVISource:
 
     def test_download_skips_if_tif_exists(self, tmp_path):
         """If the .tif already exists locally, no HTTP request should be made."""
-        dest_tif = tmp_path / "sentinel_ndvi" / "ndvi_300m_v2_20230601.tif"
+        dest_tif = tmp_path / "cgls" / "ndvi_300m_v2_20230601.tif"
         dest_tif.parent.mkdir(parents=True)
         dest_tif.write_bytes(b"fake tif data")
 
@@ -168,9 +168,9 @@ class TestSentinelNDVISource:
 
     def test_download_filename_encodes_dekad_start_day(self, tmp_path):
         """Each dekad gets a distinct filename based on its start day."""
-        dest1 = tmp_path / "sentinel_ndvi" / "ndvi_300m_v2_20230601.tif"
-        dest2 = tmp_path / "sentinel_ndvi" / "ndvi_300m_v2_20230611.tif"
-        dest3 = tmp_path / "sentinel_ndvi" / "ndvi_300m_v2_20230621.tif"
+        dest1 = tmp_path / "cgls" / "ndvi_300m_v2_20230601.tif"
+        dest2 = tmp_path / "cgls" / "ndvi_300m_v2_20230611.tif"
+        dest3 = tmp_path / "cgls" / "ndvi_300m_v2_20230621.tif"
         dest1.parent.mkdir(parents=True)
         for d in (dest1, dest2, dest3):
             d.write_bytes(b"fake")
@@ -180,7 +180,7 @@ class TestSentinelNDVISource:
         assert self.source.download(tmp_path, (0, 0, 1, 1), year=2023, month=6, dekad=3) == [dest3]
 
     def test_to_zarr_writes_group(self, tmp_path):
-        """to_zarr should produce a Zarr group at sentinel_ndvi/global."""
+        """to_zarr should produce a Zarr group at cgls/global."""
         import rasterio
         from rasterio.transform import from_bounds
 
@@ -207,7 +207,7 @@ class TestSentinelNDVISource:
 
         assert "ndvi" in ds
         assert "time" in ds.dims
-        assert (zarr_root / "sentinel_ndvi" / "global").exists()
+        assert (zarr_root / "cgls" / "global").exists()
 
     def test_to_zarr_timestep_is_dekad_start(self, tmp_path):
         """The time coordinate should be the first day of the dekad."""

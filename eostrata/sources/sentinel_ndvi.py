@@ -154,7 +154,7 @@ class SentinelNDVISource(BaseSource):
 
         if settings.cgls_api_key:
             return True, ""
-        return False, "EOSTRATA_CGLS_API_KEY is not set"
+        return False, "CGLS API key missing — set EOSTRATA_CGLS_API_KEY"
 
     @classmethod
     def catalog_meta(cls, dataset_name: str) -> dict:

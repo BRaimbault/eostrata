@@ -383,4 +383,4 @@ class TestIsConfigured:
         monkeypatch.setattr(settings, "cgls_api_key", "")
         ok, reason = SentinelNDVISource.is_configured()
         assert ok is False
-        assert "EOSTRATA_CGLS_API_KEY" in reason
+        assert "CGLS API key missing" in reason

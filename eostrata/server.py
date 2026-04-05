@@ -64,9 +64,16 @@ _MAP_CONFIG_JSON: str = json.dumps(
         "bbox": list(settings.bbox),
         "quota_mb": settings.store_quota_mb,
         "eviction_buffer_mb": settings.store_eviction_buffer_mb,
+        "track_access": settings.track_access,
         "zarr_root": str(settings.zarr_root),
         "raw_dir": str(settings.raw_dir),
         "catalog_path": str(settings.catalog_path),
+        "log_file": str(settings.log_file),
+        "zarr_chunk_size": settings.zarr_chunk_size,
+        "max_aggregation_timesteps": settings.max_aggregation_timesteps,
+        "ingest_max_workers": settings.ingest_max_workers,
+        "ingest_max_queued": settings.ingest_max_queued,
+        "cors_origins": settings.cors_origins,
     }
 )
 

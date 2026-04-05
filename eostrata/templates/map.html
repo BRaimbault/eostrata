@@ -471,6 +471,25 @@
           <span class="cfg-key">Zarr root</span><span id="cfg-zarr-root" class="cfg-val cfg-path"></span>
           <span class="cfg-key">Raw dir</span><span id="cfg-raw-dir" class="cfg-val cfg-path"></span>
           <span class="cfg-key">Catalog</span><span id="cfg-catalog" class="cfg-val cfg-path"></span>
+          <span class="cfg-key">Log file</span><span id="cfg-log-file" class="cfg-val cfg-path"></span>
+        </div>
+      </div>
+
+      <div class="cfg-section">
+        <div class="cfg-hdr">Ingestion</div>
+        <div class="cfg-grid">
+          <span class="cfg-key">Workers</span><span id="cfg-ingest-workers" class="cfg-val"></span>
+          <span class="cfg-key">Max queued</span><span id="cfg-ingest-queued" class="cfg-val"></span>
+        </div>
+      </div>
+
+      <div class="cfg-section">
+        <div class="cfg-hdr">Performance</div>
+        <div class="cfg-grid">
+          <span class="cfg-key">Chunk size</span><span id="cfg-chunk-size" class="cfg-val"></span>
+          <span class="cfg-key">Agg batch</span><span id="cfg-agg-batch" class="cfg-val"></span>
+          <span class="cfg-key">Track access</span><span id="cfg-track-access" class="cfg-val"></span>
+          <span class="cfg-key">CORS origins</span><span id="cfg-cors" class="cfg-val"></span>
         </div>
       </div>
 
@@ -531,9 +550,18 @@
       document.getElementById('cfg-bbox-s').textContent = s.toFixed(4) + '°';
       document.getElementById('cfg-bbox-e').textContent = e.toFixed(4) + '°';
       document.getElementById('cfg-bbox-n').textContent = n.toFixed(4) + '°';
-      document.getElementById('cfg-zarr-root').textContent = CONFIG.zarr_root;
-      document.getElementById('cfg-raw-dir').textContent   = CONFIG.raw_dir;
-      document.getElementById('cfg-catalog').textContent   = CONFIG.catalog_path;
+      document.getElementById('cfg-zarr-root').textContent  = CONFIG.zarr_root;
+      document.getElementById('cfg-raw-dir').textContent    = CONFIG.raw_dir;
+      document.getElementById('cfg-catalog').textContent    = CONFIG.catalog_path;
+      document.getElementById('cfg-log-file').textContent   = CONFIG.log_file || '(disabled)';
+      document.getElementById('cfg-ingest-workers').textContent = CONFIG.ingest_max_workers;
+      document.getElementById('cfg-ingest-queued').textContent  = CONFIG.ingest_max_queued;
+      document.getElementById('cfg-chunk-size').textContent = CONFIG.zarr_chunk_size + ' px';
+      document.getElementById('cfg-agg-batch').textContent  =
+        CONFIG.max_aggregation_timesteps > 0 ? CONFIG.max_aggregation_timesteps + ' timesteps' : 'Unlimited';
+      document.getElementById('cfg-track-access').textContent = CONFIG.track_access ? 'Yes' : 'No';
+      document.getElementById('cfg-cors').textContent =
+        (CONFIG.cors_origins || []).join(', ') || '(none)';
 
       // Sources table
       const tbody = document.getElementById('cfg-sources-tbody');

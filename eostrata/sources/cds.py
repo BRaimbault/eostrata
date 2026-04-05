@@ -6,9 +6,9 @@ Climate Data Store via the ``cdsapi`` library.
 Requires:
   - CDS account and API key at https://cds.climate.copernicus.eu
   - ``cdsapi`` package installed  (pip install cdsapi  OR  uv add cdsapi)
-  - ~/.cdsapirc credentials file:
-      url: https://cds.climate.copernicus.eu/api
-      key: <your-uid>:<your-api-key>
+  - Credentials via one of:
+      ~/.cdsapirc file:  url: …  /  key: <uid>:<api-key>
+      OR set EOSTRATA_CDS_URL and EOSTRATA_CDS_KEY environment variables.
 
 Supported ERA5 variables (``--variable`` option):
   2m_temperature          → t2m        (K, monthly mean)
@@ -96,7 +96,16 @@ def _download_era5(
         bbox,
     )
 
-    c = cdsapi.Client(quiet=True)
+    from eostrata.config import settings
+
+    url = settings.cds_url
+    key = settings.cds_key
+
+    if key:
+        c = cdsapi.Client(url=url, key=key, quiet=True)
+    else:
+        # Falls back to ~/.cdsapirc
+        c = cdsapi.Client(url=url, quiet=True)
     c.retrieve(
         _CDS_DATASET,
         {
@@ -249,14 +258,15 @@ class CDSSource(BaseSource):
 
     @classmethod
     def is_configured(cls) -> tuple[bool, str]:
-        import os
         from pathlib import Path
 
+        from eostrata.config import settings
+
+        if settings.cds_key:
+            return True, ""
         if Path.home().joinpath(".cdsapirc").exists():
             return True, ""
-        if os.environ.get("CDSAPI_URL") and os.environ.get("CDSAPI_KEY"):
-            return True, ""
-        return False, "CDS credentials missing — add ~/.cdsapirc or set CDSAPI_URL + CDSAPI_KEY"
+        return False, "CDS credentials missing — set EOSTRATA_CDS_KEY or add ~/.cdsapirc"
 
     @classmethod
     def catalog_meta(cls, dataset_name: str) -> dict:

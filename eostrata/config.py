@@ -134,6 +134,15 @@ class Settings(BaseSettings):
     # Register at https://land.copernicus.eu/global/ to obtain a token.
     cgls_api_key: str = ""
 
+    # ── CDS / ERA5 (Climate Data Store) ──────────────────────────────────────
+    # CDS API URL.  Defaults to the public CDS endpoint.
+    # Override only if using a custom/mirror CDS instance.
+    cds_url: str = "https://cds.climate.copernicus.eu/api"
+
+    # CDS API key in "<uid>:<api-key>" format.  Leave empty to use ~/.cdsapirc.
+    # Register and obtain your key at https://cds.climate.copernicus.eu/how-to-api
+    cds_key: str = ""
+
     # ── CAMS (Atmosphere Data Store) ──────────────────────────────────────────
     # ADS API URL.  Defaults to the public ADS endpoint.
     # Override only if using a custom/mirror ADS instance.

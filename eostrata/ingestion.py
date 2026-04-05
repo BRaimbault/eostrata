@@ -53,17 +53,24 @@ def run_ingest(
             if exc.response.status_code == 404 and source_cls.skip_404:
                 logger.debug("%s: %s not available (404) — skipping as expected", source_id, label)
                 continue
-            logger.error("%s: HTTP error for %s: %s", source_id, label, exc)
+            body = exc.response.text[:500] if exc.response.text else ""
+            logger.error(
+                "%s: HTTP %s for %s%s",
+                source_id,
+                exc.response.status_code,
+                label,
+                f" — {body}" if body else "",
+            )
             failed.append(label)
             continue
-        except Exception as exc:
-            logger.error("%s: failed to download %s: %s", source_id, label, exc)
+        except Exception:
+            logger.exception("%s: failed to download %s", source_id, label)
             failed.append(label)
             continue
         try:
             ds = source.to_zarr(paths[0], zarr_root, bbox, **period_kwargs)
-        except Exception as exc:
-            logger.error("%s: failed to write Zarr for %s: %s", source_id, label, exc)
+        except Exception:
+            logger.exception("%s: failed to write Zarr for %s", source_id, label)
             paths[0].unlink(missing_ok=True)
             failed.append(label)
             continue

@@ -175,7 +175,9 @@
     }
     .badge-running    { background: #dbeafe; color: #1e40af; }
     .badge-successful { background: #dcfce7; color: #166534; }
+    .badge-partial    { background: #fef9c3; color: #854d0e; }
     .badge-failed     { background: #fee2e2; color: #991b1b; }
+    .job-message { font-size: 10px; color: #854d0e; margin-top: 3px; }
 
     /* Ingest tab section headers */
     .ing-section-hdr {
@@ -1271,13 +1273,19 @@
       }
 
       el.innerHTML = jobs.map(j => {
+        const isPartial = j.status === 'successful' && j.message;
         const badgeCls = j.status === 'running'    ? 'badge-running'
+                       : isPartial                 ? 'badge-partial'
                        : j.status === 'successful' ? 'badge-successful'
                        :                             'badge-failed';
+        const badgeLabel = isPartial ? 'partial' : j.status;
         const params = Object.entries(j.params || {})
           .map(([k, v]) => k + '=' + (Array.isArray(v) ? v.join(',') : v))
           .join(' ');
-        const created = j.created ? new Date(j.created).toLocaleTimeString() : '';
+        const updated = j.updated ? new Date(j.updated).toLocaleTimeString() : '';
+        const msgHtml = j.message
+          ? '<div class="job-message">' + j.message + '</div>'
+          : '';
         const errHtml = j.error
           ? '<div class="job-error">' + j.error.split('\n').slice(-3).join('\n') + '</div>'
           : '';
@@ -1285,11 +1293,12 @@
           '<div class="job-card">' +
             '<div class="job-card-header">' +
               '<span class="job-source">' + j.source + '</span>' +
-              '<span class="badge ' + badgeCls + '">' + j.status + '</span>' +
+              '<span class="badge ' + badgeCls + '">' + badgeLabel + '</span>' +
             '</div>' +
             '<div class="job-id">' + j.jobID + '</div>' +
             (params ? '<div class="job-time">' + params + '</div>' : '') +
-            '<div class="job-time">' + created + '</div>' +
+            '<div class="job-time">' + updated + '</div>' +
+            msgHtml +
             errHtml +
           '</div>'
         );

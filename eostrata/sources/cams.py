@@ -274,6 +274,18 @@ class CAMSSource(BaseSource):
     ui_fields = ["variable", "years", "months"]
 
     @classmethod
+    def is_configured(cls) -> tuple[bool, str]:
+        from pathlib import Path
+
+        from eostrata.config import settings
+
+        if settings.ads_key:
+            return True, ""
+        if Path.home().joinpath(".adsapirc").exists():
+            return True, ""
+        return False, "ADS credentials missing — set EOSTRATA_ADS_KEY or add ~/.adsapirc"
+
+    @classmethod
     def catalog_meta(cls, dataset_name: str) -> dict:
         # dataset_name IS the variable (e.g. "pm2p5" from "cams/pm2p5")
         return {

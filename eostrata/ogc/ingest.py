@@ -42,8 +42,10 @@ import eostrata.sources  # noqa: E402,F401 — triggers auto-discovery of all so
 from eostrata.sources.base import all_sources as _all_sources  # noqa: E402
 from eostrata.sources.base import get_source  # noqa: E402
 
-INGEST_SOURCES = [
-    {
+
+def _source_entry(cls: type) -> dict:
+    ok, reason = cls.is_configured()
+    return {
         "id": cls.id,
         "label": cls.collection_title,
         "fields": cls.ui_fields,
@@ -51,10 +53,12 @@ INGEST_SOURCES = [
         "variable_descriptions": cls.VARIABLE_DESCRIPTIONS,
         "temporal_resolution": cls.temporal_resolution,
         "lag_days": cls.default_lag_days,
+        "configured": ok,
+        "config_error": reason,
     }
-    for cls in _all_sources()
-    if cls.ui_fields
-]
+
+
+INGEST_SOURCES = [_source_entry(cls) for cls in _all_sources() if cls.ui_fields]
 
 # Derived from INGEST_SOURCES so we never have to update the two separately.
 _SOURCE_IDS = [s["id"] for s in INGEST_SOURCES]

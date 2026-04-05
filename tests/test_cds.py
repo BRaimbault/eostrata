@@ -119,3 +119,38 @@ class TestDownloadEra5:
 
         assert result == dest
         fake_client.retrieve.assert_called_once()
+
+
+class TestIsConfigured:
+    def test_true_when_cdsapirc_exists(self, tmp_path, monkeypatch):
+        from eostrata.sources.cds import CDSSource
+
+        rc = tmp_path / ".cdsapirc"
+        rc.write_text("url: https://cds.climate.copernicus.eu/api\nkey: fake\n")
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        ok, msg = CDSSource.is_configured()
+        assert ok is True and msg == ""
+
+    def test_true_when_env_vars_set(self, monkeypatch):
+        import os
+
+        from eostrata.sources.cds import CDSSource
+
+        # Ensure no .cdsapirc in home
+        monkeypatch.setattr("pathlib.Path.home", lambda: __import__("pathlib").Path("/nonexistent"))
+        monkeypatch.setattr(
+            os, "environ", {**os.environ, "CDSAPI_URL": "https://x", "CDSAPI_KEY": "k"}
+        )
+        ok, msg = CDSSource.is_configured()
+        assert ok is True and msg == ""
+
+    def test_false_when_not_configured(self, monkeypatch):
+        import os
+
+        from eostrata.sources.cds import CDSSource
+
+        monkeypatch.setattr("pathlib.Path.home", lambda: __import__("pathlib").Path("/nonexistent"))
+        env = {k: v for k, v in os.environ.items() if k not in ("CDSAPI_URL", "CDSAPI_KEY")}
+        monkeypatch.setattr(os, "environ", env)
+        ok, msg = CDSSource.is_configured()
+        assert ok is False and "CDS" in msg

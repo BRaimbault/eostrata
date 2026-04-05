@@ -418,6 +418,14 @@ class TROPOMISource(BaseSource):
     ui_fields = ["variable", "years", "months", "days"]
 
     @classmethod
+    def is_configured(cls) -> tuple[bool, str]:
+        from eostrata.config import settings
+
+        if settings.cdse_user and settings.cdse_password:
+            return True, ""
+        return False, "CDSE credentials missing — set EOSTRATA_CDSE_USER + EOSTRATA_CDSE_PASSWORD"
+
+    @classmethod
     def catalog_meta(cls, dataset_name: str) -> dict:
         # dataset_name IS the variable (e.g. "no2" from "tropomi/no2")
         return {

@@ -584,3 +584,34 @@ class TestCAMSNetcdfToZarr:
         ds = _cams_netcdf_to_zarr(nc_path, zarr_root, "cams/no2", variable="no2", bbox=(0, 0, 2, 2))
 
         assert "no2" in ds
+
+
+class TestIsConfigured:
+    def test_true_when_ads_key_set(self, monkeypatch):
+        from eostrata.config import settings
+        from eostrata.sources.cams import CAMSSource
+
+        monkeypatch.setattr(settings, "ads_key", "uid:apikey")
+        ok, msg = CAMSSource.is_configured()
+        assert ok is True and msg == ""
+
+    def test_true_when_adsapirc_exists(self, tmp_path, monkeypatch):
+        from eostrata.config import settings
+        from eostrata.sources.cams import CAMSSource
+
+        (tmp_path / ".adsapirc").write_text(
+            "url: https://ads.atmosphere.copernicus.eu/api\nkey: fake\n"
+        )
+        monkeypatch.setattr(settings, "ads_key", "")
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        ok, msg = CAMSSource.is_configured()
+        assert ok is True and msg == ""
+
+    def test_false_when_not_configured(self, monkeypatch):
+        from eostrata.config import settings
+        from eostrata.sources.cams import CAMSSource
+
+        monkeypatch.setattr(settings, "ads_key", "")
+        monkeypatch.setattr("pathlib.Path.home", lambda: __import__("pathlib").Path("/nonexistent"))
+        ok, msg = CAMSSource.is_configured()
+        assert ok is False and "ADS" in msg

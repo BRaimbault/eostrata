@@ -665,3 +665,21 @@ class TestTROPOMIToZarrWritesDailyGrid:
 
         expected_time = np.datetime64("2023-06-15", "ns")
         assert expected_time in ds["time"].values
+
+
+class TestIsConfigured:
+    def test_true_when_credentials_set(self, monkeypatch):
+        from eostrata.config import settings
+
+        monkeypatch.setattr(settings, "cdse_user", "u@x.com")
+        monkeypatch.setattr(settings, "cdse_password", "s3cr3t")
+        ok, msg = TROPOMISource.is_configured()
+        assert ok is True and msg == ""
+
+    def test_false_when_credentials_missing(self, monkeypatch):
+        from eostrata.config import settings
+
+        monkeypatch.setattr(settings, "cdse_user", "")
+        monkeypatch.setattr(settings, "cdse_password", "")
+        ok, msg = TROPOMISource.is_configured()
+        assert ok is False and "CDSE" in msg

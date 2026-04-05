@@ -248,6 +248,17 @@ class CDSSource(BaseSource):
     ui_fields = ["variable", "years", "months"]
 
     @classmethod
+    def is_configured(cls) -> tuple[bool, str]:
+        import os
+        from pathlib import Path
+
+        if Path.home().joinpath(".cdsapirc").exists():
+            return True, ""
+        if os.environ.get("CDSAPI_URL") and os.environ.get("CDSAPI_KEY"):
+            return True, ""
+        return False, "CDS credentials missing — add ~/.cdsapirc or set CDSAPI_URL + CDSAPI_KEY"
+
+    @classmethod
     def catalog_meta(cls, dataset_name: str) -> dict:
         # dataset_name IS the variable (e.g. "t2m" from "era5/t2m")
         return {

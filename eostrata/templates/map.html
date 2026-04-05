@@ -364,6 +364,7 @@
       <!-- Start job form — options populated from SOURCES by initIngestForm() -->
       <label>Source</label>
       <select id="ing-source" onchange="onIngSourceChange()"></select>
+      <div id="ing-config-warning" style="display:none;font-size:11px;color:#b45309;margin-top:4px"></div>
 
       <div id="ing-iso3-row" style="display:none">
         <label>ISO3 country code</label>
@@ -478,6 +479,7 @@
                 <th>Resolution</th>
                 <th>Lag</th>
                 <th>Variables</th>
+                <th>Status</th>
               </tr>
             </thead>
             <tbody id="cfg-sources-tbody"></tbody>
@@ -539,12 +541,17 @@
         const varHtml = vars.length
           ? '<span class="vars" title="' + fullDescs + '">' + vars.join(', ') + '</span>'
           : '';
+        const ok = s.configured !== false;
+        const statusHtml = ok
+          ? '<span style="color:#16a34a" title="Ready">&#10003;</span>'
+          : '<span style="color:#b45309" title="' + (s.config_error || 'Not configured') + '">&#9888;</span>';
         const tr = document.createElement('tr');
         tr.innerHTML =
           '<td>' + s.id + '</td>' +
           '<td style="white-space:nowrap">' + (s.temporal_resolution || '—') + '</td>' +
           '<td style="white-space:nowrap">' + (s.lag_days != null ? s.lag_days + 'd' : '—') + '</td>' +
-          '<td>' + varHtml + '</td>';
+          '<td>' + varHtml + '</td>' +
+          '<td style="text-align:center">' + statusHtml + '</td>';
         tbody.appendChild(tr);
       });
     })();
@@ -1126,7 +1133,7 @@
       SOURCES.forEach(function(s) {
         const opt = document.createElement('option');
         opt.value = s.id;
-        opt.textContent = s.label;
+        opt.textContent = (s.configured === false ? '⚠ ' : '') + s.label;
         sel.appendChild(opt);
       });
       onIngSourceChange();
@@ -1141,6 +1148,14 @@
       document.getElementById('ing-months-row').style.display = fields.includes('months')    ? '' : 'none';
       document.getElementById('ing-days-row').style.display   = fields.includes('days')      ? '' : 'none';
       document.getElementById('ing-dekads-row').style.display = fields.includes('dekads')    ? '' : 'none';
+
+      const warn = document.getElementById('ing-config-warning');
+      if (def && def.configured === false) {
+        warn.textContent = '\u26a0 ' + (def.config_error || 'This source is not configured.');
+        warn.style.display = '';
+      } else {
+        warn.style.display = 'none';
+      }
 
       // Repopulate variable dropdown for the selected source
       if (fields.includes('variable') && def) {

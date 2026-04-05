@@ -66,7 +66,12 @@ class TestAggregatingReader:
         assert float(da.mean()) == pytest.approx(2020.5)
 
     def test_context_var_agg_mean(self, tmp_path):
-        """AggregatingReader reads agg params from ContextVar in __attrs_post_init__."""
+        """Context vars are stored and aggregation is deferred to tile().
+
+        reader.input is now the last-timestep placeholder; aggregation happens
+        in tile() after spatial pre-clip.  Verify the context is stored and that
+        applying temporal aggregation to _unagg_input yields the correct result.
+        """
         zarr_root = _make_zarr_with_time(tmp_path)
         _CTX_AGG_DATETIME.set("2020-01-01/2021-12-31")
         _CTX_AGG_METHOD.set("mean")
@@ -81,11 +86,19 @@ class TestAggregatingReader:
             _CTX_AGG_DATETIME.set(None)
             _CTX_AGG_METHOD.set(None)
             _CTX_AGG_BASELINE.set(None)
+        # reader.input is the last-timestep placeholder (2D, no time dim)
         assert "time" not in reader.input.dims
-        assert float(reader.input.mean()) == pytest.approx(2020.5)
+        assert reader._tile_method == "mean"
+        assert reader._tile_datetime == "2020-01-01/2021-12-31"
+        # The unaggregated array is stored; aggregating it gives the correct result.
+        from eostrata.aggregate import apply_temporal_aggregation
+        result = apply_temporal_aggregation(
+            reader._unagg_input, datetime_str="2020-01-01/2021-12-31", agg="mean"
+        )
+        assert float(result.mean()) == pytest.approx(2020.5)
 
     def test_context_var_single_datetime(self, tmp_path):
-        """Single datetime selects the nearest available timestep."""
+        """Single datetime: context stored, unagg_input sliced correctly."""
         zarr_root = _make_zarr_with_time(tmp_path)
         _CTX_AGG_DATETIME.set("2020-01-01")
         _CTX_AGG_METHOD.set(None)
@@ -101,10 +114,14 @@ class TestAggregatingReader:
             _CTX_AGG_METHOD.set(None)
             _CTX_AGG_BASELINE.set(None)
         assert "time" not in reader.input.dims
-        assert float(reader.input.mean()) == pytest.approx(2020.0)
+        assert reader._tile_datetime == "2020-01-01"
+        assert reader._tile_method is None
+        from eostrata.aggregate import apply_temporal_aggregation
+        result = apply_temporal_aggregation(reader._unagg_input, datetime_str="2020-01-01")
+        assert float(result.mean()) == pytest.approx(2020.0)
 
     def test_context_var_anomaly(self, tmp_path):
-        """Anomaly agg computes deviation from baseline mean."""
+        """Anomaly agg context stored; applying it to _unagg_input yields correct deviation."""
         zarr_root = _make_zarr_with_time(tmp_path)
         _CTX_AGG_DATETIME.set("2020-01-01/2021-12-31")
         _CTX_AGG_METHOD.set("anomaly")
@@ -119,9 +136,48 @@ class TestAggregatingReader:
             _CTX_AGG_DATETIME.set(None)
             _CTX_AGG_METHOD.set(None)
             _CTX_AGG_BASELINE.set(None)
-        # mean(2020,2021)=2020.5, baseline mean(2020)=2020 → anomaly=0.5
         assert "time" not in reader.input.dims
-        assert float(reader.input.mean()) == pytest.approx(0.5)
+        assert reader._tile_method == "anomaly"
+        assert reader._tile_baseline == "2020-01-01/2020-12-31"
+        # mean(2020,2021)=2020.5, baseline mean(2020)=2020 → anomaly=0.5
+        from eostrata.aggregate import apply_temporal_aggregation
+        result = apply_temporal_aggregation(
+            reader._unagg_input,
+            datetime_str="2020-01-01/2021-12-31",
+            agg="anomaly",
+            baseline="2020-01-01/2020-12-31",
+        )
+        assert float(result.mean()) == pytest.approx(0.5)
+
+    def test_tile_clips_spatially_before_aggregation(self, tmp_path):
+        """tile() renders the tile after spatial pre-clip + temporal aggregation."""
+        import morecantile
+
+        zarr_root = _make_zarr_with_time(tmp_path)
+        _CTX_AGG_DATETIME.set("2020-01-01/2021-12-31")
+        _CTX_AGG_METHOD.set("mean")
+        _CTX_AGG_BASELINE.set(None)
+        try:
+            reader = AggregatingReader(
+                str(zarr_root),
+                variable="population",
+                group="worldpop/nga",
+            )
+        finally:
+            _CTX_AGG_DATETIME.set(None)
+            _CTX_AGG_METHOD.set(None)
+            _CTX_AGG_BASELINE.set(None)
+
+        # Find a zoom-3 tile that covers the test data (lon 2–15°E, lat 4–14°N)
+        tms = morecantile.tms.get("WebMercatorQuad")
+        tile = next(tms.tiles(2.0, 4.0, 15.0, 14.0, zooms=3))
+        img = reader.tile(tile.x, tile.y, tile.z)
+        # tile() should return an ImageData object; pixel values for valid data
+        # pixels should be near the expected mean (2020.5 ≈ 2020.5).
+        data = img.data[np.isfinite(img.data)]  # exclude NaN out-of-extent pixels
+        assert data.size > 0
+        # Values are float32 filled with years; mean of 2020 and 2021 is 2020.5
+        assert float(data.mean()) == pytest.approx(2020.5, abs=1.0)
 
     def test_valid_time_coord_renamed_to_time(self, tmp_path):
         """AggregatingReader renames valid_time → time in __attrs_post_init__ (line 190)."""

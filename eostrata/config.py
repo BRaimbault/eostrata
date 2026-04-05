@@ -84,14 +84,13 @@ class Settings(BaseSettings):
             raise ValueError("zarr_chunk_size must be between 64 and 4096")
         return v
 
-    # Batch size for temporal aggregation (mean, sum, min, max, anomaly).
+    # Threshold for switching to batched temporal aggregation.
     # When a request spans more timesteps than this limit, the reduction is split
-    # into sequential batches whose partial results are combined into a correct
-    # final answer — so requests always succeed, just with more I/O passes.
-    # Set to 0 to process all timesteps in a single pass (default, lowest latency).
+    # into sequential batches of aggregation_batch_size timesteps each.
+    # Set to 0 to process all timesteps in a single pass (lowest latency, highest RAM).
     #
     # Recommended values by available RAM:
-    #   ≤ 512 MB → 12  (e.g. one calendar year of monthly data)
+    #   ≤ 512 MB → 6   (triggers batching for any range > 6 months)
     #     1–2 GB → 60  (five years of monthly data)
     #      ≥ 4GB → 0   (unlimited)
     max_aggregation_timesteps: int = 0
@@ -103,6 +102,19 @@ class Settings(BaseSettings):
             raise ValueError(
                 "max_aggregation_timesteps must be 0 (unlimited) or a positive integer"
             )
+        return v
+
+    # Number of timesteps loaded per batch when batched aggregation is active.
+    # Lower values reduce peak RAM at the cost of more sequential zarr reads.
+    # On a 512 MB instance with global CHIRPS (≈103 MB/month): set to 1.
+    # Ignored when max_aggregation_timesteps=0 (no batching).
+    aggregation_batch_size: int = 1
+
+    @field_validator("aggregation_batch_size")
+    @classmethod
+    def validate_aggregation_batch_size(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("aggregation_batch_size must be a positive integer")
         return v
 
     # Maximum number of concurrent temporal aggregations (tile renders + zonalstats)

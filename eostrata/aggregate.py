@@ -15,6 +15,9 @@ from typing import Literal
 
 import numpy as np
 import xarray as xr
+from morecantile import Tile as _Tile
+from rasterio.warp import transform_bounds as _transform_bounds
+from rio_tiler.errors import TileOutsideBounds as _TileOutsideBounds
 from rio_tiler.io.xarray import XarrayReader as _XarrayReader
 from titiler.xarray.io import Reader
 from titiler.xarray.io import get_variable as _base_get_variable
@@ -242,12 +245,14 @@ def apply_temporal_aggregation(
 
     n_ts = da.sizes.get("time", 1)
     max_ts = _eostrata_config.settings.max_aggregation_timesteps
+    batch_size = _eostrata_config.settings.aggregation_batch_size
     use_batched = max_ts > 0 and "time" in da.dims and n_ts > max_ts
     if use_batched:
         logger.info(
-            "Time range spans %d timesteps (limit %d) — using batched aggregation",
+            "Time range spans %d timesteps (limit %d) — using batched aggregation (batch_size=%d)",
             n_ts,
             max_ts,
+            batch_size,
         )
     else:
         logger.info("Aggregating %d timestep(s) with agg=%s", n_ts, agg)
@@ -255,13 +260,13 @@ def apply_temporal_aggregation(
     sem = _get_agg_semaphore()
     with sem if sem is not None else _nullctx():
         if agg == "mean":
-            return _chunked_mean(da, max_ts) if use_batched else da.mean("time").compute()
+            return _chunked_mean(da, batch_size) if use_batched else da.mean("time").compute()
         elif agg == "sum":
-            return _chunked_aggregate(da, "sum", max_ts) if use_batched else da.sum("time").compute()
+            return _chunked_aggregate(da, "sum", batch_size) if use_batched else da.sum("time").compute()
         elif agg == "min":
-            return _chunked_aggregate(da, "min", max_ts) if use_batched else da.min("time").compute()
+            return _chunked_aggregate(da, "min", batch_size) if use_batched else da.min("time").compute()
         elif agg == "max":
-            return _chunked_aggregate(da, "max", max_ts) if use_batched else da.max("time").compute()
+            return _chunked_aggregate(da, "max", batch_size) if use_batched else da.max("time").compute()
         elif agg == "anomaly":
             if not baseline:
                 raise ValueError("'anomaly' aggregation requires a 'baseline' interval.")
@@ -274,7 +279,7 @@ def apply_temporal_aggregation(
             if baseline_da.sizes.get("time", 0) == 0:
                 raise ValueError(f"No data found for baseline='{baseline}'.")
             mean_fn: Callable[[xr.DataArray], xr.DataArray] = (
-                (lambda d: _chunked_mean(d, max_ts)) if use_batched else (lambda d: d.mean("time").compute())
+                (lambda d: _chunked_mean(d, batch_size)) if use_batched else (lambda d: d.mean("time").compute())
             )
             return mean_fn(da) - mean_fn(baseline_da)
         else:
@@ -397,19 +402,91 @@ class AggregatingReader(Reader):
         # Let XarrayReader set bounds, CRS, _dims from self.input
         _XarrayReader.__attrs_post_init__(self)
 
-        # Collapse any remaining time dimension using the aggregation parameters
-        # from context.  Defaults (all None) yield the last available timestep.
+        # When the data has a time dimension, defer temporal aggregation to tile().
+        # This allows tile() to spatially clip to the tile bbox *before* aggregating,
+        # which avoids loading the full global raster for each tile (crucial on
+        # memory-constrained instances).  We replace self.input with the last
+        # timestep so that reader metadata (bounds, dtype, count) is always 2D.
         if "time" in self.input.dims:
-            self.input = apply_temporal_aggregation(
-                self.input,
-                datetime_str=agg_datetime,
-                agg=agg_method,
-                baseline=agg_baseline,
-            )
+            self._unagg_input: xr.DataArray | None = self.input  # lazy 3D zarr array
+            self._tile_datetime: str | None = agg_datetime
+            self._tile_method: str | None = agg_method
+            self._tile_baseline: str | None = agg_baseline
+            # Use last timestep as a lightweight 2D placeholder for reader metadata.
+            self.input = self.input.isel(time=-1)
             self.input = self.input.rio.write_crs(self.crs)
-            self._dims = [
-                d for d in self.input.dims if d not in (self.input.rio.x_dim, self.input.rio.y_dim)
-            ]
+            # Override _dims: the time dimension is now collapsed, so no extra dims.
+            self._dims = []
+        else:
+            self._unagg_input = None
+            self._tile_datetime = None
+            self._tile_method = None
+            self._tile_baseline = None
+
+    def tile(self, tile_x: int, tile_y: int, tile_z: int, tilesize: int | None = None, **kwargs):  # type: ignore[override]
+        """Render a map tile, clipping spatially to the tile bbox before aggregating.
+
+        For datasets with a time dimension this clips the lazy 3D zarr array to
+        the tile's geographic bounding box first, then aggregates only the
+        ~256×256 pixel region needed — rather than aggregating the full global
+        raster and discarding all but the tile pixels afterward.  This reduces
+        peak RAM from O(global_extent × timesteps) to O(tile_pixels × timesteps).
+        """
+        if self._unagg_input is None:
+            # No time dimension — use the standard reader implementation.
+            return super().tile(tile_x, tile_y, tile_z, tilesize=tilesize, **kwargs)
+
+        if not self.tile_exists(tile_x, tile_y, tile_z):
+            raise _TileOutsideBounds(
+                f"Tile(x={tile_x}, y={tile_y}, z={tile_z}) is outside bounds"
+            )
+
+        # Get tile bounds in WGS84 (the coordinate system of eostrata zarr data).
+        tile_bounds_tms = self.tms.xy_bounds(_Tile(x=tile_x, y=tile_y, z=tile_z))
+        w, s, e, n = _transform_bounds(
+            self.tms.rasterio_crs,
+            "EPSG:4326",
+            tile_bounds_tms.left,
+            tile_bounds_tms.bottom,
+            tile_bounds_tms.right,
+            tile_bounds_tms.top,
+        )
+
+        # Clip the lazy 3D array to the tile bbox plus a 1-pixel buffer to
+        # avoid gaps at tile edges from rounding during reprojection.
+        da = self._unagg_input
+        try:
+            xbuf = abs(float(da.x[1] - da.x[0])) if da.x.size > 1 else 1.0
+            ybuf = abs(float(da.y[1] - da.y[0])) if da.y.size > 1 else 1.0
+        except Exception:
+            xbuf = ybuf = 0.1
+
+        y_vals = da.y.values
+        if len(y_vals) > 1 and float(y_vals[0]) > float(y_vals[-1]):
+            # Descending y (north→south storage, typical for raster grids)
+            clipped = da.sel(x=slice(w - xbuf, e + xbuf), y=slice(n + ybuf, s - ybuf))
+        else:
+            clipped = da.sel(x=slice(w - xbuf, e + xbuf), y=slice(s - ybuf, n + ybuf))
+
+        # Aggregate only the tile-sized spatial region.
+        agg_2d = apply_temporal_aggregation(
+            clipped,
+            datetime_str=self._tile_datetime,
+            agg=self._tile_method,
+            baseline=self._tile_baseline,
+        )
+        agg_2d = agg_2d.rio.write_crs(self.crs)
+
+        # Render via a temporary XarrayReader wrapping the small 2D result.
+        matrix = self.tms.matrix(tile_z)
+        tmp = _XarrayReader(agg_2d, tms=self.tms, options=self.options)
+        return tmp.tile(
+            tile_x,
+            tile_y,
+            tile_z,
+            tilesize=tilesize or matrix.tileHeight,
+            **kwargs,
+        )
 
     def get_variable(
         self,

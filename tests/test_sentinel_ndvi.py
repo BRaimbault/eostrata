@@ -363,3 +363,24 @@ class TestLatestAvailableMidMonth:
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
         result = SentinelNDVISource().latest_available()
         assert result == datetime(2024, 3, 21, tzinfo=UTC)
+
+
+# ── is_configured() ───────────────────────────────────────────────────────────
+
+
+class TestIsConfigured:
+    def test_configured_when_api_key_set(self, monkeypatch):
+        from eostrata.config import settings
+
+        monkeypatch.setattr(settings, "cgls_api_key", "mykey")
+        ok, reason = SentinelNDVISource.is_configured()
+        assert ok is True
+        assert reason == ""
+
+    def test_not_configured_when_key_missing(self, monkeypatch):
+        from eostrata.config import settings
+
+        monkeypatch.setattr(settings, "cgls_api_key", "")
+        ok, reason = SentinelNDVISource.is_configured()
+        assert ok is False
+        assert "EOSTRATA_CGLS_API_KEY" in reason

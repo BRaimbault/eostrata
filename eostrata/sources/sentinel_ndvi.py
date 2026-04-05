@@ -149,6 +149,14 @@ class SentinelNDVISource(BaseSource):
     ui_fields = ["years", "months", "dekads"]
 
     @classmethod
+    def is_configured(cls) -> tuple[bool, str]:
+        from eostrata.config import settings
+
+        if settings.cgls_api_key:
+            return True, ""
+        return False, "EOSTRATA_CGLS_API_KEY is not set"
+
+    @classmethod
     def catalog_meta(cls, dataset_name: str) -> dict:
         return {
             "item_id": "global",

@@ -16,7 +16,7 @@ This guide walks through downloading earth observation data, storing it as Zarr,
   - [CDS / ERA5 — climate reanalysis](#cds--era5--climate-reanalysis)
   - [CAMS — air quality reanalysis](#cams--air-quality-reanalysis)
   - [TROPOMI — Sentinel-5P air quality](#tropomi--sentinel-5p-air-quality)
-  - [Sentinel NDVI — vegetation index](#sentinel-ndvi--vegetation-index)
+  - [CGLS — vegetation index](#cgls--vegetation-index)
 - [Ingesting data via the API](#ingesting-data-via-the-api)
 - [Starting the server](#starting-the-server)
 - [Exploring the map viewer](#exploring-the-map-viewer)
@@ -89,6 +89,11 @@ EOSTRATA_BBOX_WEST=2.0
 EOSTRATA_BBOX_SOUTH=4.0
 EOSTRATA_BBOX_EAST=15.0
 EOSTRATA_BBOX_NORTH=14.0
+
+# Memory tuning
+# EOSTRATA_ZARR_CHUNK_SIZE=512          # spatial chunk tile size (x and y); halving quarters per-op footprint
+# EOSTRATA_MAX_AGGREGATION_TIMESTEPS=0  # timesteps per aggregation batch; 0 = single pass
+# EOSTRATA_MAX_CONCURRENT_AGGREGATIONS=1  # max concurrent tile renders + zonal stats; 0 = unlimited
 ```
 
 > **Tip** — keep the bounding box as small as your use case allows. Clipping to your area of interest significantly reduces storage and processing time.
@@ -120,10 +125,10 @@ eostrata ships with the following built-in sources. New sources can be added in 
 |---|---|---|---|---|
 | `worldpop` | WorldPop R2025A population count | `population` | Annual | ~1 year |
 | `chirps` | CHIRPS v2.0 precipitation | `precipitation` | Monthly | ~45 days |
-| `cds` | CDS / ERA5 climate reanalysis | `t2m` `tp` `u10` `v10` `sp` | Monthly | ~90 days |
+| `cds` | CDS / ERA5 climate reanalysis | `t2m` `d2m` `tp` `u10` `v10` `sp` `msl` `sst` `ssrd` `ssr` `tcc` `tcwv` `e` `swvl1` | Monthly | ~90 days |
 | `cams` | CAMS EAC4 air quality reanalysis | `pm2p5` `pm10` `no2` `co` `o3` `so2` `aod550` | Monthly | ~120 days |
 | `tropomi` | Sentinel-5P TROPOMI OFFLINE L2 | `no2` `co` `o3` `so2` `ch4` `hcho` `aer_ai` | Daily | ~3 days |
-| `sentinel_ndvi` | CGLS Sentinel-3 NDVI 300m v2 | `ndvi` | Dekadal (10-day) | ~5 days |
+| `cgls` | CGLS Sentinel-3 NDVI 300m v2 | `ndvi` | Dekadal (10-day) | ~5 days |
 | _your source_ | _implement `BaseSource`_ | _any_ | _any_ | — |
 
 **Variable reference:**
@@ -133,10 +138,19 @@ eostrata ships with the following built-in sources. New sources can be added in 
 | `worldpop` | `population` | Total population count per pixel | count |
 | `chirps` | `precipitation` | Monthly precipitation total | mm |
 | `cds` | `t2m` | 2m air temperature | K |
+| `cds` | `d2m` | 2m dewpoint temperature | K |
 | `cds` | `tp` | Total precipitation | m |
 | `cds` | `u10` | 10m U-component of wind | m/s |
 | `cds` | `v10` | 10m V-component of wind | m/s |
 | `cds` | `sp` | Surface pressure | Pa |
+| `cds` | `msl` | Mean sea level pressure | Pa |
+| `cds` | `sst` | Sea surface temperature | K |
+| `cds` | `ssrd` | Surface solar radiation downwards | J/m² |
+| `cds` | `ssr` | Surface net solar radiation | J/m² |
+| `cds` | `tcc` | Total cloud cover | 0–1 |
+| `cds` | `tcwv` | Total column water vapour | kg/m² |
+| `cds` | `e` | Total evaporation | m |
+| `cds` | `swvl1` | Soil water layer 1, 0–7 cm | m³/m³ |
 | `cams` | `pm2p5` | PM2.5 surface concentration | kg/m³ |
 | `cams` | `pm10` | PM10 surface concentration | kg/m³ |
 | `cams` | `no2` | Nitrogen dioxide surface concentration | kg/m³ |
@@ -151,7 +165,7 @@ eostrata ships with the following built-in sources. New sources can be added in 
 | `tropomi` | `ch4` | CH₄ mixing ratio | ppb |
 | `tropomi` | `hcho` | Tropospheric HCHO column | mol/m² |
 | `tropomi` | `aer_ai` | Aerosol index | dimensionless |
-| `sentinel_ndvi` | `ndvi` | Normalised Difference Vegetation Index | 0–1 |
+| `cgls` | `ndvi` | Normalised Difference Vegetation Index | 0–1 |
 
 ---
 
@@ -272,6 +286,7 @@ Monthly-averaged ERA5 reanalysis from the [Copernicus Climate Data Store](https:
 url: https://cds.climate.copernicus.eu/api
 key: <your-api-key>
 ```
+Or set environment variables instead of the rc file: `EOSTRATA_CDS_URL` and `EOSTRATA_CDS_KEY` (format: `<uid>:<api-key>`).
 
 **Download 2m air temperature for the latest available year** (~3 months behind real time):
 ```bash
@@ -298,10 +313,19 @@ uv run eostrata download cds --variable t2m --year 2023 --months 1,2,3
 | Flag | ERA5 variable | Unit |
 |---|---|---|
 | `t2m` | 2m air temperature | K |
+| `d2m` | 2m dewpoint temperature | K |
 | `tp` | Total precipitation | m |
 | `u10` | 10m U-component of wind | m/s |
 | `v10` | 10m V-component of wind | m/s |
 | `sp` | Surface pressure | Pa |
+| `msl` | Mean sea level pressure | Pa |
+| `sst` | Sea surface temperature | K |
+| `ssrd` | Surface solar radiation downwards | J/m² |
+| `ssr` | Surface net solar radiation | J/m² |
+| `tcc` | Total cloud cover | 0–1 |
+| `tcwv` | Total column water vapour | kg/m² |
+| `e` | Total evaporation | m |
+| `swvl1` | Soil water layer 1, 0–7 cm | m³/m³ |
 
 **Download multiple years at once:**
 ```bash
@@ -406,23 +430,31 @@ uv run eostrata download tropomi --variable co --year 2024 --month 1 --days ALL
 
 ---
 
-### Sentinel NDVI — vegetation index
+### CGLS — vegetation index
 
 Dekadal (10-day) 300m NDVI composites from the [Copernicus Global Land Service](https://land.copernicus.eu/global/products/ndvi) (CGLS, Sentinel-3 OLCI). A single global Zarr group holds all dekads as timesteps.
 
+**Setup required** — CGLS downloads need an API token:
+
+1. Register at [land.copernicus.eu/global](https://land.copernicus.eu/global/)
+2. Set the environment variable:
+```bash
+EOSTRATA_CGLS_API_KEY=<your-api-token>
+```
+
 **Download the latest available dekad** (~5 days behind the end of the dekad):
 ```bash
-uv run eostrata download sentinel_ndvi
+uv run eostrata download cgls
 ```
 
 **Download a specific year, month, and dekad (1, 2, or 3):**
 ```bash
-uv run eostrata download sentinel_ndvi --year 2023 --month 6 --dekad 1
+uv run eostrata download cgls --year 2023 --month 6 --dekad 1
 ```
 
 **Download all dekads in a month:**
 ```bash
-uv run eostrata download sentinel_ndvi --year 2023 --month 6 --dekads ALL
+uv run eostrata download cgls --year 2023 --month 6 --dekads ALL
 ```
 
 Dekad 1 = days 1–10, dekad 2 = days 11–20, dekad 3 = days 21–end of month.
@@ -431,7 +463,7 @@ Dekad 1 = days 1–10, dekad 2 = days 11–20, dekad 3 = days 21–end of month.
 
 | | Value |
 |---|---|
-| Zarr group | `data/zarr/sentinel_ndvi/global/` |
+| Zarr group | `data/zarr/cgls/global/` |
 | Variable | `ndvi` |
 | STAC item id | `global` |
 | Time resolution | dekadal (three timesteps per month) |
@@ -719,9 +751,9 @@ For example, CHIRPS has a ~45-day lag. A job running on 2024-03-15 with `auto_pe
 | `cds` | ~90 days ago (year + month) | 90 days |
 | `cams` | ~120 days ago (year + month) | 120 days |
 | `tropomi` | ~3 days ago (year + month + day) | 3 days |
-| `sentinel_ndvi` | ~5 days ago (year + month only) | 5 days |
+| `cgls` | ~5 days ago (year + month only) | 5 days |
 
-> **Note for Sentinel NDVI** — `auto_period` resolves year and month automatically, but the `dekad` must still be specified explicitly in `params` since the scheduler does not yet resolve dekadal periods automatically. See the commented examples in `schedules.yml`.
+> **Note for CGLS** — `auto_period` resolves year and month automatically, but the `dekad` must still be specified explicitly in `params` since the scheduler does not yet resolve dekadal periods automatically. See the commented examples in `schedules.yml`.
 
 When `auto_period: false` (the default), `params` must include explicit `year`/`month`/`day` values — use this when you want to backfill a specific historical period.
 
@@ -780,7 +812,7 @@ Options:
 uv run eostrata download cds [OPTIONS]
 
 Options:
-  --variable TEXT         ERA5 variable short name: t2m, tp, u10, v10, sp (default: t2m)
+  --variable TEXT         ERA5 variable short name: t2m, d2m, tp, u10, v10, sp, msl, sst, ssrd, ssr, tcc, tcwv, e, swvl1 (default: t2m)
   --year INTEGER          Single year (default: latest available)
   --years TEXT            Multiple years, comma-separated: 2022,2023
   --month INTEGER         Single month 1-12 (default: latest available)

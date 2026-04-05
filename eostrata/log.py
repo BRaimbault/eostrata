@@ -118,3 +118,7 @@ def setup_logging(
     # Suppress high-frequency polling requests from the access log regardless
     # of whether file logging is enabled (applies to the console too).
     logging.getLogger("uvicorn.access").addFilter(_SuppressPollingFilter())
+
+    # Silence chatty third-party INFO logs that fire on every tile request.
+    for _noisy in ("titiler", "rasterio", "botocore", "boto3", "urllib3"):
+        logging.getLogger(_noisy).setLevel(logging.WARNING)

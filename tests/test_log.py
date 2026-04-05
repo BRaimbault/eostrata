@@ -21,11 +21,11 @@ def _run_setup_logging(**kwargs):
 class TestSetupLogging:
     def test_verbose_sets_debug_level(self):
         root = _run_setup_logging(verbose=True, log_file="", rich_console=False)
-        root.setLevel.assert_called_with(logging.DEBUG)
+        root.setLevel.assert_any_call(logging.DEBUG)
 
     def test_non_verbose_sets_info_level(self):
         root = _run_setup_logging(verbose=False, log_file="", rich_console=False)
-        root.setLevel.assert_called_with(logging.INFO)
+        root.setLevel.assert_any_call(logging.INFO)
 
     def test_duplicate_guard_returns_early(self):
         """If root already has handlers, setup_logging must not add more."""

@@ -549,10 +549,11 @@
     // Populate static config tab values (bbox, storage paths, sources table)
     (function populateConfig() {
       const [w, s, e, n] = CONFIG.bbox;
-      document.getElementById('cfg-bbox-w').textContent = w.toFixed(4) + '°';
-      document.getElementById('cfg-bbox-s').textContent = s.toFixed(4) + '°';
-      document.getElementById('cfg-bbox-e').textContent = e.toFixed(4) + '°';
-      document.getElementById('cfg-bbox-n').textContent = n.toFixed(4) + '°';
+      const fmtDeg = function(v) { return (Number.isInteger(v) ? v : v.toFixed(2)) + '°'; };
+      document.getElementById('cfg-bbox-w').textContent = fmtDeg(w);
+      document.getElementById('cfg-bbox-s').textContent = fmtDeg(s);
+      document.getElementById('cfg-bbox-e').textContent = fmtDeg(e);
+      document.getElementById('cfg-bbox-n').textContent = fmtDeg(n);
       document.getElementById('cfg-zarr-root').textContent  = CONFIG.zarr_root;
       document.getElementById('cfg-raw-dir').textContent    = CONFIG.raw_dir;
       document.getElementById('cfg-catalog').textContent    = CONFIG.catalog_path;

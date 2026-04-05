@@ -241,7 +241,7 @@ def _run_job(job_id: str, fn, **kwargs) -> None:
     fn_name = getattr(fn, "__name__", repr(fn))
     logger.info("Job %s started: %s", job_id, fn_name)
     try:
-        failed, saved = fn(**kwargs)
+        failed, saved = fn(job_id=job_id, **kwargs)
         if not saved:
             if failed:
                 msg = f"Nothing ingested — {len(failed)} period(s) failed: {', '.join(failed)}"

@@ -196,19 +196,19 @@
     .ing-section-hdr button:hover { background: #e5e7eb; }
 
     /* ── Config tab ─────────────────────────────────────────────────────── */
-    .cfg-section { margin-bottom: 10px; }
+    .cfg-section { margin-bottom: 7px; }
     .cfg-hdr {
-      font-size: 11px; font-weight: 500; color: #6b7280;
-      text-transform: uppercase; letter-spacing: 0.05em;
-      margin-bottom: 5px;
+      font-size: 10px; font-weight: 600; color: #9ca3af;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      margin-bottom: 3px;
     }
     .cfg-grid {
-      display: grid; grid-template-columns: auto 1fr; gap: 3px 10px;
-      font-size: 12px;
+      display: grid; grid-template-columns: auto 1fr; gap: 2px 8px;
+      font-size: 11px;
     }
     .cfg-key { color: #9ca3af; white-space: nowrap; }
     .cfg-val { color: #111827; font-weight: 500; word-break: break-all; }
-    .cfg-path { font-family: monospace; font-size: 11px; font-weight: 400; }
+    .cfg-path { font-family: monospace; font-size: 10px; font-weight: 400; }
     .cfg-group-toggle {
       width: 100%; text-align: left; background: #f9fafb; border: none;
       padding: 4px 6px; cursor: pointer; font-family: monospace; font-weight: 600;
@@ -458,10 +458,13 @@
       <div class="cfg-section">
         <div class="cfg-hdr">Bounding box</div>
         <div class="cfg-grid">
-          <span class="cfg-key">West</span><span id="cfg-bbox-w" class="cfg-val"></span>
-          <span class="cfg-key">South</span><span id="cfg-bbox-s" class="cfg-val"></span>
-          <span class="cfg-key">East</span><span id="cfg-bbox-e" class="cfg-val"></span>
-          <span class="cfg-key">North</span><span id="cfg-bbox-n" class="cfg-val"></span>
+          <span class="cfg-key">W / S / E / N</span>
+          <span class="cfg-val">
+            <span id="cfg-bbox-w"></span> /
+            <span id="cfg-bbox-s"></span> /
+            <span id="cfg-bbox-e"></span> /
+            <span id="cfg-bbox-n"></span>
+          </span>
         </div>
       </div>
 

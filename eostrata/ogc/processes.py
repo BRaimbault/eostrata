@@ -171,10 +171,14 @@ def _load_array(
     datetime: str | None = None,
     agg: str | None = None,
     baseline: str | None = None,
+    clip_bbox: tuple[float, float, float, float] | None = None,
 ) -> xr.DataArray:
     """Open the Zarr group and return the requested variable as a loaded 2D DataArray.
 
     Applies temporal aggregation when the array has a ``time`` dimension.
+    When *clip_bbox* (west, south, east, north) is provided the array is
+    clipped spatially **before** temporal aggregation, drastically reducing
+    the memory footprint for large time ranges over small areas.
     The DataArray is fully materialised into memory before returning so that
     callers (e.g. the zonal-stats feature loop) can clip it N times without
     triggering N separate zarr reads.  The underlying dataset is closed before
@@ -194,6 +198,18 @@ def _load_array(
         # Normalise ERA5 time coordinate: valid_time → time
         if "valid_time" in da.coords and "time" not in da.dims:
             da = da.assign_coords(time=da["valid_time"]).swap_dims({"valid_time": "time"})
+
+        # Spatial pre-clip: slice to the features' combined bbox before temporal
+        # aggregation so each batch only processes the pixels we actually need.
+        if clip_bbox is not None and "x" in da.dims and "y" in da.dims:
+            w, s, e, n = clip_bbox
+            x_vals = da.x.values
+            y_vals = da.y.values
+            # y may be descending (north→south) — slice direction must match
+            if len(y_vals) > 1 and y_vals[0] > y_vals[-1]:
+                da = da.sel(x=slice(w, e), y=slice(n, s))
+            else:
+                da = da.sel(x=slice(w, e), y=slice(s, n))
 
         # Record per-timestamp access BEFORE apply_temporal_aggregation collapses the time dim.
         accessed = resolve_accessed_times(da, datetime, agg, baseline)
@@ -224,6 +240,37 @@ def _load_array(
     finally:
         ds.close()
     return da
+
+
+def _features_bbox(
+    features: list[dict],
+) -> tuple[float, float, float, float] | None:
+    """Return the combined (west, south, east, north) bbox of all feature geometries.
+
+    Returns None when no valid coordinate pairs are found.
+    """
+    xs: list[float] = []
+    ys: list[float] = []
+
+    def _collect(coords) -> None:
+        for item in coords:
+            if isinstance(item[0], (int, float)):
+                xs.append(float(item[0]))
+                ys.append(float(item[1]))
+            else:
+                _collect(item)
+
+    for feat in features:
+        geom = feat.get("geometry") or {}
+        raw = geom.get("coordinates")
+        if raw:
+            _collect(raw)
+
+    if not xs:
+        return None
+    # Add a small buffer (0.5°) so edge pixels aren't clipped by floating-point rounding
+    buf = 0.5
+    return min(xs) - buf, min(ys) - buf, max(xs) + buf, max(ys) + buf
 
 
 def _feature_stats(da: xr.DataArray, geometry: dict) -> dict:
@@ -329,6 +376,7 @@ def execute_zonalstats(body: ExecutionRequest) -> dict:
     if not features:
         raise HTTPException(status_code=422, detail="FeatureCollection has no features.")
 
+    clip_bbox = _features_bbox(features)
     try:
         da = _load_array(
             inp.url,
@@ -337,6 +385,7 @@ def execute_zonalstats(body: ExecutionRequest) -> dict:
             datetime=inp.datetime,
             agg=inp.agg,
             baseline=inp.baseline,
+            clip_bbox=clip_bbox,
         )
     except HTTPException:
         raise

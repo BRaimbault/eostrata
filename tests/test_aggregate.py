@@ -387,8 +387,8 @@ class TestResolveAccessedTimes:
 
 class TestAggSemaphore:
     def test_unlimited_returns_none(self, monkeypatch):
-        from eostrata.config import settings
         import eostrata.aggregate as agg_mod
+        from eostrata.config import settings
 
         monkeypatch.setattr(settings, "max_concurrent_aggregations", 0)
         agg_mod._agg_semaphore = None
@@ -401,8 +401,8 @@ class TestAggSemaphore:
             assert ctx is not None  # just exercises enter/exit
 
     def test_semaphore_created_with_limit(self, monkeypatch):
-        from eostrata.config import settings
         import eostrata.aggregate as agg_mod
+        from eostrata.config import settings
 
         monkeypatch.setattr(settings, "max_concurrent_aggregations", 2)
         agg_mod._agg_semaphore = None
@@ -414,6 +414,7 @@ class TestMaxConcurrentAggregationsValidator:
     def test_negative_raises(self):
         import pytest
         from pydantic import ValidationError
+
         from eostrata.config import Settings
 
         with pytest.raises(ValidationError):

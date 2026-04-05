@@ -7,12 +7,11 @@ before TiTiler encodes the tile.  No pre-computed intermediates.
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Literal
-
-import threading
 
 import numpy as np
 import xarray as xr

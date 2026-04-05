@@ -203,7 +203,6 @@ def _load_array(
         # aggregation so each batch only processes the pixels we actually need.
         if clip_bbox is not None and "x" in da.dims and "y" in da.dims:
             w, s, e, n = clip_bbox
-            x_vals = da.x.values
             y_vals = da.y.values
             # y may be descending (north→south) — slice direction must match
             if len(y_vals) > 1 and y_vals[0] > y_vals[-1]:
@@ -394,7 +393,7 @@ def execute_zonalstats(body: ExecutionRequest) -> dict:
             "zonalstats failed loading group=%s variable=%s datetime=%s",
             inp.group, inp.variable, inp.datetime,
         )
-        raise HTTPException(status_code=500, detail="Failed to load dataset.")
+        raise HTTPException(status_code=500, detail="Failed to load dataset.") from None
 
     result_features = []
     for feat in features:

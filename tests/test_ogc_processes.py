@@ -567,7 +567,6 @@ class TestFeaturesBbox:
         """When y coords are ascending (south→north), slice uses (s, n) order."""
         import numpy as np
         import xarray as xr
-        import zarr
 
         zarr_root = tmp_path / "zarr"
         y = np.linspace(0.0, 10.0, 20)  # ascending

@@ -46,6 +46,8 @@ class TestSetupLogging:
         root = _run_setup_logging(log_file="", rich_console=False)
         added_types = [type(call.args[0]).__name__ for call in root.addHandler.call_args_list]
         assert "RichHandler" not in added_types
+        # A plain StreamHandler must still be added so app logs reach the console
+        assert "StreamHandler" in added_types
 
     def test_file_handler_added(self, tmp_path):
         root = _run_setup_logging(log_file=str(tmp_path / "test.log"), rich_console=False)

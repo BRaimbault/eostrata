@@ -49,7 +49,8 @@ def setup_logging(
         Pass an empty string or ``Path("")`` to disable file logging entirely.
     rich_console:
         If True (default), attach a Rich console handler for terminal output.
-        Set to False when attaching to a server that manages its own console output.
+        Set to False to use a plain stream handler instead (e.g. in server/Docker contexts
+        where Rich formatting is unwanted but application logs must still reach stdout/stderr).
     """
     from eostrata.config import settings
 
@@ -66,6 +67,18 @@ def setup_logging(
         from rich.logging import RichHandler
 
         root.addHandler(RichHandler(rich_tracebacks=True, show_path=False))
+    else:
+        # Plain stream handler so application logs appear in non-TTY environments
+        # (e.g. Render, Docker).  Uvicorn owns its own access-log handler, but
+        # does NOT forward propagated app records — we need our own handler here.
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(
+            logging.Formatter(
+                fmt="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
+                datefmt="%Y-%m-%dT%H:%M:%SZ",
+            )
+        )
+        root.addHandler(stream_handler)
 
     # Resolve log file path
     if log_file is None:

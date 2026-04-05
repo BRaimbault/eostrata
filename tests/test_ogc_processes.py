@@ -512,3 +512,37 @@ class TestFeatureStatsClipFailure:
         }
         result = _feature_stats(da, geom_outside)
         assert "error" in result
+
+
+class TestZonalStatsUnexpectedError:
+    def test_unexpected_load_error_returns_500(self, app_client, monkeypatch):
+        """Non-HTTP exceptions from _load_array are logged and re-raised as 500."""
+        from eostrata.ogc import processes
+
+        monkeypatch.setattr(
+            processes, "_load_array", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("boom"))
+        )
+        resp = app_client.post(
+            "/processes/zonalstats/execution",
+            json={
+                "inputs": {
+                    "group": "worldpop/nga",
+                    "variable": "population",
+                    "features": {
+                        "type": "FeatureCollection",
+                        "features": [
+                            {
+                                "type": "Feature",
+                                "geometry": {
+                                    "type": "Polygon",
+                                    "coordinates": [[[2, 4], [15, 4], [15, 14], [2, 14], [2, 4]]],
+                                },
+                                "properties": {},
+                            }
+                        ],
+                    },
+                }
+            },
+        )
+        assert resp.status_code == 500
+        assert "Failed to load dataset" in resp.json()["detail"]

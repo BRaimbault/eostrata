@@ -297,7 +297,7 @@ def execute_zonalstats(body: ExecutionRequest) -> dict:
     """
     inp = body.inputs
     logger.info(
-        "API POST /processes/zonalstats/execution group=%s variable=%s datetime=%s agg=%s features=%d",
+        "zonalstats group=%s variable=%s datetime=%s agg=%s features=%d",
         inp.group,
         inp.variable,
         inp.datetime,
@@ -329,15 +329,23 @@ def execute_zonalstats(body: ExecutionRequest) -> dict:
     if not features:
         raise HTTPException(status_code=422, detail="FeatureCollection has no features.")
 
-    # Load array once, clip to total bbox for efficiency
-    da = _load_array(
-        inp.url,
-        inp.group,
-        inp.variable,
-        datetime=inp.datetime,
-        agg=inp.agg,
-        baseline=inp.baseline,
-    )
+    try:
+        da = _load_array(
+            inp.url,
+            inp.group,
+            inp.variable,
+            datetime=inp.datetime,
+            agg=inp.agg,
+            baseline=inp.baseline,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "zonalstats failed loading group=%s variable=%s datetime=%s",
+            inp.group, inp.variable, inp.datetime,
+        )
+        raise HTTPException(status_code=500, detail="Failed to load dataset.")
 
     result_features = []
     for feat in features:

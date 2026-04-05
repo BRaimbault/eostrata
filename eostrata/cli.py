@@ -55,9 +55,7 @@ _ALL_DEKADS = [1, 2, 3]
 
 @app.command("download")
 def download(
-    source_id: str = typer.Argument(
-        ..., help="Source ID: worldpop, chirps, cds, cgls"
-    ),
+    source_id: str = typer.Argument(..., help="Source ID: worldpop, chirps, cds, cgls"),
     iso3: str = typer.Option(
         None, help="ISO 3166-1 alpha-3 country code (worldpop only), e.g. NGA"
     ),

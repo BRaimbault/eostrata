@@ -422,5 +422,6 @@ class TestMaxConcurrentAggregationsValidator:
 
     def test_zero_is_valid(self):
         from eostrata.config import Settings
+
         s = Settings(max_concurrent_aggregations=0)
         assert s.max_concurrent_aggregations == 0

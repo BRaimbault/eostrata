@@ -391,7 +391,9 @@ def execute_zonalstats(body: ExecutionRequest) -> dict:
     except Exception:
         logger.exception(
             "zonalstats failed loading group=%s variable=%s datetime=%s",
-            inp.group, inp.variable, inp.datetime,
+            inp.group,
+            inp.variable,
+            inp.datetime,
         )
         raise HTTPException(status_code=500, detail="Failed to load dataset.") from None
 

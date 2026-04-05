@@ -128,7 +128,9 @@ class Settings(BaseSettings):
     @classmethod
     def validate_max_concurrent_aggregations(cls, v: int) -> int:
         if v < 0:
-            raise ValueError("max_concurrent_aggregations must be 0 (unlimited) or a positive integer")
+            raise ValueError(
+                "max_concurrent_aggregations must be 0 (unlimited) or a positive integer"
+            )
         return v
 
     # ── Ingestion ─────────────────────────────────────────────────────────────

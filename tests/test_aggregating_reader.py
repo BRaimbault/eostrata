@@ -92,6 +92,7 @@ class TestAggregatingReader:
         assert reader._tile_datetime == "2020-01-01/2021-12-31"
         # The unaggregated array is stored; aggregating it gives the correct result.
         from eostrata.aggregate import apply_temporal_aggregation
+
         result = apply_temporal_aggregation(
             reader._unagg_input, datetime_str="2020-01-01/2021-12-31", agg="mean"
         )
@@ -117,6 +118,7 @@ class TestAggregatingReader:
         assert reader._tile_datetime == "2020-01-01"
         assert reader._tile_method is None
         from eostrata.aggregate import apply_temporal_aggregation
+
         result = apply_temporal_aggregation(reader._unagg_input, datetime_str="2020-01-01")
         assert float(result.mean()) == pytest.approx(2020.0)
 
@@ -141,6 +143,7 @@ class TestAggregatingReader:
         assert reader._tile_baseline == "2020-01-01/2020-12-31"
         # mean(2020,2021)=2020.5, baseline mean(2020)=2020 → anomaly=0.5
         from eostrata.aggregate import apply_temporal_aggregation
+
         result = apply_temporal_aggregation(
             reader._unagg_input,
             datetime_str="2020-01-01/2021-12-31",

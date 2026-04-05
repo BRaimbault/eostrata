@@ -43,6 +43,7 @@ def _get_agg_semaphore() -> threading.Semaphore | None:
                 _agg_semaphore = threading.Semaphore(limit)
     return _agg_semaphore
 
+
 logger = logging.getLogger(__name__)
 
 AggMethod = Literal["mean", "sum", "min", "max", "anomaly"]
@@ -262,11 +263,23 @@ def apply_temporal_aggregation(
         if agg == "mean":
             return _chunked_mean(da, batch_size) if use_batched else da.mean("time").compute()
         elif agg == "sum":
-            return _chunked_aggregate(da, "sum", batch_size) if use_batched else da.sum("time").compute()
+            return (
+                _chunked_aggregate(da, "sum", batch_size)
+                if use_batched
+                else da.sum("time").compute()
+            )
         elif agg == "min":
-            return _chunked_aggregate(da, "min", batch_size) if use_batched else da.min("time").compute()
+            return (
+                _chunked_aggregate(da, "min", batch_size)
+                if use_batched
+                else da.min("time").compute()
+            )
         elif agg == "max":
-            return _chunked_aggregate(da, "max", batch_size) if use_batched else da.max("time").compute()
+            return (
+                _chunked_aggregate(da, "max", batch_size)
+                if use_batched
+                else da.max("time").compute()
+            )
         elif agg == "anomaly":
             if not baseline:
                 raise ValueError("'anomaly' aggregation requires a 'baseline' interval.")
@@ -279,7 +292,9 @@ def apply_temporal_aggregation(
             if baseline_da.sizes.get("time", 0) == 0:
                 raise ValueError(f"No data found for baseline='{baseline}'.")
             mean_fn: Callable[[xr.DataArray], xr.DataArray] = (
-                (lambda d: _chunked_mean(d, batch_size)) if use_batched else (lambda d: d.mean("time").compute())
+                (lambda d: _chunked_mean(d, batch_size))
+                if use_batched
+                else (lambda d: d.mean("time").compute())
             )
             return mean_fn(da) - mean_fn(baseline_da)
         else:
@@ -437,9 +452,7 @@ class AggregatingReader(Reader):
             return super().tile(tile_x, tile_y, tile_z, tilesize=tilesize, **kwargs)
 
         if not self.tile_exists(tile_x, tile_y, tile_z):
-            raise _TileOutsideBounds(
-                f"Tile(x={tile_x}, y={tile_y}, z={tile_z}) is outside bounds"
-            )
+            raise _TileOutsideBounds(f"Tile(x={tile_x}, y={tile_y}, z={tile_z}) is outside bounds")
 
         # Get tile bounds in WGS84 (the coordinate system of eostrata zarr data).
         tile_bounds_tms = self.tms.xy_bounds(_Tile(x=tile_x, y=tile_y, z=tile_z))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -341,18 +342,22 @@ def execute_zonalstats(body: ExecutionRequest) -> dict:
     }
     ```
     """
+    job_id = uuid.uuid4().hex[:8]
     inp = body.inputs
+
+    n_features = len(
+        (inp.features.get("features") or [inp.features])
+        if isinstance(inp.features, dict)
+        else []
+    )
     logger.info(
-        "zonalstats group=%s variable=%s datetime=%s agg=%s features=%d",
+        "[%s] zonalstats group=%s variable=%s datetime=%s agg=%s features=%d",
+        job_id,
         inp.group,
         inp.variable,
         inp.datetime,
         inp.agg,
-        len(
-            (inp.features.get("features") or [inp.features])
-            if isinstance(inp.features, dict)
-            else []
-        ),
+        n_features,
     )
     fc = inp.features
 
@@ -390,7 +395,8 @@ def execute_zonalstats(body: ExecutionRequest) -> dict:
         raise
     except Exception:
         logger.exception(
-            "zonalstats failed loading group=%s variable=%s datetime=%s",
+            "[%s] zonalstats failed loading group=%s variable=%s datetime=%s",
+            job_id,
             inp.group,
             inp.variable,
             inp.datetime,
@@ -406,7 +412,9 @@ def execute_zonalstats(body: ExecutionRequest) -> dict:
         stats = _feature_stats(da, geom)
         result_features.append({**feat, "statistics": stats})
 
+    logger.info("[%s] zonalstats completed", job_id)
     return {
+        "jobID": job_id,
         "type": "FeatureCollection",
         "features": result_features,
     }

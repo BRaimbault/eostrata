@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from eostrata.aggregate import apply_temporal_aggregation, resolve_accessed_times
 from eostrata.cache import record_access
 from eostrata.config import settings
+from eostrata.log import current_job_id
 from eostrata.ogc.ingest import INGEST_PROCESS_IDS
 
 logger = logging.getLogger(__name__)
@@ -343,6 +344,14 @@ def execute_zonalstats(body: ExecutionRequest) -> dict:
     ```
     """
     job_id = uuid.uuid4().hex[:8]
+    _tok = current_job_id.set(job_id)
+    try:
+        return _execute_zonalstats(job_id, body)
+    finally:
+        current_job_id.reset(_tok)
+
+
+def _execute_zonalstats(job_id: str, body: ExecutionRequest) -> dict:
     inp = body.inputs
 
     n_features = len(
@@ -418,14 +427,21 @@ def execute_zonalstats(body: ExecutionRequest) -> dict:
             content={"jobID": job_id, "detail": "Failed to load dataset."},
         )
 
-    result_features = []
-    for feat in features:
-        geom = feat.get("geometry")
-        if geom is None:
-            result_features.append({**feat, "statistics": {"error": "no geometry"}})
-            continue
-        stats = _feature_stats(da, geom)
-        result_features.append({**feat, "statistics": stats})
+    try:
+        result_features = []
+        for feat in features:
+            geom = feat.get("geometry")
+            if geom is None:
+                result_features.append({**feat, "statistics": {"error": "no geometry"}})
+                continue
+            stats = _feature_stats(da, geom)
+            result_features.append({**feat, "statistics": stats})
+    except Exception:
+        logger.exception("Job %s failed: computing feature statistics", job_id)
+        return JSONResponse(
+            status_code=500,
+            content={"jobID": job_id, "detail": "Failed to compute statistics."},
+        )
 
     logger.info("Job %s succeeded", job_id)
     return {

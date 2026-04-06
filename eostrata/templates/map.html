@@ -950,7 +950,7 @@
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({}));
           const jobTag = err.jobID ? ' [' + err.jobID + ']' : '';
-          statsMsg.textContent = 'Error: ' + (err.detail || resp.statusText) + jobTag;
+          statsMsg.textContent = 'Error: ' + (err.detail || ('HTTP ' + resp.status)) + jobTag;
           _renderPendingTile();
           return;
         }

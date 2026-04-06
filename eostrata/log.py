@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+from contextvars import ContextVar
 from pathlib import Path
 
 # Endpoints polled on a tight loop by the browser (job status, store usage).
@@ -23,6 +24,11 @@ _POLLING_PATHS = frozenset(
     ]
 )
 
+# Current job ID for the active request.  Set this in request handlers to have
+# the job ID automatically prepended to every log line emitted during the call,
+# regardless of which module produced the log record.
+current_job_id: ContextVar[str] = ContextVar("current_job_id", default="")
+
 
 class _SuppressPollingFilter(logging.Filter):
     """Drop uvicorn access-log records for high-frequency polling endpoints."""
@@ -30,6 +36,16 @@ class _SuppressPollingFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         msg = record.getMessage()
         return not any(path in msg for path in _POLLING_PATHS)
+
+
+class _JobIdFilter(logging.Filter):
+    """Prepend the current job ID (from ContextVar) to every log record."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        job_id = current_job_id.get()
+        if job_id:
+            record.msg = f"Job {job_id}: {record.msg}"
+        return True
 
 
 def setup_logging(
@@ -63,10 +79,14 @@ def setup_logging(
 
     root.setLevel(level)
 
+    job_filter = _JobIdFilter()
+
     if rich_console:
         from rich.logging import RichHandler
 
-        root.addHandler(RichHandler(rich_tracebacks=True, show_path=False))
+        handler = RichHandler(rich_tracebacks=True, show_path=False)
+        handler.addFilter(job_filter)
+        root.addHandler(handler)
     else:
         # Plain stream handler so application logs appear in non-TTY environments
         # (e.g. Render, Docker).  Uvicorn owns its own access-log handler, but
@@ -78,6 +98,7 @@ def setup_logging(
                 datefmt="%Y-%m-%dT%H:%M:%SZ",
             )
         )
+        stream_handler.addFilter(job_filter)
         root.addHandler(stream_handler)
 
     # Resolve log file path
@@ -104,6 +125,7 @@ def setup_logging(
                 datefmt="%Y-%m-%dT%H:%M:%SZ",
             )
         )
+        file_handler.addFilter(job_filter)
         root.addHandler(file_handler)
 
         # Uvicorn's dictConfig resets its loggers and disables propagation to the

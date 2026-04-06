@@ -217,10 +217,12 @@ def _load_array(
         if "valid_time" in da.coords and "time" not in da.dims:
             da = da.assign_coords(time=da["valid_time"]).swap_dims({"valid_time": "time"})
 
-        # Spatial pre-clip: only applied when caching is disabled.
-        # When caching is on we compute the full-extent result (so it is
-        # reusable by any tile/stats request) and the clip_bbox is irrelevant.
-        if clip_bbox is not None and settings.agg_cache_maxsize == 0 and "x" in da.dims and "y" in da.dims:
+        # Spatial pre-clip: applied when caching is disabled, OR when the array
+        # has no time dimension (nothing to aggregate and cache, so clip always).
+        # When caching is on and a time dim is present we compute the full-extent
+        # result so it is reusable by any tile/stats request.
+        has_time = "time" in da.dims
+        if clip_bbox is not None and (settings.agg_cache_maxsize == 0 or not has_time) and "x" in da.dims and "y" in da.dims:
             w, s, e, n = clip_bbox
             y_vals = da.y.values
             # y may be descending (north→south) — slice direction must match

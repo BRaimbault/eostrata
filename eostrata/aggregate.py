@@ -52,7 +52,14 @@ def _agg_cache_key(
     agg_method: str | None,
     baseline: str | None,
 ) -> tuple:
-    return (str(src_path), group or "", variable, datetime_str or "", agg_method or "", baseline or "")
+    # Resolve to absolute path so that tile requests (explicit zarr_root URL)
+    # and zonal-stats requests (url or settings.zarr_root) share the same key
+    # even if one uses a relative path or a symlink variant.
+    try:
+        norm = str(Path(src_path).resolve())
+    except Exception:
+        norm = str(src_path)
+    return (norm, group or "", variable, datetime_str or "", agg_method or "", baseline or "")
 
 
 def _get_agg_cache(key: tuple) -> tuple[xr.DataArray, list] | None:
@@ -97,19 +104,21 @@ def invalidate_agg_cache_for_group(group: str) -> None:
 # Semaphore that caps concurrent heavy aggregation operations.
 # Initialised lazily from settings so tests can override max_concurrent_aggregations.
 _agg_semaphore: threading.Semaphore | None = None
+_agg_semaphore_limit: int = 0  # tracks the limit the semaphore was created with
 _agg_semaphore_lock = threading.Lock()
 
 
 def _get_agg_semaphore() -> threading.Semaphore | None:
     """Return the global aggregation semaphore, creating it on first call."""
-    global _agg_semaphore
+    global _agg_semaphore, _agg_semaphore_limit
     limit = _eostrata_config.settings.max_concurrent_aggregations
     if limit <= 0:
         return None
-    if _agg_semaphore is None or _agg_semaphore._value != limit:  # type: ignore[attr-defined]
+    if _agg_semaphore is None or _agg_semaphore_limit != limit:
         with _agg_semaphore_lock:
-            if _agg_semaphore is None or _agg_semaphore._value != limit:  # type: ignore[attr-defined]
+            if _agg_semaphore is None or _agg_semaphore_limit != limit:
                 _agg_semaphore = threading.Semaphore(limit)
+                _agg_semaphore_limit = limit
     return _agg_semaphore
 
 
@@ -479,10 +488,17 @@ class AggregatingReader(Reader):
 
         # Record per-timestamp access AFTER time coord is normalised and BEFORE
         # apply_temporal_aggregation collapses the time dimension.
+        # Store the resolved list on self so tile() can include it in the cache
+        # entry — without it, cache hits in _load_array (zonal-stats) would never
+        # call record_access and timestamps would appear unaccessed to the LRU scorer.
         if self.group:
-            accessed = resolve_accessed_times(self.ds, agg_datetime, agg_method, agg_baseline)
-            if accessed:
-                record_access(Path(self.src_path), self.group, accessed)
+            self._cache_accessed = resolve_accessed_times(
+                self.ds, agg_datetime, agg_method, agg_baseline
+            )
+            if self._cache_accessed:
+                record_access(Path(self.src_path), self.group, self._cache_accessed)
+        else:
+            self._cache_accessed: list = []
 
         # Strip any time-related sel entries — we handle time ourselves via
         # apply_temporal_aggregation so that range queries and agg methods work.
@@ -568,9 +584,9 @@ class AggregatingReader(Reader):
                 agg=self._tile_method,
                 baseline=self._tile_baseline,
             )
-            # resolve_accessed_times was already called in __attrs_post_init__;
-            # store empty list here — access tracking fires per-reader-init.
-            _put_agg_cache(cache_key, agg_2d, [])
+            # Pass the accessed timestamps resolved in __attrs_post_init__ so that
+            # cache hits in _load_array (zonal-stats) can call record_access correctly.
+            _put_agg_cache(cache_key, agg_2d, self._cache_accessed)
             agg_2d = agg_2d.rio.write_crs(self.crs)
             tmp = _XarrayReader(agg_2d, tms=self.tms, options=self.options)
             return tmp.tile(tile_x, tile_y, tile_z, tilesize=ts, **kwargs)

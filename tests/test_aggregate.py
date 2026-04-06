@@ -217,6 +217,24 @@ class TestApplyTemporalAggregation:
         assert float(result.mean()) == pytest.approx((2021.0 + 2022.0) / 2)
 
 
+    def test_agg_anomaly_baseline_outside_datetime_range(self):
+        """Baseline period that does not overlap with datetime_str must still work.
+
+        Regression test: da was sliced to datetime_str BEFORE baseline selection,
+        making non-overlapping baselines always raise ValueError.
+        """
+        da = _make_da([2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022])
+        # datetime_str is 2021-2022, baseline is 2015-2019 — no overlap.
+        result = apply_temporal_aggregation(
+            da,
+            datetime_str="2021-01-01/2022-12-31",
+            agg="anomaly",
+            baseline="2015-01-01/2019-12-31",
+        )
+        # mean(2021,2022) = 2021.5; baseline mean(2015..2019) = 2017.0 → anomaly = 4.5
+        assert float(result.mean()) == pytest.approx(4.5)
+
+
 class TestChunkedAggregation:
     """Batched helpers produce the same result as single-pass xarray reductions."""
 
@@ -270,6 +288,26 @@ class TestChunkedAggregation:
         da = _make_da([5, 2, 8, 1, 3])
         result = _chunked_aggregate(da, "max", batch_size=2)
         np.testing.assert_allclose(result.values, da.max("time").values, rtol=1e-5)
+
+    def test_chunked_mean_nan_handling(self):
+        """_chunked_mean must produce the same result as da.mean("time") for NaN data.
+
+        Regression test: the original implementation used sum/n_total_timesteps,
+        which gave a result 3x too small for a pixel with 2 NaN and 1 valid value.
+        """
+        times = np.array([np.datetime64(f"{y}-01-01") for y in [2020, 2021, 2022]])
+        data = np.array(
+            [
+                [[1.0, np.nan], [np.nan, 4.0]],  # 2020
+                [[np.nan, np.nan], [np.nan, np.nan]],  # 2021 — all NaN
+                [[3.0, np.nan], [np.nan, 8.0]],  # 2022
+            ],
+            dtype="float32",
+        )
+        da = xr.DataArray(data, dims=("time", "y", "x"), coords={"time": times})
+        result = _chunked_mean(da, batch_size=2)
+        expected = da.mean("time").values
+        np.testing.assert_allclose(result.values, expected, rtol=1e-5, equal_nan=True)
 
     def test_apply_uses_batched_path_when_limit_set(self, monkeypatch):
         """apply_temporal_aggregation routes to batched path when limit is exceeded."""

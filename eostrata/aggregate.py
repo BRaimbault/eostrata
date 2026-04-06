@@ -104,10 +104,15 @@ def _chunked_reduce(
 
 
 def _chunked_mean(da: xr.DataArray, batch_size: int) -> xr.DataArray:
-    """Compute da.mean("time") in batches, correctly weighted for unequal final batch."""
-    n = da.sizes["time"]
+    """Compute da.mean("time") in batches, handling NaN values correctly.
+
+    Uses per-pixel non-NaN counts as the denominator so that masked pixels
+    (NaN values common in geospatial/climate data) are weighted correctly.
+    Pixels with zero valid values across all timesteps return NaN.
+    """
     total = _chunked_reduce(da, lambda b: b.sum("time"), lambda a, b: a + b, batch_size)
-    return total / n
+    count = _chunked_reduce(da, lambda b: b.count("time"), lambda a, b: a + b, batch_size)
+    return xr.where(count > 0, total / count, np.nan)
 
 
 def _chunked_aggregate(da: xr.DataArray, agg: AggMethod, batch_size: int) -> xr.DataArray:
@@ -186,6 +191,12 @@ def apply_temporal_aggregation(
         _, first_occurrence = np.unique(time_idx, return_index=True)
         da = da.isel(time=first_occurrence)
 
+    # Keep a reference to the full (sorted, deduplicated) array.  Anomaly
+    # baselines are selected from here so they are not constrained to the
+    # datetime_str window — a user requesting datetime_str="2021/2022" with
+    # baseline="2015/2019" must be able to reach the pre-2021 data.
+    da_full = da
+
     t0, t1 = _parse_datetime_interval(datetime_str)
     if t0:
         t0 = _strip_tz(t0)
@@ -236,7 +247,7 @@ def apply_temporal_aggregation(
             b0 = _strip_tz(b0)
         if b1:
             b1 = _strip_tz(b1)
-        baseline_da = da.sel(time=slice(b0, b1))
+        baseline_da = da_full.sel(time=slice(b0, b1))
         if baseline_da.sizes.get("time", 0) == 0:
             raise ValueError(f"No data found for baseline='{baseline}'.")
         mean_fn: Callable[[xr.DataArray], xr.DataArray] = (

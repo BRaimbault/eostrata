@@ -949,12 +949,14 @@
         });
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({}));
-          statsMsg.textContent = 'Error: ' + (err.detail || resp.statusText);
+          const jobTag = err.jobID ? ' [' + err.jobID + ']' : '';
+          statsMsg.textContent = 'Error: ' + (err.detail || resp.statusText) + jobTag;
           _renderPendingTile();
           return;
         }
         const data = await resp.json();
         stats = data.features?.[0]?.statistics;
+        if (data.jobID) statsMsg.dataset.jobId = data.jobID;
       } catch (e) {
         statsMsg.textContent = 'Request failed.';
         _renderPendingTile();
@@ -962,12 +964,14 @@
       }
 
       if (!stats || stats.error) {
-        statsMsg.textContent = stats?.error || 'No statistics returned.';
+        const jobTag = statsMsg.dataset.jobId ? ' [' + statsMsg.dataset.jobId + ']' : '';
+        statsMsg.textContent = (stats?.error || 'No statistics returned.') + jobTag;
         _renderPendingTile();
         return;
       }
 
-      statsMsg.textContent = stats.count.toLocaleString() + ' valid pixels';
+      const jobId = statsMsg.dataset.jobId || '';
+      statsMsg.textContent = stats.count.toLocaleString() + ' valid pixels' + (jobId ? ' [' + jobId + ']' : '');
       const rows = [
         ['mean', stats.mean], ['min', stats.min],
         ['max', stats.max],   ['std', stats.std],

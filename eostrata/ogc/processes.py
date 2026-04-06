@@ -351,7 +351,7 @@ def execute_zonalstats(body: ExecutionRequest) -> dict:
         else []
     )
     logger.info(
-        "[%s] zonalstats group=%s variable=%s datetime=%s agg=%s features=%d",
+        "Job %s started: zonalstats group=%s variable=%s datetime=%s agg=%s features=%d",
         job_id,
         inp.group,
         inp.variable,
@@ -371,14 +371,22 @@ def execute_zonalstats(body: ExecutionRequest) -> dict:
                 "features": [{"type": "Feature", "geometry": fc, "properties": {}}],
             }
         else:
-            raise HTTPException(
+            logger.warning("Job %s failed — invalid features type", job_id)
+            return JSONResponse(
                 status_code=422,
-                detail="'features' must be a GeoJSON FeatureCollection, Feature or Polygon.",
+                content={
+                    "jobID": job_id,
+                    "detail": "'features' must be a GeoJSON FeatureCollection, Feature or Polygon.",
+                },
             )
 
     features = fc.get("features", [])
     if not features:
-        raise HTTPException(status_code=422, detail="FeatureCollection has no features.")
+        logger.warning("Job %s failed — FeatureCollection has no features", job_id)
+        return JSONResponse(
+            status_code=422,
+            content={"jobID": job_id, "detail": "FeatureCollection has no features."},
+        )
 
     clip_bbox = _features_bbox(features)
     try:
@@ -391,17 +399,24 @@ def execute_zonalstats(body: ExecutionRequest) -> dict:
             baseline=inp.baseline,
             clip_bbox=clip_bbox,
         )
-    except HTTPException:
-        raise
+    except HTTPException as exc:
+        logger.warning("Job %s failed — %s", job_id, exc.detail)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"jobID": job_id, "detail": exc.detail},
+        )
     except Exception:
         logger.exception(
-            "[%s] zonalstats failed loading group=%s variable=%s datetime=%s",
+            "Job %s failed: loading group=%s variable=%s datetime=%s",
             job_id,
             inp.group,
             inp.variable,
             inp.datetime,
         )
-        raise HTTPException(status_code=500, detail="Failed to load dataset.") from None
+        return JSONResponse(
+            status_code=500,
+            content={"jobID": job_id, "detail": "Failed to load dataset."},
+        )
 
     result_features = []
     for feat in features:
@@ -412,7 +427,7 @@ def execute_zonalstats(body: ExecutionRequest) -> dict:
         stats = _feature_stats(da, geom)
         result_features.append({**feat, "statistics": stats})
 
-    logger.info("[%s] zonalstats completed", job_id)
+    logger.info("Job %s succeeded", job_id)
     return {
         "jobID": job_id,
         "type": "FeatureCollection",

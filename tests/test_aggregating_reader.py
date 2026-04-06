@@ -265,14 +265,10 @@ class TestAggregatingReaderCache:
         _CTX_AGG_METHOD.set("mean")
         _CTX_AGG_BASELINE.set(None)
         try:
-            reader1 = AggregatingReader(
-                str(zarr_root), variable="population", group="worldpop/nga"
-            )
+            reader1 = AggregatingReader(str(zarr_root), variable="population", group="worldpop/nga")
             reader1.tile(0, 0, 0)  # cache miss — apply_temporal_aggregation called
 
-            reader2 = AggregatingReader(
-                str(zarr_root), variable="population", group="worldpop/nga"
-            )
+            reader2 = AggregatingReader(str(zarr_root), variable="population", group="worldpop/nga")
             reader2.tile(0, 0, 0)  # cache hit — apply_temporal_aggregation NOT called again
         finally:
             _CTX_AGG_DATETIME.set(None)

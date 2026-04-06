@@ -222,7 +222,12 @@ def _load_array(
         # When caching is on and a time dim is present we compute the full-extent
         # result so it is reusable by any tile/stats request.
         has_time = "time" in da.dims
-        if clip_bbox is not None and (settings.agg_cache_maxsize == 0 or not has_time) and "x" in da.dims and "y" in da.dims:
+        if (
+            clip_bbox is not None
+            and (settings.agg_cache_maxsize == 0 or not has_time)
+            and "x" in da.dims
+            and "y" in da.dims
+        ):
             w, s, e, n = clip_bbox
             y_vals = da.y.values
             # y may be descending (north→south) — slice direction must match
@@ -378,9 +383,7 @@ def _execute_zonalstats(job_id: str, body: ExecutionRequest) -> dict:
     inp = body.inputs
 
     n_features = len(
-        (inp.features.get("features") or [inp.features])
-        if isinstance(inp.features, dict)
-        else []
+        (inp.features.get("features") or [inp.features]) if isinstance(inp.features, dict) else []
     )
     logger.info(
         "Job %s started: zonalstats group=%s variable=%s datetime=%s agg=%s features=%d",

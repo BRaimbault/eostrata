@@ -235,7 +235,6 @@ class TestApplyTemporalAggregation:
         assert result.dims == ("y", "x")
         assert float(result.mean()) == pytest.approx((2021.0 + 2022.0) / 2)
 
-
     def test_agg_anomaly_baseline_outside_datetime_range(self):
         """Baseline period that does not overlap with datetime_str must still work.
 

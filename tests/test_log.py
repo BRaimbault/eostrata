@@ -21,11 +21,11 @@ def _run_setup_logging(**kwargs):
 class TestSetupLogging:
     def test_verbose_sets_debug_level(self):
         root = _run_setup_logging(verbose=True, log_file="", rich_console=False)
-        root.setLevel.assert_called_with(logging.DEBUG)
+        root.setLevel.assert_any_call(logging.DEBUG)
 
     def test_non_verbose_sets_info_level(self):
         root = _run_setup_logging(verbose=False, log_file="", rich_console=False)
-        root.setLevel.assert_called_with(logging.INFO)
+        root.setLevel.assert_any_call(logging.INFO)
 
     def test_duplicate_guard_returns_early(self):
         """If root already has handlers, setup_logging must not add more."""
@@ -46,6 +46,8 @@ class TestSetupLogging:
         root = _run_setup_logging(log_file="", rich_console=False)
         added_types = [type(call.args[0]).__name__ for call in root.addHandler.call_args_list]
         assert "RichHandler" not in added_types
+        # A plain StreamHandler must still be added so app logs reach the console
+        assert "StreamHandler" in added_types
 
     def test_file_handler_added(self, tmp_path):
         root = _run_setup_logging(log_file=str(tmp_path / "test.log"), rich_console=False)
@@ -70,3 +72,28 @@ class TestSetupLogging:
         log_path = tmp_path / "nested" / "deep" / "eostrata.log"
         _run_setup_logging(log_file=str(log_path), rich_console=False)
         assert log_path.parent.exists()
+
+
+class TestSuppressPollingFilter:
+    def test_allows_non_polling_requests(self):
+        from eostrata.log import _SuppressPollingFilter
+
+        f = _SuppressPollingFilter()
+        record = __import__("logging").makeLogRecord(
+            {"msg": 'GET /collections/worldpop HTTP/1.1" 200'}
+        )
+        assert f.filter(record) is True
+
+    def test_suppresses_jobs_endpoint(self):
+        from eostrata.log import _SuppressPollingFilter
+
+        f = _SuppressPollingFilter()
+        record = __import__("logging").makeLogRecord({"msg": 'GET /processes/jobs HTTP/1.1" 200'})
+        assert f.filter(record) is False
+
+    def test_suppresses_store_usage_endpoint(self):
+        from eostrata.log import _SuppressPollingFilter
+
+        f = _SuppressPollingFilter()
+        record = __import__("logging").makeLogRecord({"msg": 'GET /store-usage HTTP/1.1" 200'})
+        assert f.filter(record) is False

@@ -12,7 +12,40 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+from contextvars import ContextVar
 from pathlib import Path
+
+# Endpoints polled on a tight loop by the browser (job status, store usage).
+# Suppress their access-log entries to avoid filling logs with noise.
+_POLLING_PATHS = frozenset(
+    [
+        "/processes/jobs",
+        "/store-usage",
+    ]
+)
+
+# Current job ID for the active request.  Set this in request handlers to have
+# the job ID automatically prepended to every log line emitted during the call,
+# regardless of which module produced the log record.
+current_job_id: ContextVar[str] = ContextVar("current_job_id", default="")
+
+
+class _SuppressPollingFilter(logging.Filter):
+    """Drop uvicorn access-log records for high-frequency polling endpoints."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not any(path in msg for path in _POLLING_PATHS)
+
+
+class _JobIdFilter(logging.Filter):
+    """Prepend the current job ID (from ContextVar) to every log record."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        job_id = current_job_id.get()
+        if job_id:
+            record.msg = f"Job {job_id}: {record.msg}"
+        return True
 
 
 def setup_logging(
@@ -32,7 +65,8 @@ def setup_logging(
         Pass an empty string or ``Path("")`` to disable file logging entirely.
     rich_console:
         If True (default), attach a Rich console handler for terminal output.
-        Set to False when attaching to a server that manages its own console output.
+        Set to False to use a plain stream handler instead (e.g. in server/Docker contexts
+        where Rich formatting is unwanted but application logs must still reach stdout/stderr).
     """
     from eostrata.config import settings
 
@@ -45,10 +79,27 @@ def setup_logging(
 
     root.setLevel(level)
 
+    job_filter = _JobIdFilter()
+
     if rich_console:
         from rich.logging import RichHandler
 
-        root.addHandler(RichHandler(rich_tracebacks=True, show_path=False))
+        handler = RichHandler(rich_tracebacks=True, show_path=False)
+        handler.addFilter(job_filter)
+        root.addHandler(handler)
+    else:
+        # Plain stream handler so application logs appear in non-TTY environments
+        # (e.g. Render, Docker).  Uvicorn owns its own access-log handler, but
+        # does NOT forward propagated app records — we need our own handler here.
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(
+            logging.Formatter(
+                fmt="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
+                datefmt="%Y-%m-%dT%H:%M:%SZ",
+            )
+        )
+        stream_handler.addFilter(job_filter)
+        root.addHandler(stream_handler)
 
     # Resolve log file path
     if log_file is None:
@@ -74,6 +125,7 @@ def setup_logging(
                 datefmt="%Y-%m-%dT%H:%M:%SZ",
             )
         )
+        file_handler.addFilter(job_filter)
         root.addHandler(file_handler)
 
         # Uvicorn's dictConfig resets its loggers and disables propagation to the
@@ -84,3 +136,11 @@ def setup_logging(
             logging.getLogger(uvicorn_logger_name).addHandler(file_handler)
 
         logging.getLogger(__name__).debug("File logging enabled: %s", log_path)
+
+    # Suppress high-frequency polling requests from the access log regardless
+    # of whether file logging is enabled (applies to the console too).
+    logging.getLogger("uvicorn.access").addFilter(_SuppressPollingFilter())
+
+    # Silence chatty third-party INFO logs that fire on every tile request.
+    for _noisy in ("titiler", "rasterio", "botocore", "boto3", "urllib3"):
+        logging.getLogger(_noisy).setLevel(logging.WARNING)

@@ -512,3 +512,79 @@ class TestFeatureStatsClipFailure:
         }
         result = _feature_stats(da, geom_outside)
         assert "error" in result
+
+
+class TestZonalStatsUnexpectedError:
+    def test_unexpected_load_error_returns_500(self, app_client, monkeypatch):
+        """Non-HTTP exceptions from _load_array are logged and re-raised as 500."""
+        from eostrata.ogc import processes
+
+        monkeypatch.setattr(
+            processes, "_load_array", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("boom"))
+        )
+        resp = app_client.post(
+            "/processes/zonalstats/execution",
+            json={
+                "inputs": {
+                    "group": "worldpop/nga",
+                    "variable": "population",
+                    "features": {
+                        "type": "FeatureCollection",
+                        "features": [
+                            {
+                                "type": "Feature",
+                                "geometry": {
+                                    "type": "Polygon",
+                                    "coordinates": [[[2, 4], [15, 4], [15, 14], [2, 14], [2, 4]]],
+                                },
+                                "properties": {},
+                            }
+                        ],
+                    },
+                }
+            },
+        )
+        assert resp.status_code == 500
+        assert "Failed to load dataset" in resp.json()["detail"]
+
+
+class TestFeaturesBbox:
+    def test_returns_none_for_empty_features(self):
+        from eostrata.ogc.processes import _features_bbox
+
+        assert _features_bbox([]) is None
+
+    def test_returns_none_when_no_geometry(self):
+        from eostrata.ogc.processes import _features_bbox
+
+        assert _features_bbox([{"properties": {}}]) is None
+
+    def test_single_polygon(self):
+        from eostrata.ogc.processes import _features_bbox
+
+        feat = {
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[[2, 4], [15, 4], [15, 14], [2, 14], [2, 4]]],
+            }
+        }
+        w, s, e, n = _features_bbox([feat])
+        assert w < 2 and s < 4 and e > 15 and n > 14  # buffered
+
+    def test_ascending_y_clip(self, tmp_path):
+        """When y coords are ascending (south→north), slice uses (s, n) order."""
+        import numpy as np
+        import xarray as xr
+
+        zarr_root = tmp_path / "zarr"
+        y = np.linspace(0.0, 10.0, 20)  # ascending
+        x = np.linspace(0.0, 10.0, 20)
+        data = np.ones((20, 20), dtype="float32")
+        ds = xr.Dataset({"val": (["y", "x"], data)}, coords={"y": y, "x": x})
+        ds.to_zarr(str(zarr_root), group="test/asc", mode="w", consolidated=True)
+
+        from eostrata.ogc.processes import _load_array
+
+        da = _load_array(str(zarr_root), "test/asc", "val", clip_bbox=(2.0, 3.0, 8.0, 7.0))
+        assert da.x.values.min() >= 1.5  # clipped
+        assert da.x.values.max() <= 8.5

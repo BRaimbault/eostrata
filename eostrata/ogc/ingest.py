@@ -42,19 +42,23 @@ import eostrata.sources  # noqa: E402,F401 — triggers auto-discovery of all so
 from eostrata.sources.base import all_sources as _all_sources  # noqa: E402
 from eostrata.sources.base import get_source  # noqa: E402
 
-INGEST_SOURCES = [
-    {
+
+def _source_entry(cls: type) -> dict:
+    ok, reason = cls.is_configured()
+    return {
         "id": cls.id,
-        "label": f"{cls.id} — {cls.collection_title}",
+        "label": cls.collection_title,
         "fields": cls.ui_fields,
         "variables": cls.VARIABLES if cls.VARIABLES else [cls.VARIABLE],
         "variable_descriptions": cls.VARIABLE_DESCRIPTIONS,
         "temporal_resolution": cls.temporal_resolution,
         "lag_days": cls.default_lag_days,
+        "configured": ok,
+        "config_error": reason,
     }
-    for cls in _all_sources()
-    if cls.ui_fields
-]
+
+
+INGEST_SOURCES = [_source_entry(cls) for cls in _all_sources() if cls.ui_fields]
 
 # Derived from INGEST_SOURCES so we never have to update the two separately.
 _SOURCE_IDS = [s["id"] for s in INGEST_SOURCES]
@@ -97,7 +101,7 @@ _INGEST_DESCRIPTION = {
             "title": "Months",
             "description": (
                 "List of months 1-12, or the string 'ALL' for every month "
-                "(chirps/cds/sentinel_ndvi only; default: latest available)."
+                "(chirps/cds/ndvi only; default: latest available)."
             ),
             "schema": {
                 "oneOf": [
@@ -110,7 +114,7 @@ _INGEST_DESCRIPTION = {
             "title": "Dekads",
             "description": (
                 "List of dekads 1-3, or the string 'ALL' for all three dekads "
-                "(sentinel_ndvi only; default: latest available)."
+                "(ndvi only; default: latest available)."
             ),
             "schema": {
                 "oneOf": [
@@ -166,10 +170,10 @@ class IngestInputs(BaseModel):
     years: list[int] | None = Field(None, description="Years to ingest")
     months: list[Month] | Literal["ALL"] | None = Field(
         None,
-        description="Months 1-12 to ingest, or 'ALL' for every month (chirps/cds/sentinel_ndvi)",
+        description="Months 1-12 to ingest, or 'ALL' for every month (chirps/cds/ndvi)",
     )
     dekads: list[Dekad] | Literal["ALL"] | None = Field(
-        None, description="Dekads 1-3 to ingest, or 'ALL' for all three (sentinel_ndvi only)"
+        None, description="Dekads 1-3 to ingest, or 'ALL' for all three (ndvi only)"
     )
     days: list[Day] | Literal["ALL"] | None = Field(
         None,
@@ -217,7 +221,7 @@ class IngestExecutionRequest(BaseModel):
                 {"inputs": {"source": "cds", "variable": "t2m", "years": [2023]}},
                 {
                     "inputs": {
-                        "source": "sentinel_ndvi",
+                        "source": "cgls",
                         "years": [2024],
                         "months": [1],
                         "dekads": [1, 2, 3],
@@ -237,7 +241,7 @@ def _run_job(job_id: str, fn, **kwargs) -> None:
     fn_name = getattr(fn, "__name__", repr(fn))
     logger.info("Job %s started: %s", job_id, fn_name)
     try:
-        failed, saved = fn(**kwargs)
+        failed, saved = fn(job_id=job_id, **kwargs)
         if not saved:
             if failed:
                 msg = f"Nothing ingested — {len(failed)} period(s) failed: {', '.join(failed)}"

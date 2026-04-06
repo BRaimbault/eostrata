@@ -12,6 +12,7 @@ import xarray as xr
 
 from eostrata.cache import (
     _DEBOUNCE_S,
+    _TOUCH_CACHE,
     _access_dir,
     check_and_evict,
     evict_group,
@@ -82,6 +83,22 @@ class TestRecordAccess:
         access_dir = _access_dir(tmp_path, "worldpop/nga")
         assert not access_dir.exists()
 
+    def test_debounce_slow_path_disk_mtime_recent(self, tmp_path):
+        """When _TOUCH_CACHE is cold but the sentinel mtime is recent, lines 247-248 fire."""
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020])
+        adir = _access_dir(tmp_path, "worldpop/nga")
+        adir.mkdir(parents=True, exist_ok=True)
+        sentinel = adir / "2020-01-01T00:00:00"
+        sentinel.touch()  # fresh mtime — within _DEBOUNCE_S
+
+        # Evict from the in-memory cache so the fast path is skipped.
+        _TOUCH_CACHE.pop(str(sentinel), None)
+
+        record_access(tmp_path, "worldpop/nga", [np.datetime64("2020-01-01")])
+
+        # Sentinel was not re-touched but the cache key is now populated.
+        assert str(sentinel) in _TOUCH_CACHE
+
     def test_oserror_is_silenced(self, tmp_path, mocker):
         """record_access must not raise even if the access dir cannot be created."""
         mocker.patch("eostrata.cache.Path.mkdir", side_effect=OSError("read-only"))
@@ -123,6 +140,24 @@ class TestListTimestamps:
         _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021])
         ts_list = list_timestamps(tmp_path, "worldpop/nga")
         assert all(ts[1] > 0 for ts in ts_list)
+
+    def test_missing_group_dir_returns_zero_ingestion_time(self, tmp_path, mocker):
+        """When group_dir doesn't exist, ingestion_time defaults to 0.0 (lines 419-420)."""
+        import xarray as xr
+
+        zarr_root = tmp_path / "store"
+        _write_fake_group_with_times(zarr_root, "worldpop/nga", [2020])
+        real_ds = xr.open_zarr(str(zarr_root), group="worldpop/nga", consolidated=False)
+
+        # Redirect list_timestamps to an empty root so group_dir does not exist.
+        other_root = tmp_path / "other"
+        other_root.mkdir()
+        mocker.patch("eostrata.cache.xr.open_zarr", return_value=real_ds)
+        result = list_timestamps(other_root, "worldpop/nga")
+        real_ds.close()
+
+        assert len(result) == 1
+        assert result[0][3] == 0.0  # ingestion_time == 0.0
 
 
 class TestStoreSizeMb:
@@ -181,6 +216,31 @@ class TestEvictGroup:
     def test_nonexistent_group_returns_zero(self, tmp_path):
         freed = evict_group(tmp_path, "worldpop/nonexistent")
         assert freed == 0.0
+
+    def test_removes_access_sentinels_when_present(self, tmp_path):
+        """evict_group should also remove the access sentinel directory if it exists."""
+        _write_fake_group_with_times(tmp_path, "worldpop/nga", [2020, 2021])
+        record_access(tmp_path, "worldpop/nga", [np.datetime64("2020-01-01")])
+        adir = _access_dir(tmp_path, "worldpop/nga")
+        assert adir.exists()
+        evict_group(tmp_path, "worldpop/nga")
+        assert not adir.exists()
+
+
+class TestConsolidateMetadataWithTimeout:
+    def test_timeout_logs_warning_and_does_not_raise(self, tmp_path, mocker):
+        """FuturesTimeoutError during consolidation should only log a warning."""
+        import time
+
+        from eostrata.cache import _consolidate_metadata_with_timeout
+
+        # Block consolidation indefinitely so the short timeout fires.
+        mocker.patch(
+            "eostrata.cache.zarr.consolidate_metadata",
+            side_effect=lambda *a, **k: time.sleep(60),
+        )
+        # Must complete without raising — just logs a warning.
+        _consolidate_metadata_with_timeout(tmp_path, timeout_s=0)
 
 
 class TestEvictTimestamp:

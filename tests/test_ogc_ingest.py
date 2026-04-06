@@ -85,6 +85,15 @@ class TestInputValidation:
         resp = client.post("/processes/ingest/execution", json={"inputs": {}})
         assert resp.status_code == 422
 
+    def test_too_many_queued_returns_429(self, client):
+        from unittest.mock import MagicMock, patch
+
+        mock_settings = MagicMock()
+        mock_settings.ingest_max_queued = 0
+        with patch("eostrata.ogc.ingest.settings", mock_settings):
+            resp = client.post("/processes/ingest/execution", json={"inputs": {"source": "chirps"}})
+        assert resp.status_code == 429
+
     def test_invalid_source_returns_422(self, client):
         resp = client.post("/processes/ingest/execution", json={"inputs": {"source": "sentinel"}})
         assert resp.status_code == 422
@@ -990,7 +999,7 @@ class TestRebuildCatalogFromZarr:
 
         assert results == {}
 
-    def test_sentinel_ndvi_group_registered(self, tmp_path):
+    def test_ndvi_group_registered(self, tmp_path):
         from eostrata.ingestion import rebuild_catalog_from_zarr
 
         zarr_root = tmp_path / "zarr"
@@ -1001,14 +1010,32 @@ class TestRebuildCatalogFromZarr:
         with (
             patch(
                 "eostrata.cache.list_groups",
-                return_value=[("sentinel_ndvi/global", 5.0, 0.0)],
+                return_value=[("cgls/global", 5.0, 0.0)],
             ),
             patch("xarray.open_zarr", return_value=mock_ds),
             patch("eostrata.catalog.save"),
         ):
             results = rebuild_catalog_from_zarr(zarr_root=zarr_root, catalog_path=catalog_path)
 
-        assert results == {"sentinel_ndvi/global": 3}
+        assert results == {"cgls/global": 3}
+
+    def test_group_with_empty_times_is_skipped(self, tmp_path):
+        """A group whose zarr has zero timestamps produces dts=[] and is skipped (line 180)."""
+        from eostrata.ingestion import rebuild_catalog_from_zarr
+
+        zarr_root = tmp_path / "zarr"
+        zarr_root.mkdir()
+        catalog_path = tmp_path / "catalog.json"
+        empty_ds = _mock_zarr_ds(np.array([], dtype="datetime64[ns]"))
+
+        with (
+            patch("eostrata.cache.list_groups", return_value=[("worldpop/nga", 0.0, 0.0)]),
+            patch("xarray.open_zarr", return_value=empty_ds),
+            patch("eostrata.catalog.save"),
+        ):
+            results = rebuild_catalog_from_zarr(zarr_root=zarr_root, catalog_path=catalog_path)
+
+        assert results == {}
 
 
 # ── Sentinel NDVI OGC execution ───────────────────────────────────────────────
@@ -1021,7 +1048,7 @@ class TestSentinelNDVIExecution:
                 "/processes/ingest/execution",
                 json={
                     "inputs": {
-                        "source": "sentinel_ndvi",
+                        "source": "cgls",
                         "years": [2024],
                         "months": [1],
                         "dekads": [1],
@@ -1037,7 +1064,7 @@ class TestSentinelNDVIExecution:
                 "/processes/ingest/execution",
                 json={
                     "inputs": {
-                        "source": "sentinel_ndvi",
+                        "source": "cgls",
                         "years": [2024],
                         "months": [3],
                         "dekads": [2],
@@ -1053,7 +1080,7 @@ class TestSentinelNDVIExecution:
         with patch("eostrata.ingestion.run_ingest", return_value=([], True)) as mock_fn:
             client.post(
                 "/processes/ingest/execution",
-                json={"inputs": {"source": "sentinel_ndvi", "dekads": "ALL"}},
+                json={"inputs": {"source": "cgls", "dekads": "ALL"}},
             )
         assert mock_fn.call_args.kwargs["dekads"] == [1, 2, 3]
 
@@ -1061,7 +1088,7 @@ class TestSentinelNDVIExecution:
         with patch("eostrata.ingestion.run_ingest", return_value=([], True)) as mock_fn:
             client.post(
                 "/processes/ingest/execution",
-                json={"inputs": {"source": "sentinel_ndvi", "days": "ALL"}},
+                json={"inputs": {"source": "cgls", "days": "ALL"}},
             )
         assert mock_fn.call_args.kwargs.get("days") in (None, list(range(1, 32)))
 
@@ -1069,7 +1096,7 @@ class TestSentinelNDVIExecution:
         with patch("eostrata.ingestion.run_ingest", return_value=([], True)):
             resp = client.post(
                 "/processes/ingest/execution",
-                json={"inputs": {"source": "sentinel_ndvi", "days": [1, 5]}},
+                json={"inputs": {"source": "cgls", "days": [1, 5]}},
             )
         assert resp.status_code == 201
 
@@ -1080,7 +1107,7 @@ class TestSentinelNDVIExecution:
         ):
             resp = client.post(
                 "/processes/ingest/execution",
-                json={"inputs": {"source": "sentinel_ndvi"}},
+                json={"inputs": {"source": "cgls"}},
             )
         job = client.get(f"/processes/jobs/{resp.json()['jobID']}").json()
         assert job["status"] == "failed"
@@ -1100,16 +1127,16 @@ class TestSentinelNDVIIngestion:
         with ExitStack() as stack:
             src, mock_register, mock_save = _setup_source(
                 stack,
-                "sentinel_ndvi",
-                "sentinel_ndvi/global",
+                "cgls",
+                "cgls/global",
                 mock_ds,
                 tmp_path,
                 periods=[("2024-03-d1", {"year": 2024, "month": 3, "dekad": 1})],
-                collection_id="sentinel_ndvi",
-                VARIABLE="ndvi",
+                collection_id="cgls",
+                VARIABLE="cgls",
             )
             ingestion.run_ingest(
-                "sentinel_ndvi",
+                "cgls",
                 years=[2024],
                 months=[3],
                 dekads=[1],
@@ -1132,8 +1159,8 @@ class TestSentinelNDVIIngestion:
         with ExitStack() as stack:
             src, mock_register, _ = _setup_source(
                 stack,
-                "sentinel_ndvi",
-                "sentinel_ndvi/global",
+                "cgls",
+                "cgls/global",
                 _mock_ds(),
                 tmp_path,
                 periods=[
@@ -1141,11 +1168,11 @@ class TestSentinelNDVIIngestion:
                     ("2024-01-d2", {"year": 2024, "month": 1, "dekad": 2}),
                     ("2024-01-d3", {"year": 2024, "month": 1, "dekad": 3}),
                 ],
-                collection_id="sentinel_ndvi",
-                VARIABLE="ndvi",
+                collection_id="cgls",
+                VARIABLE="cgls",
             )
             ingestion.run_ingest(
-                "sentinel_ndvi",
+                "cgls",
                 years=[2024],
                 months=[1],
                 dekads=[1, 2, 3],
@@ -1166,17 +1193,17 @@ class TestSentinelNDVIIngestion:
         with ExitStack() as stack:
             src, _, mock_save = _setup_source(
                 stack,
-                "sentinel_ndvi",
-                "sentinel_ndvi/global",
+                "cgls",
+                "cgls/global",
                 _mock_ds(),
                 tmp_path,
                 periods=[("2024-01-d1", {"year": 2024, "month": 1, "dekad": 1})],
-                collection_id="sentinel_ndvi",
-                VARIABLE="ndvi",
+                collection_id="cgls",
+                VARIABLE="cgls",
             )
             src.download.side_effect = RuntimeError("network error")
             failed, saved = ingestion.run_ingest(
-                "sentinel_ndvi",
+                "cgls",
                 years=[2024],
                 months=[1],
                 dekads=[1],
@@ -1198,17 +1225,17 @@ class TestSentinelNDVIIngestion:
         with ExitStack() as stack:
             src, _, mock_save = _setup_source(
                 stack,
-                "sentinel_ndvi",
-                "sentinel_ndvi/global",
+                "cgls",
+                "cgls/global",
                 _mock_ds(),
                 tmp_path,
                 periods=[("2024-01-d1", {"year": 2024, "month": 1, "dekad": 1})],
-                collection_id="sentinel_ndvi",
-                VARIABLE="ndvi",
+                collection_id="cgls",
+                VARIABLE="cgls",
             )
             src.to_zarr.side_effect = RuntimeError("zarr error")
             failed, saved = ingestion.run_ingest(
-                "sentinel_ndvi",
+                "cgls",
                 years=[2024],
                 months=[1],
                 dekads=[1],

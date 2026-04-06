@@ -314,10 +314,10 @@ class TestTROPOMISource:
         assert self.source.zarr_group(variable="aer_ai") == "tropomi/aer_ai"
 
     def test_stac_item_id_default(self):
-        assert self.source.stac_item_id() == "tropomi_no2"
+        assert self.source.stac_item_id() == "no2"
 
     def test_stac_item_id_custom_variable(self):
-        assert self.source.stac_item_id(variable="ch4") == "tropomi_ch4"
+        assert self.source.stac_item_id(variable="ch4") == "ch4"
 
     def test_stac_properties(self):
         props = self.source.stac_properties(variable="no2", year=2023, month=6, day=15)
@@ -342,7 +342,7 @@ class TestTROPOMISource:
 
     def test_catalog_meta(self):
         meta = TROPOMISource.catalog_meta("no2")
-        assert meta["item_id"] == "tropomi_no2"
+        assert meta["item_id"] == "no2"
         assert meta["variable"] == "no2"
 
     def test_ui_fields_include_days(self):
@@ -395,7 +395,7 @@ class TestTROPOMIStacRegistrations:
         period_kwargs = {"variable": "co", "year": 2022, "month": 8, "day": 10}
         items = self.source.stac_registrations(ds, period_kwargs)
         item = items[0]
-        assert item["item_id"] == "tropomi_co"
+        assert item["item_id"] == "co"
         assert item["datetime_"] == datetime(2022, 8, 10, tzinfo=UTC)
         assert item["variable"] == "co"
         assert PROP_VARIABLE in item["extra_properties"]
@@ -665,3 +665,21 @@ class TestTROPOMIToZarrWritesDailyGrid:
 
         expected_time = np.datetime64("2023-06-15", "ns")
         assert expected_time in ds["time"].values
+
+
+class TestIsConfigured:
+    def test_true_when_credentials_set(self, monkeypatch):
+        from eostrata.config import settings
+
+        monkeypatch.setattr(settings, "cdse_user", "u@x.com")
+        monkeypatch.setattr(settings, "cdse_password", "s3cr3t")
+        ok, msg = TROPOMISource.is_configured()
+        assert ok is True and msg == ""
+
+    def test_false_when_credentials_missing(self, monkeypatch):
+        from eostrata.config import settings
+
+        monkeypatch.setattr(settings, "cdse_user", "")
+        monkeypatch.setattr(settings, "cdse_password", "")
+        ok, msg = TROPOMISource.is_configured()
+        assert ok is False and "CDSE" in msg

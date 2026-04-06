@@ -107,6 +107,29 @@ class TestExamples:
         assert "zonalstats_body" in item
 
 
+class TestLifespanStorageCheck:
+    def test_unwritable_storage_dir_raises(self, tmp_path, monkeypatch):
+        """lifespan should raise RuntimeError if a storage directory is not writable."""
+        import importlib
+        from unittest.mock import patch
+
+        monkeypatch.setenv("EOSTRATA_CATALOG_PATH", str(tmp_path / "catalog.json"))
+        monkeypatch.setenv("EOSTRATA_ZARR_ROOT", str(tmp_path / "zarr"))
+
+        import eostrata.config as cfg_mod
+
+        importlib.reload(cfg_mod)
+
+        from eostrata.server import app
+
+        with (
+            patch("os.access", return_value=False),
+            pytest.raises(RuntimeError, match="not writable"),
+            TestClient(app),
+        ):
+            pass
+
+
 class TestMapViewer:
     def test_returns_html(self, client):
         resp = client.get("/map")

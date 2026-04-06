@@ -294,7 +294,7 @@
   <span class="sep">·</span>
   <nav>
     <a href="/map">map</a>
-    <a href="/docs">api docs</a>
+    <a href="/docs">docs</a>
   </nav>
   <span class="spacer"></span>
   <span id="scheduler-status">
@@ -308,7 +308,10 @@
 
   <div class="section-header">
     <h2>Scheduled Jobs</h2>
-    <button class="btn" id="add-btn" onclick="showAddForm()">+ Add Job</button>
+    <div style="display:flex;gap:8px">
+      <button class="btn secondary" id="refresh-btn" onclick="fetchJobs()" title="Refresh job list">↻ Refresh</button>
+      <button class="btn" id="add-btn" onclick="showAddForm()">+ Add Job</button>
+    </div>
   </div>
 
   <!-- Failures banner -->
@@ -413,6 +416,8 @@ fetchJobs();
 
 /* ── Data fetching ─────────────────────────────────────────────────────── */
 async function fetchJobs() {
+  const refreshBtn = document.getElementById('refresh-btn');
+  if (refreshBtn) { refreshBtn.disabled = true; refreshBtn.textContent = '↻'; }
   try {
     const res = await fetch('/scheduler/jobs');
     if (res.status === 503) {
@@ -431,6 +436,8 @@ async function fetchJobs() {
   } catch (e) {
     setStatus('error', 'Error');
     showErrorState('Failed to load scheduler jobs: ' + e.message);
+  } finally {
+    if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.textContent = '↻ Refresh'; }
   }
 }
 
@@ -446,12 +453,14 @@ function showErrorState(msg) {
   const el = document.getElementById('error-state');
   el.textContent = msg;
   el.style.display = 'block';
+  document.getElementById('add-btn').disabled = true;
 }
 
 /* ── Render jobs table ──────────────────────────────────────────────────── */
 function renderJobs() {
   const tbody = document.getElementById('jobs-tbody');
   document.getElementById('error-state').style.display = 'none';
+  document.getElementById('add-btn').disabled = false;
 
   if (jobs.length === 0) {
     tbody.innerHTML = '';

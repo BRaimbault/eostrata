@@ -567,6 +567,13 @@ def evict_timestamp(
     # Invalidate the size cache so the next store_size_mb() call re-measures.
     _invalidate_size_cache(zarr_root)
 
+    # Invalidate any cached aggregated arrays for this group — they reference
+    # the evicted timestamp and must not be served after it is removed.
+    # Deferred import avoids the circular aggregate → cache → aggregate chain.
+    from eostrata.aggregate import invalidate_agg_cache_for_group
+
+    invalidate_agg_cache_for_group(group_path)
+
     # Refresh the root consolidated metadata so tile requests don't read stale
     # time encoding from before the eviction.
     # Uses a thread + Future so the 30-second timeout works from any thread

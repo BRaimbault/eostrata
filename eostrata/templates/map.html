@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8"/>
   <title>eostrata viewer</title>
@@ -23,7 +23,8 @@
     #controls {
       position: absolute; top: 10px; left: 10px; z-index: 1000;
       background: #fff; padding: 14px 16px; border-radius: 8px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.18); min-width: 290px; max-width: 310px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+      width: 300px; box-sizing: border-box; overflow: hidden;
     }
     #controls h3 {
       margin: 0; font-size: 14px; font-weight: 600; color: #111827;
@@ -174,7 +175,9 @@
     }
     .badge-running    { background: #dbeafe; color: #1e40af; }
     .badge-successful { background: #dcfce7; color: #166534; }
+    .badge-partial    { background: #fef9c3; color: #854d0e; }
     .badge-failed     { background: #fee2e2; color: #991b1b; }
+    .job-message { font-size: 10px; color: #854d0e; margin-top: 3px; }
 
     /* Ingest tab section headers */
     .ing-section-hdr {
@@ -193,19 +196,19 @@
     .ing-section-hdr button:hover { background: #e5e7eb; }
 
     /* ── Config tab ─────────────────────────────────────────────────────── */
-    .cfg-section { margin-bottom: 10px; }
+    .cfg-section { margin-bottom: 7px; }
     .cfg-hdr {
-      font-size: 11px; font-weight: 500; color: #6b7280;
-      text-transform: uppercase; letter-spacing: 0.05em;
-      margin-bottom: 5px;
+      font-size: 10px; font-weight: 600; color: #9ca3af;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      margin-bottom: 3px;
     }
     .cfg-grid {
-      display: grid; grid-template-columns: auto 1fr; gap: 3px 10px;
-      font-size: 12px;
+      display: grid; grid-template-columns: auto 1fr; gap: 2px 8px;
+      font-size: 11px;
     }
     .cfg-key { color: #9ca3af; white-space: nowrap; }
     .cfg-val { color: #111827; font-weight: 500; word-break: break-all; }
-    .cfg-path { font-family: monospace; font-size: 11px; font-weight: 400; }
+    .cfg-path { font-family: monospace; font-size: 10px; font-weight: 400; }
     .cfg-group-toggle {
       width: 100%; text-align: left; background: #f9fafb; border: none;
       padding: 4px 6px; cursor: pointer; font-family: monospace; font-weight: 600;
@@ -321,16 +324,29 @@
       <label>Colormap</label>
       <select id="sel-colormap">
         <option value="">default</option>
-        <option value="viridis">viridis</option>
-        <option value="plasma">plasma</option>
-        <option value="inferno">inferno</option>
-        <option value="magma">magma</option>
-        <option value="coolwarm">coolwarm</option>
+        <optgroup label="Sequential">
+          <option value="viridis" selected>viridis</option>
+          <option value="plasma">plasma</option>
+          <option value="inferno">inferno</option>
+          <option value="magma">magma</option>
+          <option value="blues">blues</option>
+          <option value="greens">greens</option>
+          <option value="reds">reds</option>
+          <option value="ylorbr">ylorbr</option>
+          <option value="ylorrd">ylorrd</option>
+        </optgroup>
+        <optgroup label="Diverging">
+          <option value="coolwarm">coolwarm</option>
+          <option value="rdbu">rdbu</option>
+          <option value="rdylgn">rdylgn</option>
+          <option value="spectral">spectral</option>
+          <option value="bwr">bwr</option>
+        </optgroup>
       </select>
-      <label>Rescale (min,max)</label>
-      <input id="inp-rescale" type="text" placeholder="e.g. 0,1000"/>
+      <label>Value range (min,max)</label>
+      <input id="inp-rescale" type="text" placeholder="e.g. 0,1000 — blank = auto" disabled/>
       <label class="label-checkbox">
-        <input id="chk-autoscale" type="checkbox"/>
+        <input id="chk-autoscale" type="checkbox" checked/>
         Auto-scale from stats
       </label>
 
@@ -338,7 +354,7 @@
       <div id="status"></div>
       <div id="stats-section">
         <hr class="section-divider"/>
-        <h4>Zonal stats — bbox</h4>
+        <h4>Statistics — bbox</h4>
         <div id="stats-grid"></div>
         <div id="stats-msg"></div>
       </div>
@@ -350,6 +366,7 @@
       <!-- Start job form — options populated from SOURCES by initIngestForm() -->
       <label>Source</label>
       <select id="ing-source" onchange="onIngSourceChange()"></select>
+      <div id="ing-config-warning" style="display:none;font-size:11px;color:#b45309;margin-top:4px"></div>
 
       <div id="ing-iso3-row" style="display:none">
         <label>ISO3 country code</label>
@@ -398,7 +415,10 @@
     <div id="tab-quota-content" class="tab-panel" style="display:none">
 
       <div class="cfg-section">
-        <div class="cfg-hdr">Disk usage</div>
+        <div class="cfg-hdr" style="display:flex;align-items:center;justify-content:space-between">
+          Disk usage
+          <button id="btn-quota-refresh" onclick="populateQuota()" style="font-size:11px;padding:2px 8px;border:1px solid #d1d5db;border-radius:4px;background:#f9fafb;cursor:pointer;color:#374151">↻ Refresh</button>
+        </div>
         <div class="cfg-grid">
           <span class="cfg-key">Used</span><span id="cfg-used" class="cfg-val"></span>
           <span class="cfg-key">Quota</span><span id="cfg-quota" class="cfg-val"></span>
@@ -438,10 +458,13 @@
       <div class="cfg-section">
         <div class="cfg-hdr">Bounding box</div>
         <div class="cfg-grid">
-          <span class="cfg-key">West</span><span id="cfg-bbox-w" class="cfg-val"></span>
-          <span class="cfg-key">South</span><span id="cfg-bbox-s" class="cfg-val"></span>
-          <span class="cfg-key">East</span><span id="cfg-bbox-e" class="cfg-val"></span>
-          <span class="cfg-key">North</span><span id="cfg-bbox-n" class="cfg-val"></span>
+          <span class="cfg-key">W / S / E / N</span>
+          <span class="cfg-val">
+            <span id="cfg-bbox-w"></span> /
+            <span id="cfg-bbox-s"></span> /
+            <span id="cfg-bbox-e"></span> /
+            <span id="cfg-bbox-n"></span>
+          </span>
         </div>
       </div>
 
@@ -451,6 +474,27 @@
           <span class="cfg-key">Zarr root</span><span id="cfg-zarr-root" class="cfg-val cfg-path"></span>
           <span class="cfg-key">Raw dir</span><span id="cfg-raw-dir" class="cfg-val cfg-path"></span>
           <span class="cfg-key">Catalog</span><span id="cfg-catalog" class="cfg-val cfg-path"></span>
+          <span class="cfg-key">Log file</span><span id="cfg-log-file" class="cfg-val cfg-path"></span>
+        </div>
+      </div>
+
+      <div class="cfg-section">
+        <div class="cfg-hdr">Ingestion</div>
+        <div class="cfg-grid">
+          <span class="cfg-key">Workers</span><span id="cfg-ingest-workers" class="cfg-val"></span>
+          <span class="cfg-key">Max queued</span><span id="cfg-ingest-queued" class="cfg-val"></span>
+        </div>
+      </div>
+
+      <div class="cfg-section">
+        <div class="cfg-hdr">Performance</div>
+        <div class="cfg-grid">
+          <span class="cfg-key">Chunk size</span><span id="cfg-chunk-size" class="cfg-val"></span>
+          <span class="cfg-key">Agg batch</span><span id="cfg-agg-batch" class="cfg-val"></span>
+          <span class="cfg-key">Batch size</span><span id="cfg-agg-batch-size" class="cfg-val"></span>
+          <span class="cfg-key">Concurrent agg</span><span id="cfg-concurrent-agg" class="cfg-val"></span>
+          <span class="cfg-key">Track access</span><span id="cfg-track-access" class="cfg-val"></span>
+          <span class="cfg-key">CORS origins</span><span id="cfg-cors" class="cfg-val"></span>
         </div>
       </div>
 
@@ -464,6 +508,7 @@
                 <th>Resolution</th>
                 <th>Lag</th>
                 <th>Variables</th>
+                <th>Status</th>
               </tr>
             </thead>
             <tbody id="cfg-sources-tbody"></tbody>
@@ -506,34 +551,59 @@
     // Populate static config tab values (bbox, storage paths, sources table)
     (function populateConfig() {
       const [w, s, e, n] = CONFIG.bbox;
-      document.getElementById('cfg-bbox-w').textContent = w.toFixed(4) + '°';
-      document.getElementById('cfg-bbox-s').textContent = s.toFixed(4) + '°';
-      document.getElementById('cfg-bbox-e').textContent = e.toFixed(4) + '°';
-      document.getElementById('cfg-bbox-n').textContent = n.toFixed(4) + '°';
-      document.getElementById('cfg-zarr-root').textContent = CONFIG.zarr_root;
-      document.getElementById('cfg-raw-dir').textContent   = CONFIG.raw_dir;
-      document.getElementById('cfg-catalog').textContent   = CONFIG.catalog_path;
+      const fmtDeg = function(v) { return (Number.isInteger(v) ? v : v.toFixed(2)) + '°'; };
+      document.getElementById('cfg-bbox-w').textContent = fmtDeg(w);
+      document.getElementById('cfg-bbox-s').textContent = fmtDeg(s);
+      document.getElementById('cfg-bbox-e').textContent = fmtDeg(e);
+      document.getElementById('cfg-bbox-n').textContent = fmtDeg(n);
+      document.getElementById('cfg-zarr-root').textContent  = CONFIG.zarr_root;
+      document.getElementById('cfg-raw-dir').textContent    = CONFIG.raw_dir;
+      document.getElementById('cfg-catalog').textContent    = CONFIG.catalog_path;
+      document.getElementById('cfg-log-file').textContent   = CONFIG.log_file || '(disabled)';
+      document.getElementById('cfg-ingest-workers').textContent = CONFIG.ingest_max_workers;
+      document.getElementById('cfg-ingest-queued').textContent  = CONFIG.ingest_max_queued;
+      document.getElementById('cfg-chunk-size').textContent = CONFIG.zarr_chunk_size + ' px';
+      document.getElementById('cfg-agg-batch').textContent  =
+        CONFIG.max_aggregation_timesteps > 0 ? CONFIG.max_aggregation_timesteps + ' timesteps' : 'Unlimited';
+      document.getElementById('cfg-agg-batch-size').textContent = CONFIG.aggregation_batch_size + ' timesteps';
+      document.getElementById('cfg-concurrent-agg').textContent =
+        CONFIG.max_concurrent_aggregations > 0 ? CONFIG.max_concurrent_aggregations : 'Unlimited';
+      document.getElementById('cfg-track-access').textContent = CONFIG.track_access ? 'Yes' : 'No';
+      document.getElementById('cfg-cors').textContent =
+        (CONFIG.cors_origins || []).join(', ') || '(none)';
 
       // Sources table
       const tbody = document.getElementById('cfg-sources-tbody');
       SOURCES.forEach(function(s) {
         const descs = s.variable_descriptions || {};
-        const varHtml = (s.variables || []).map(function(v) {
-          const d = descs[v] ? v + ' — ' + descs[v] : v;
-          return '<div class="vars">' + d + '</div>';
-        }).join('');
+        const vars = s.variables || [];
+        const fullDescs = vars.map(function(v) {
+          return descs[v] ? v + ' — ' + descs[v] : v;
+        }).join(' · ');
+        const varHtml = vars.length
+          ? '<span class="vars" title="' + fullDescs + '">' + vars.join(', ') + '</span>'
+          : '';
+        const ok = s.configured !== false;
+        const statusHtml = ok
+          ? '<span style="color:#16a34a" title="Ready">&#10003;</span>'
+          : '<span style="color:#b45309" title="' + (s.config_error || 'Not configured') + '">&#9888;</span>';
         const tr = document.createElement('tr');
         tr.innerHTML =
           '<td>' + s.id + '</td>' +
           '<td style="white-space:nowrap">' + (s.temporal_resolution || '—') + '</td>' +
           '<td style="white-space:nowrap">' + (s.lag_days != null ? s.lag_days + 'd' : '—') + '</td>' +
-          '<td>' + varHtml + '</td>';
+          '<td>' + varHtml + '</td>' +
+          '<td style="text-align:center">' + statusHtml + '</td>';
         tbody.appendChild(tr);
       });
     })();
 
-    // Populate quota tab values (fetches /store-usage — lazy, called on first tab open)
+    // Populate quota tab values (fetches /store-usage — lazy on first open, manual via refresh button)
     function populateQuota() {
+      _quotaReset();
+      const btn = document.getElementById('btn-quota-refresh');
+      if (btn) { btn.disabled = true; btn.textContent = '↻ …'; }
+
       const fmtMb = function(mb) {
         return mb >= 1024 ? (mb / 1024).toFixed(2) + ' GB' : mb.toFixed(1) + ' MB';
       };
@@ -632,7 +702,10 @@
           });
           document.getElementById('cfg-groups-wrap').style.display = 'block';
         }
-      }).catch(function() {});
+      }).finally(function() {
+        const btn = document.getElementById('btn-quota-refresh');
+        if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
+      });
     }
 
     let dataLayer = null;
@@ -735,9 +808,8 @@
       return (start || '') + '/' + (end || '');
     }
 
-    function updateLayer() {
+    function currentParams() {
       const collId = document.getElementById('sel-collection').value;
-      if (!collId) { setStatus(''); return; }
       const itemId = document.getElementById('sel-item').value;
       const dt = buildDatetimeParam();
       const aggVal = dateMode === 'interval' ? document.getElementById('sel-agg').value : null;
@@ -745,11 +817,12 @@
         ? (document.getElementById('inp-baseline-start').value || '') + '/' +
           (document.getElementById('inp-baseline-end').value || '')
         : null;
+      return { collId, itemId, dt, aggVal, baselineVal };
+    }
 
-      if (dataLayer) { map.removeLayer(dataLayer); dataLayer = null; }
-      dataLayer = L.tileLayer(buildTileUrl(collId, itemId, dt, aggVal, baselineVal), {
-        tileSize: 256, opacity: 0.8, errorTileUrl: ''
-      }).addTo(map);
+    function updateLayer() {
+      const { collId, itemId, dt, aggVal, baselineVal } = currentParams();
+      if (!collId) { setStatus(''); return; }
 
       let statusParts = [collId];
       if (itemId) statusParts.push(itemId);
@@ -757,8 +830,37 @@
       if (aggVal) statusParts.push('agg=' + aggVal);
       setStatus(statusParts.join(' / '));
 
+      // Skip stats re-fetch when data params (collection/item/date/agg) haven't changed
+      const statsMatch = lastStats &&
+        lastStats.collId === collId && lastStats.itemId === itemId &&
+        lastStats.dt === dt && lastStats.aggParam === aggVal &&
+        lastStats.baselineParam === (baselineVal || null);
+      if (statsMatch) {
+        // Stats are already correct — just rebuild the tile (rescale is already set).
+        if (dataLayer) { map.removeLayer(dataLayer); dataLayer = null; }
+        dataLayer = L.tileLayer(buildTileUrl(collId, itemId, dt, aggVal, baselineVal), {
+          tileSize: 256, opacity: 0.8, errorTileUrl: ''
+        }).addTo(map);
+        return;
+      }
+
+      // When auto-scale is on and the item has zonal-stats configured, defer adding the
+      // tile layer until stats arrive so the first render already has the correct rescale.
+      const autoscale = document.getElementById('chk-autoscale').checked;
+      const itemMeta = itemId && (catalog[collId] || []).find(i => i.item_id === itemId);
+      const deferForStats = autoscale && itemMeta?.zonalstats_body;
+
+      if (dataLayer) { map.removeLayer(dataLayer); dataLayer = null; }
+      if (!deferForStats) {
+        dataLayer = L.tileLayer(buildTileUrl(collId, itemId, dt, aggVal, baselineVal), {
+          tileSize: 256, opacity: 0.8, errorTileUrl: ''
+        }).addTo(map);
+      }
+      // else: tile will be added by applyAutoScale → refreshTile once stats resolve
+
       // Debounce stats fetch so rapid control changes don't spam the server
       lastStats = null;
+      _pendingTile = deferForStats ? { collId, itemId, dt, aggVal, baselineVal } : null;
       if (statsTimer) clearTimeout(statsTimer);
       if (itemId) {
         document.getElementById('stats-section').style.display = 'block';
@@ -771,7 +873,8 @@
     }
 
     let statsTimer = null;
-    let lastStats = null; // most recent successful stats payload
+    let lastStats = null;   // most recent successful stats payload
+    let _pendingTile = null; // deferred tile params when waiting for auto-scale stats
 
     function buildTileUrl(collId, itemId, dt, aggVal, baselineVal) {
       const cmap = document.getElementById('sel-colormap').value;
@@ -787,11 +890,21 @@
         + (params.length ? '?' + params.join('&') : '');
     }
 
+    function _renderPendingTile() {
+      // Render a deferred tile (auto-scale path) if one is waiting.
+      if (!_pendingTile) return;
+      const { collId, itemId, dt, aggVal, baselineVal } = _pendingTile;
+      _pendingTile = null;
+      refreshTile(collId, itemId, dt, aggVal, baselineVal);
+    }
+
     function refreshTile(collId, itemId, dt, aggVal, baselineVal) {
       // Rebuild the tile layer only — no stats re-fetch, no status update.
       if (dataLayer) { map.removeLayer(dataLayer); dataLayer = null; }
       dataLayer = L.tileLayer(buildTileUrl(collId, itemId, dt, aggVal, baselineVal), {
-        tileSize: 256, opacity: 0.8, errorTileUrl: ''
+        tileSize: 256,
+        opacity: 0.8,
+        errorTileUrl: ''
       }).addTo(map);
     }
 
@@ -836,22 +949,29 @@
         });
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({}));
-          statsMsg.textContent = 'Error: ' + (err.detail || resp.statusText);
+          const jobTag = err.jobID ? ' [' + err.jobID + ']' : '';
+          statsMsg.textContent = 'Error: ' + (err.detail || ('HTTP ' + resp.status)) + jobTag;
+          _renderPendingTile();
           return;
         }
         const data = await resp.json();
         stats = data.features?.[0]?.statistics;
+        if (data.jobID) statsMsg.dataset.jobId = data.jobID;
       } catch (e) {
         statsMsg.textContent = 'Request failed.';
+        _renderPendingTile();
         return;
       }
 
       if (!stats || stats.error) {
-        statsMsg.textContent = stats?.error || 'No statistics returned.';
+        const jobTag = statsMsg.dataset.jobId ? ' [' + statsMsg.dataset.jobId + ']' : '';
+        statsMsg.textContent = (stats?.error || 'No statistics returned.') + jobTag;
+        _renderPendingTile();
         return;
       }
 
-      statsMsg.textContent = stats.count.toLocaleString() + ' valid pixels';
+      const jobId = statsMsg.dataset.jobId || '';
+      statsMsg.textContent = stats.count.toLocaleString() + ' valid pixels' + (jobId ? ' [' + jobId + ']' : '');
       const rows = [
         ['mean', stats.mean], ['min', stats.min],
         ['max', stats.max],   ['std', stats.std],
@@ -884,13 +1004,95 @@
     }
 
     function applyAutoScale(stats, collId, itemId, dt, aggParam, baselineParam) {
+      _pendingTile = null; // tile will be rendered by the refreshTile call below
       const range = _autoScaleRange(stats);
-      if (!range) return;
-      const [lo, hi] = range.map(v => parseFloat(v.toFixed(4)));
-      const inp = document.getElementById('inp-rescale');
-      inp.value = lo + ',' + hi;
-      inp.disabled = true;
+      if (range) {
+        const [lo, hi] = range.map(v => parseFloat(v.toFixed(4)));
+        const inp = document.getElementById('inp-rescale');
+        inp.value = lo + ',' + hi;
+        inp.disabled = true;
+      }
       refreshTile(collId, itemId, dt, aggParam, baselineParam);
+    }
+
+    // Event listeners are attached once; guarded so both loadCatalog() and
+    // refreshCatalog() can call _setupListeners() without duplicating handlers.
+    let _listenersSetUp = false;
+    function _setupListeners() {
+      if (_listenersSetUp) return;
+      _listenersSetUp = true;
+      const collSel = document.getElementById('sel-collection');
+      collSel.addEventListener('change', () => onCollectionChange());
+      document.getElementById('sel-item').addEventListener('change', () => onItemChange());
+      document.getElementById('sel-datetime').addEventListener('change', updateLayer);
+      document.getElementById('inp-start').addEventListener('change', updateLayer);
+      document.getElementById('inp-end').addEventListener('change', updateLayer);
+      document.getElementById('sel-agg').addEventListener('change', onAggChange);
+      document.getElementById('inp-baseline-start').addEventListener('change', updateLayer);
+      document.getElementById('inp-baseline-end').addEventListener('change', updateLayer);
+      document.getElementById('sel-colormap').addEventListener('change', () => {
+        const { collId, itemId, dt, aggVal, baselineVal } = currentParams();
+        if (collId) refreshTile(collId, itemId, dt, aggVal, baselineVal);
+      });
+      document.getElementById('inp-rescale').addEventListener('input', () => {
+        const chk = document.getElementById('chk-autoscale');
+        if (chk.checked) {
+          chk.checked = false;
+          document.getElementById('inp-rescale').disabled = false;
+        }
+      });
+      document.getElementById('inp-rescale').addEventListener('change', () => {
+        const { collId, itemId, dt, aggVal, baselineVal } = currentParams();
+        if (collId) refreshTile(collId, itemId, dt, aggVal, baselineVal);
+      });
+      document.getElementById('chk-autoscale').addEventListener('change', () => {
+        const chk = document.getElementById('chk-autoscale');
+        document.getElementById('inp-rescale').disabled = chk.checked;
+        if (chk.checked && lastStats) {
+          const { stats, collId, itemId, dt, aggParam, baselineParam } = lastStats;
+          applyAutoScale(stats, collId, itemId, dt, aggParam, baselineParam);
+        }
+      });
+    }
+
+    // Refresh catalog data in-place (preserves current map selection if still valid)
+    async function refreshCatalog() {
+      let data;
+      try {
+        const resp = await fetch('/examples');
+        data = await resp.json();
+      } catch (e) { return; }
+      if (!data.items || data.items.length === 0) return;
+
+      const collSel = document.getElementById('sel-collection');
+      const prevCollId = collSel.value;
+      const prevItemId = document.getElementById('sel-item').value;
+
+      // Rebuild catalog dict and collection dropdown from scratch
+      for (const k in catalog) delete catalog[k];
+      collSel.innerHTML = '';
+      for (const it of data.items) {
+        if (!catalog[it.collection_id]) {
+          catalog[it.collection_id] = [];
+          const opt = document.createElement('option');
+          opt.value = it.collection_id;
+          opt.textContent = it.collection_id;
+          collSel.appendChild(opt);
+        }
+        catalog[it.collection_id].push(it);
+      }
+
+      // Hide the "no data" warning if it was showing
+      document.getElementById('warning').style.display = 'none';
+      // Attach event listeners if this is the first time we have data
+      _setupListeners();
+      // Restore previous collection/item selection if still available
+      if (prevCollId && catalog[prevCollId]) {
+        collSel.value = prevCollId;
+        onCollectionChange(prevItemId);
+      } else {
+        onCollectionChange();
+      }
     }
 
     async function loadCatalog() {
@@ -923,32 +1125,7 @@
         }
         catalog[it.collection_id].push(it);
       }
-      collSel.addEventListener('change', () => onCollectionChange());
-      document.getElementById('sel-item').addEventListener('change', () => onItemChange());
-      document.getElementById('sel-datetime').addEventListener('change', updateLayer);
-      document.getElementById('inp-start').addEventListener('change', updateLayer);
-      document.getElementById('inp-end').addEventListener('change', updateLayer);
-      document.getElementById('sel-agg').addEventListener('change', onAggChange);
-      document.getElementById('inp-baseline-start').addEventListener('change', updateLayer);
-      document.getElementById('inp-baseline-end').addEventListener('change', updateLayer);
-      document.getElementById('sel-colormap').addEventListener('change', updateLayer);
-      document.getElementById('inp-rescale').addEventListener('input', () => {
-        // Editing the rescale field manually → untick auto-scale
-        const chk = document.getElementById('chk-autoscale');
-        if (chk.checked) {
-          chk.checked = false;
-          document.getElementById('inp-rescale').disabled = false;
-        }
-      });
-      document.getElementById('inp-rescale').addEventListener('change', updateLayer);
-      document.getElementById('chk-autoscale').addEventListener('change', () => {
-        const chk = document.getElementById('chk-autoscale');
-        document.getElementById('inp-rescale').disabled = chk.checked;
-        if (chk.checked && lastStats) {
-          const { stats, collId, itemId, dt, aggParam, baselineParam } = lastStats;
-          applyAutoScale(stats, collId, itemId, dt, aggParam, baselineParam);
-        }
-      });
+      _setupListeners();
 
       // Apply pre-selected values from query params
       if (PRESELECT.collection && catalog[PRESELECT.collection]) {
@@ -995,6 +1172,15 @@
       if (tab === 'quota' && !_quotaLoaded) { _quotaLoaded = true; populateQuota(); }
     }
 
+    function _quotaReset() {
+      document.getElementById('cfg-used').textContent = '…';
+      document.getElementById('cfg-quota-bar-wrap').style.display = 'none';
+      document.getElementById('cfg-quota-bar').style.width = '0%';
+      document.getElementById('cfg-quota-pct').textContent = '';
+      document.getElementById('cfg-groups-wrap').style.display = 'none';
+      document.getElementById('cfg-groups-tbody').innerHTML = '';
+    }
+
     // ── Ingest tab ───────────────────────────────────────────────────────────
 
     function _sourceFields() {
@@ -1009,7 +1195,7 @@
       SOURCES.forEach(function(s) {
         const opt = document.createElement('option');
         opt.value = s.id;
-        opt.textContent = s.label;
+        opt.textContent = (s.configured === false ? '⚠ ' : '') + s.label;
         sel.appendChild(opt);
       });
       onIngSourceChange();
@@ -1024,6 +1210,14 @@
       document.getElementById('ing-months-row').style.display = fields.includes('months')    ? '' : 'none';
       document.getElementById('ing-days-row').style.display   = fields.includes('days')      ? '' : 'none';
       document.getElementById('ing-dekads-row').style.display = fields.includes('dekads')    ? '' : 'none';
+
+      const warn = document.getElementById('ing-config-warning');
+      if (def && def.configured === false) {
+        warn.textContent = '\u26a0 ' + (def.config_error || 'This source is not configured.');
+        warn.style.display = '';
+      } else {
+        warn.style.display = 'none';
+      }
 
       // Repopulate variable dropdown for the selected source
       if (fields.includes('variable') && def) {
@@ -1102,6 +1296,7 @@
     // ── Jobs list ────────────────────────────────────────────────────────────
 
     let _jobPoller = null;
+    let _prevRunningIds = new Set(); // track running→done transitions
 
     function startJobPoller() {
       if (_jobPoller) return; // already polling
@@ -1121,6 +1316,16 @@
       } catch (e) { return; }
 
       const jobs = (data.jobs || []).slice().reverse(); // newest first
+
+      // Detect jobs that just transitioned running → successful
+      const prevRunning = _prevRunningIds;
+      _prevRunningIds = new Set(jobs.filter(j => j.status === 'running').map(j => j.jobID));
+      const anyJustSucceeded = jobs.some(j => j.status === 'successful' && prevRunning.has(j.jobID));
+      if (anyJustSucceeded) {
+        _quotaLoaded = false; // force quota tab to reload next open
+        refreshCatalog();
+      }
+
       const el   = document.getElementById('jobs-list');
       if (!jobs.length) {
         el.innerHTML = '<span style="font-size:12px;color:#9ca3af">No jobs yet.</span>';
@@ -1128,13 +1333,19 @@
       }
 
       el.innerHTML = jobs.map(j => {
+        const isPartial = j.status === 'successful' && j.message;
         const badgeCls = j.status === 'running'    ? 'badge-running'
+                       : isPartial                 ? 'badge-partial'
                        : j.status === 'successful' ? 'badge-successful'
                        :                             'badge-failed';
+        const badgeLabel = isPartial ? 'partial' : j.status;
         const params = Object.entries(j.params || {})
           .map(([k, v]) => k + '=' + (Array.isArray(v) ? v.join(',') : v))
           .join(' ');
-        const created = j.created ? new Date(j.created).toLocaleTimeString() : '';
+        const updated = j.updated ? new Date(j.updated).toLocaleTimeString() : '';
+        const msgHtml = j.message
+          ? '<div class="job-message">' + j.message + '</div>'
+          : '';
         const errHtml = j.error
           ? '<div class="job-error">' + j.error.split('\n').slice(-3).join('\n') + '</div>'
           : '';
@@ -1142,11 +1353,12 @@
           '<div class="job-card">' +
             '<div class="job-card-header">' +
               '<span class="job-source">' + j.source + '</span>' +
-              '<span class="badge ' + badgeCls + '">' + j.status + '</span>' +
+              '<span class="badge ' + badgeCls + '">' + badgeLabel + '</span>' +
             '</div>' +
             '<div class="job-id">' + j.jobID + '</div>' +
             (params ? '<div class="job-time">' + params + '</div>' : '') +
-            '<div class="job-time">' + created + '</div>' +
+            '<div class="job-time">' + updated + '</div>' +
+            msgHtml +
             errHtml +
           '</div>'
         );

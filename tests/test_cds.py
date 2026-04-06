@@ -25,7 +25,7 @@ class TestCDSSource:
 
     def test_metadata(self):
         assert self.source.id == "cds"
-        assert self.source.collection_id == "cds"
+        assert self.source.collection_id == "era5"
         assert self.source.temporal_resolution == "monthly"
 
     def test_zarr_group_default(self):
@@ -35,8 +35,8 @@ class TestCDSSource:
         assert self.source.zarr_group(variable="tp") == "era5/tp"
 
     def test_stac_item_id(self):
-        assert self.source.stac_item_id() == "era5_t2m"
-        assert self.source.stac_item_id(variable="tp") == "era5_tp"
+        assert self.source.stac_item_id() == "t2m"
+        assert self.source.stac_item_id(variable="tp") == "tp"
 
     def test_stac_properties(self):
         props = self.source.stac_properties(variable="t2m", year=2020)
@@ -119,3 +119,56 @@ class TestDownloadEra5:
 
         assert result == dest
         fake_client.retrieve.assert_called_once()
+
+    def test_calls_cdsapi_client_with_key(self, tmp_path, mocker, monkeypatch):
+        """When cds_key is set, cdsapi.Client is called with explicit url+key."""
+        import sys
+
+        from eostrata.config import settings
+        from eostrata.sources.cds import _download_era5
+
+        monkeypatch.setattr(settings, "cds_key", "uid:secret")
+
+        dest = tmp_path / "era5_t2m_2023_key.nc"
+        fake_client = mocker.MagicMock()
+        fake_cdsapi = mocker.MagicMock()
+        fake_cdsapi.Client.return_value = fake_client
+        fake_client.retrieve.side_effect = lambda _d, _p, path: Path(path).write_bytes(b"nc")
+
+        mocker.patch.dict(sys.modules, {"cdsapi": fake_cdsapi})
+        mocker.patch("eostrata.sources.cds._get_cdsapi", return_value=fake_cdsapi)
+        _download_era5(dest, variable="2m_temperature", year=2023, months=[1], bbox=(2, 4, 15, 14))
+
+        _, kwargs = fake_cdsapi.Client.call_args
+        assert kwargs.get("key") == "uid:secret"
+
+
+class TestIsConfigured:
+    def test_true_when_cds_key_set(self, monkeypatch):
+        from eostrata.config import settings
+        from eostrata.sources.cds import CDSSource
+
+        monkeypatch.setattr(settings, "cds_key", "uid:apikey")
+        ok, msg = CDSSource.is_configured()
+        assert ok is True and msg == ""
+
+    def test_true_when_cdsapirc_exists(self, tmp_path, monkeypatch):
+        from eostrata.config import settings
+        from eostrata.sources.cds import CDSSource
+
+        (tmp_path / ".cdsapirc").write_text(
+            "url: https://cds.climate.copernicus.eu/api\nkey: fake\n"
+        )
+        monkeypatch.setattr(settings, "cds_key", "")
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        ok, msg = CDSSource.is_configured()
+        assert ok is True and msg == ""
+
+    def test_false_when_not_configured(self, monkeypatch):
+        from eostrata.config import settings
+        from eostrata.sources.cds import CDSSource
+
+        monkeypatch.setattr(settings, "cds_key", "")
+        monkeypatch.setattr("pathlib.Path.home", lambda: __import__("pathlib").Path("/nonexistent"))
+        ok, msg = CDSSource.is_configured()
+        assert ok is False and "CDS" in msg

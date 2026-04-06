@@ -3,7 +3,7 @@
 ## Setup
 
 ```bash
-uv sync --extra dev --extra scheduler
+uv sync --extra dev
 ```
 
 ## Running tests

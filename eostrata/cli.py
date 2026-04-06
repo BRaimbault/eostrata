@@ -55,9 +55,7 @@ _ALL_DEKADS = [1, 2, 3]
 
 @app.command("download")
 def download(
-    source_id: str = typer.Argument(
-        ..., help="Source ID: worldpop, chirps, cds, sentinel_ndvi (or sentinel-ndvi)"
-    ),
+    source_id: str = typer.Argument(..., help="Source ID: worldpop, chirps, cds, cgls"),
     iso3: str = typer.Option(
         None, help="ISO 3166-1 alpha-3 country code (worldpop only), e.g. NGA"
     ),
@@ -68,8 +66,8 @@ def download(
     years: str = typer.Option(None, help="Multiple years, comma-separated: 2020,2021,2022"),
     month: int = typer.Option(None, help="Single month 1-12 (default: latest available)"),
     months: str = typer.Option(None, help="Multiple months, comma-separated: 1,2,3 or ALL"),
-    dekad: int = typer.Option(None, help="Single dekad 1-3 (sentinel_ndvi only)"),
-    dekads: str = typer.Option(None, help="Multiple dekads: 1,2,3 or ALL (sentinel_ndvi only)"),
+    dekad: int = typer.Option(None, help="Single dekad 1-3 (ndvi only)"),
+    dekads: str = typer.Option(None, help="Multiple dekads: 1,2,3 or ALL (ndvi only)"),
     day: int = typer.Option(None, help="Single day 1-31 (daily sources only)"),
     days: str = typer.Option(
         None, help="Multiple days, comma-separated: 1,2,3 or ALL (daily sources only)"
@@ -81,11 +79,11 @@ def download(
 ) -> None:
     """Download data from a source, clip to bbox, write to Zarr and register in STAC.
 
-    SOURCE_ID can be: worldpop, chirps, cds, sentinel_ndvi (or sentinel-ndvi).
+    SOURCE_ID can be: worldpop, chirps, cds, cgls.
     """
     _setup_logging(verbose)
 
-    # Normalize hyphens to underscores (e.g. sentinel-ndvi → sentinel_ndvi)
+    # Normalize hyphens to underscores for backwards compatibility
     source_id = source_id.replace("-", "_")
 
     from eostrata.config import settings

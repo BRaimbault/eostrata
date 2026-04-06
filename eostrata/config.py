@@ -84,14 +84,13 @@ class Settings(BaseSettings):
             raise ValueError("zarr_chunk_size must be between 64 and 4096")
         return v
 
-    # Batch size for temporal aggregation (mean, sum, min, max, anomaly).
+    # Threshold for switching to batched temporal aggregation.
     # When a request spans more timesteps than this limit, the reduction is split
-    # into sequential batches whose partial results are combined into a correct
-    # final answer — so requests always succeed, just with more I/O passes.
-    # Set to 0 to process all timesteps in a single pass (default, lowest latency).
+    # into sequential batches of aggregation_batch_size timesteps each.
+    # Set to 0 to process all timesteps in a single pass (lowest latency, highest RAM).
     #
     # Recommended values by available RAM:
-    #   ≤ 512 MB → 12  (e.g. one calendar year of monthly data)
+    #   ≤ 512 MB → 6   (triggers batching for any range > 6 months)
     #     1–2 GB → 60  (five years of monthly data)
     #      ≥ 4GB → 0   (unlimited)
     max_aggregation_timesteps: int = 0
@@ -103,6 +102,59 @@ class Settings(BaseSettings):
             raise ValueError(
                 "max_aggregation_timesteps must be 0 (unlimited) or a positive integer"
             )
+        return v
+
+    # Number of timesteps loaded per batch when batched aggregation is active.
+    # Lower values reduce peak RAM at the cost of more sequential zarr reads.
+    # On a 512 MB instance with global CHIRPS (≈103 MB/month): set to 1.
+    # Ignored when max_aggregation_timesteps=0 (no batching).
+    aggregation_batch_size: int = 1
+
+    @field_validator("aggregation_batch_size")
+    @classmethod
+    def validate_aggregation_batch_size(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("aggregation_batch_size must be a positive integer")
+        return v
+
+    # Maximum number of concurrent temporal aggregations (tile renders + zonalstats)
+    # that may run at the same time.  Each aggregation loads one or more full spatial
+    # slices into memory; on memory-constrained instances (≤ 512 MB) set this to 1
+    # so that operations are serialised and never overlap.
+    # 0 means unlimited (rely on the OS / worker count).
+    max_concurrent_aggregations: int = 1
+
+    @field_validator("max_concurrent_aggregations")
+    @classmethod
+    def validate_max_concurrent_aggregations(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError(
+                "max_concurrent_aggregations must be 0 (unlimited) or a positive integer"
+            )
+        return v
+
+    # Max in-memory aggregated 2-D arrays to cache across tile and zonal-stats requests.
+    # Each entry holds one fully-computed (y, x) DataArray — typically 4–16 MB for
+    # country-level 1-km datasets.  Set to 0 to disable caching and use the memory-safe
+    # clip-first path for every tile request (recommended for instances with ≤ 512 MB RAM).
+    agg_cache_maxsize: int = 4
+
+    @field_validator("agg_cache_maxsize")
+    @classmethod
+    def validate_agg_cache_maxsize(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("agg_cache_maxsize must be 0 (disabled) or a positive integer")
+        return v
+
+    # Seconds before a cached aggregated array is considered stale and recomputed.
+    # Should exceed a typical interactive map session (default 5 minutes).
+    agg_cache_ttl_seconds: int = 300
+
+    @field_validator("agg_cache_ttl_seconds")
+    @classmethod
+    def validate_agg_cache_ttl_seconds(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("agg_cache_ttl_seconds must be a positive integer")
         return v
 
     # ── Ingestion ─────────────────────────────────────────────────────────────
@@ -133,6 +185,15 @@ class Settings(BaseSettings):
     # Optional Copernicus Land Service API token.  Leave empty for public access.
     # Register at https://land.copernicus.eu/global/ to obtain a token.
     cgls_api_key: str = ""
+
+    # ── CDS / ERA5 (Climate Data Store) ──────────────────────────────────────
+    # CDS API URL.  Defaults to the public CDS endpoint.
+    # Override only if using a custom/mirror CDS instance.
+    cds_url: str = "https://cds.climate.copernicus.eu/api"
+
+    # CDS API key in "<uid>:<api-key>" format.  Leave empty to use ~/.cdsapirc.
+    # Register and obtain your key at https://cds.climate.copernicus.eu/how-to-api
+    cds_key: str = ""
 
     # ── CAMS (Atmosphere Data Store) ──────────────────────────────────────────
     # ADS API URL.  Defaults to the public ADS endpoint.

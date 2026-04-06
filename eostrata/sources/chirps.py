@@ -54,7 +54,7 @@ class CHIRPSSource(BaseSource):
 
     id = "chirps"
     collection_id = "chirps"
-    collection_title = "CHIRPS precipitation"
+    collection_title = "CHIRPS — Precipitation (0.05°, monthly)"
     collection_description = "Climate Hazards Group InfraRed Precipitation with Station data"
     zarr_prefix = "chirps"
     temporal_resolution = "monthly"
@@ -118,7 +118,7 @@ class CHIRPSSource(BaseSource):
 
     def stac_item_id(self, **_: Any) -> str:
         """Single STAC item for the global CHIRPS collection."""
-        return "chirps_global"
+        return "global"
 
     def stac_properties(self, *, year: int, month: int, **_: Any) -> dict:
         return {

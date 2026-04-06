@@ -49,10 +49,10 @@ class TestCAMSSource:
         assert self.source.zarr_group(variable="aod550") == "cams/aod550"
 
     def test_stac_item_id_default(self):
-        assert self.source.stac_item_id() == "cams_pm2p5"
+        assert self.source.stac_item_id() == "pm2p5"
 
     def test_stac_item_id_custom_variable(self):
-        assert self.source.stac_item_id(variable="o3") == "cams_o3"
+        assert self.source.stac_item_id(variable="o3") == "o3"
 
     def test_stac_properties_multi_level(self):
         props = self.source.stac_properties(variable="no2", year=2022)
@@ -93,7 +93,7 @@ class TestCAMSSource:
 
     def test_catalog_meta(self):
         meta = CAMSSource.catalog_meta("pm2p5")
-        assert meta["item_id"] == "cams_pm2p5"
+        assert meta["item_id"] == "pm2p5"
         assert meta["variable"] == "pm2p5"
 
     def test_ui_fields(self):
@@ -139,7 +139,7 @@ class TestCAMSStacRegistrations:
         period_kwargs = {"variable": "pm2p5", "year": 2021, "months": [6]}
         items = self.source.stac_registrations(ds, period_kwargs)
         item = items[0]
-        assert item["item_id"] == "cams_pm2p5"
+        assert item["item_id"] == "pm2p5"
         assert item["datetime_"] == datetime(2021, 6, 1, tzinfo=UTC)
         assert item["variable"] == "pm2p5"
         assert PROP_VARIABLE in item["extra_properties"]
@@ -584,3 +584,34 @@ class TestCAMSNetcdfToZarr:
         ds = _cams_netcdf_to_zarr(nc_path, zarr_root, "cams/no2", variable="no2", bbox=(0, 0, 2, 2))
 
         assert "no2" in ds
+
+
+class TestIsConfigured:
+    def test_true_when_ads_key_set(self, monkeypatch):
+        from eostrata.config import settings
+        from eostrata.sources.cams import CAMSSource
+
+        monkeypatch.setattr(settings, "ads_key", "uid:apikey")
+        ok, msg = CAMSSource.is_configured()
+        assert ok is True and msg == ""
+
+    def test_true_when_adsapirc_exists(self, tmp_path, monkeypatch):
+        from eostrata.config import settings
+        from eostrata.sources.cams import CAMSSource
+
+        (tmp_path / ".adsapirc").write_text(
+            "url: https://ads.atmosphere.copernicus.eu/api\nkey: fake\n"
+        )
+        monkeypatch.setattr(settings, "ads_key", "")
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        ok, msg = CAMSSource.is_configured()
+        assert ok is True and msg == ""
+
+    def test_false_when_not_configured(self, monkeypatch):
+        from eostrata.config import settings
+        from eostrata.sources.cams import CAMSSource
+
+        monkeypatch.setattr(settings, "ads_key", "")
+        monkeypatch.setattr("pathlib.Path.home", lambda: __import__("pathlib").Path("/nonexistent"))
+        ok, msg = CAMSSource.is_configured()
+        assert ok is False and "ADS" in msg

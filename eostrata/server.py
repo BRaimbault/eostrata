@@ -64,9 +64,18 @@ _MAP_CONFIG_JSON: str = json.dumps(
         "bbox": list(settings.bbox),
         "quota_mb": settings.store_quota_mb,
         "eviction_buffer_mb": settings.store_eviction_buffer_mb,
+        "track_access": settings.track_access,
         "zarr_root": str(settings.zarr_root),
         "raw_dir": str(settings.raw_dir),
         "catalog_path": str(settings.catalog_path),
+        "log_file": str(settings.log_file),
+        "zarr_chunk_size": settings.zarr_chunk_size,
+        "max_aggregation_timesteps": settings.max_aggregation_timesteps,
+        "aggregation_batch_size": settings.aggregation_batch_size,
+        "max_concurrent_aggregations": settings.max_concurrent_aggregations,
+        "ingest_max_workers": settings.ingest_max_workers,
+        "ingest_max_queued": settings.ingest_max_queued,
+        "cors_origins": settings.cors_origins,
     }
 )
 
@@ -110,10 +119,7 @@ async def lifespan(app: FastAPI):
         set_scheduler(scheduler)
         scheduler.start()
     except ImportError:
-        logger.info(
-            "APScheduler or PyYAML not installed — scheduler disabled. "
-            "Run: uv add apscheduler pyyaml"
-        )
+        logger.info("APScheduler or PyYAML not installed — scheduler disabled.")
     except Exception as exc:  # noqa: BLE001
         logger.warning("Scheduler failed to start: %s", exc)
 
@@ -202,7 +208,8 @@ app = FastAPI(
         "One tool to fetch, store, aggregate, and serve earth observation layers.\n\n"
         "**Quick start**: call [/examples](/examples) to see what data is currently available "
         "and get copy-pasteable parameter values for every endpoint. "
-        "Open [/map](/map) to browse layers interactively in the browser."
+        "Open [/map](/map) to browse layers interactively in the browser. "
+        "Open [/scheduler](/scheduler) to manage automated scheduled ingestion jobs."
     ),
     version="0.1.0",
     docs_url="/docs",
@@ -337,7 +344,8 @@ def landing_page() -> dict:
             {"rel": "self", "href": "/", "type": "application/json"},
             {"rel": "conformance", "href": "/conformance", "type": "application/json"},
             {"rel": "data", "href": "/collections", "type": "application/json"},
-            {"rel": "search", "href": "/stac/search", "type": "application/json"},
+            {"rel": "stac", "href": "/stac", "type": "application/json"},
+            {"rel": "map", "href": "/map", "type": "text/html"},
             {"rel": "docs", "href": "/docs", "type": "text/html"},
             {"rel": "scheduler", "href": "/scheduler", "type": "text/html"},
         ],

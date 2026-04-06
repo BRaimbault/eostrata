@@ -143,6 +143,16 @@ class BaseSource(ABC):
     VARIABLE_DESCRIPTIONS: dict[str, str] = {}
 
     @classmethod
+    def is_configured(cls) -> tuple[bool, str]:
+        """Return ``(True, '')`` when the source is ready to use.
+
+        Override in subclasses that require credentials or external dependencies.
+        Returns ``(False, reason)`` with a short human-readable explanation when
+        the source cannot be used without further configuration.
+        """
+        return True, ""
+
+    @classmethod
     def catalog_meta(cls, dataset_name: str) -> dict:
         """Return catalog registration metadata for a Zarr group with this source's prefix.
 
@@ -153,7 +163,7 @@ class BaseSource(ABC):
         Override in subclasses when the default derivation doesn't apply.
         """
         return {
-            "item_id": f"{cls.zarr_prefix}_{dataset_name}",
+            "item_id": dataset_name,
             "variable": cls.VARIABLE,
             "extra": {PROP_VARIABLE: cls.VARIABLE},
         }

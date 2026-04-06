@@ -249,6 +249,7 @@ def apply_temporal_aggregation(
     datetime_str: str | None = None,
     agg: AggMethod | None = None,
     baseline: str | None = None,
+    _skip_semaphore: bool = False,
 ) -> xr.DataArray:
     """
     Slice and optionally reduce the time dimension of *da*.
@@ -266,6 +267,10 @@ def apply_temporal_aggregation(
     baseline:
         ISO 8601 interval defining the reference period for anomaly
         calculation, e.g. ``"2015-01-01/2020-12-31"``.
+    _skip_semaphore:
+        Internal flag — set to True when the caller (e.g. AggregatingReader.tile)
+        has already acquired the aggregation semaphore.  Prevents a double-acquire
+        that would deadlock when max_concurrent_aggregations=1.
 
     Returns
     -------
@@ -347,7 +352,7 @@ def apply_temporal_aggregation(
     else:
         logger.info("Aggregating %d timestep(s) with agg=%s", n_ts, agg)
 
-    sem = _get_agg_semaphore()
+    sem = None if _skip_semaphore else _get_agg_semaphore()
     with sem if sem is not None else _nullctx():
         if agg == "mean":
             return _chunked_mean(da, batch_size) if use_batched else da.mean("time").compute()
@@ -603,8 +608,7 @@ class AggregatingReader(Reader):
             tile_bounds_tms.top,
         )
 
-        # Clip the lazy 3D array to the tile bbox plus a 1-pixel buffer to
-        # avoid gaps at tile edges from rounding during reprojection.
+        # Compute pixel buffers from coordinate metadata (cheap, no zarr reads).
         da = self._unagg_input
         try:
             xbuf = abs(float(da.x[1] - da.x[0])) if da.x.size > 1 else 1.0
@@ -619,15 +623,35 @@ class AggregatingReader(Reader):
         else:
             clipped = da.sel(x=slice(w - xbuf, e + xbuf), y=slice(s - ybuf, n + ybuf))
 
-        # Aggregate only the tile-sized spatial region.
-        agg_2d = apply_temporal_aggregation(
-            clipped,
-            datetime_str=self._tile_datetime,
-            agg=self._tile_method,
-            baseline=self._tile_baseline,
-        )
-        agg_2d = agg_2d.rio.write_crs(self.crs)
+        # Acquire the aggregation semaphore for the zarr I/O phase.
+        #
+        # Without this, tiles whose _tile_method is None bypass the semaphore
+        # inside apply_temporal_aggregation (early return before sem.acquire) and
+        # trigger concurrent zarr reads — one per tile — that together can exhaust
+        # RAM on memory-constrained instances.
+        #
+        # By holding the semaphore here we serialise the clip → aggregate →
+        # compute sequence for all tiles that read from a time-dimension zarr,
+        # matching the behaviour of the zonalstats path.  Rendering (reprojection
+        # and colourmap encoding) happens *outside* the semaphore and is always
+        # concurrent, so user-visible latency is only slightly increased.
+        sem = _get_agg_semaphore()
+        with sem if sem is not None else _nullctx():
+            # _skip_semaphore=True because we already hold the semaphore above.
+            agg_2d = apply_temporal_aggregation(
+                clipped,
+                datetime_str=self._tile_datetime,
+                agg=self._tile_method,
+                baseline=self._tile_baseline,
+                _skip_semaphore=True,
+            )
+            # Compute eagerly while still holding the semaphore.  This materialises
+            # the zarr data into a numpy array and releases all zarr references
+            # before the semaphore is released, so no zarr I/O escapes this block.
+            agg_2d = agg_2d.compute()
 
+        # Render outside the semaphore — agg_2d is numpy-backed, no zarr access.
+        agg_2d = agg_2d.rio.write_crs(self.crs)
         tmp = _XarrayReader(agg_2d, tms=self.tms, options=self.options)
         return tmp.tile(tile_x, tile_y, tile_z, tilesize=ts, **kwargs)
 

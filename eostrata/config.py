@@ -134,10 +134,16 @@ class Settings(BaseSettings):
         return v
 
     # Max in-memory aggregated 2-D arrays to cache across tile and zonal-stats requests.
-    # Each entry holds one fully-computed (y, x) DataArray — typically 4–16 MB for
-    # country-level 1-km datasets.  Set to 0 to disable caching and use the memory-safe
-    # clip-first path for every tile request (recommended for instances with ≤ 512 MB RAM).
-    agg_cache_maxsize: int = 4
+    # Each entry holds one fully-computed (y, x) DataArray at full spatial extent.
+    # Memory cost varies widely: ~1 MB for a country-level 1-km dataset, but ~104 MB
+    # for global CHIRPS (0.05°, 7200×3600).  On a 512 MB instance, even a single
+    # cached global entry leaves little headroom for request processing.
+    #
+    # Set to 0 (default) to use the memory-safe clip-first path for every tile request.
+    # Enable caching only on instances with sufficient RAM:
+    #   global datasets (CHIRPS, ERA5): ≥ 2 GB → maxsize 4
+    #   country-level 1-km datasets:    ≥ 512 MB → maxsize 4–8
+    agg_cache_maxsize: int = 0
 
     @field_validator("agg_cache_maxsize")
     @classmethod

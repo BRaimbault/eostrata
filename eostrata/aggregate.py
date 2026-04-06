@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time as _time
 from collections.abc import Callable
 from contextvars import ContextVar
 from pathlib import Path
@@ -25,22 +26,99 @@ from titiler.xarray.io import get_variable as _base_get_variable
 import eostrata.config as _eostrata_config
 from eostrata.cache import record_access
 
+# ---------------------------------------------------------------------------
+# In-memory aggregation result cache
+# ---------------------------------------------------------------------------
+# Stores fully-computed (y, x) DataArrays keyed by (zarr_path, group,
+# variable, datetime_str, agg_method, baseline).  Shared between the tile
+# path (AggregatingReader.tile) and the zonal-stats path (_load_array in
+# processes.py) so that zooming (64 tiles, same datetime/agg) and repeated
+# stats queries skip the expensive temporal reduction entirely.
+#
+# When agg_cache_maxsize=0 the cache is disabled and every request uses the
+# memory-safe clip-first path (recommended for ≤ 512 MB instances).
+# ---------------------------------------------------------------------------
+
+_AGG_CACHE: dict[tuple, tuple[float, xr.DataArray, list]] = {}
+# key → (expires_at, fully-computed 2D DataArray, accessed_timestamps)
+_AGG_CACHE_LOCK = threading.Lock()
+
+
+def _agg_cache_key(
+    src_path: str | Path,
+    group: str | None,
+    variable: str,
+    datetime_str: str | None,
+    agg_method: str | None,
+    baseline: str | None,
+) -> tuple:
+    # Resolve to absolute path so that tile requests (explicit zarr_root URL)
+    # and zonal-stats requests (url or settings.zarr_root) share the same key
+    # even if one uses a relative path or a symlink variant.
+    try:
+        norm = str(Path(src_path).resolve())
+    except Exception:
+        norm = str(src_path)
+    return (norm, group or "", variable, datetime_str or "", agg_method or "", baseline or "")
+
+
+def _get_agg_cache(key: tuple) -> tuple[xr.DataArray, list] | None:
+    """Return (da, accessed_times) for *key* if present and not expired."""
+    with _AGG_CACHE_LOCK:
+        entry = _AGG_CACHE.get(key)
+        if entry is None:
+            return None
+        expires_at, da, accessed = entry
+        if _time.monotonic() > expires_at:
+            del _AGG_CACHE[key]
+            return None
+        return da, accessed
+
+
+def _put_agg_cache(key: tuple, da: xr.DataArray, accessed: list) -> None:
+    """Store *(da, accessed)* in the cache if caching is enabled."""
+    maxsize = _eostrata_config.settings.agg_cache_maxsize
+    if maxsize <= 0:
+        return
+    ttl = _eostrata_config.settings.agg_cache_ttl_seconds
+    expires_at = _time.monotonic() + ttl
+    with _AGG_CACHE_LOCK:
+        _AGG_CACHE[key] = (expires_at, da, accessed)
+        # Evict oldest entries (dict insertion order) when over maxsize
+        while len(_AGG_CACHE) > maxsize:
+            del _AGG_CACHE[next(iter(_AGG_CACHE))]
+
+
+def invalidate_agg_cache_for_group(group: str) -> None:
+    """Remove all cached aggregations whose key includes *group*.
+
+    Called by ``evict_timestamp()`` so stale data is never served from cache
+    after a Zarr chunk has been deleted.
+    """
+    with _AGG_CACHE_LOCK:
+        stale = [k for k in _AGG_CACHE if k[1] == group]
+        for k in stale:
+            del _AGG_CACHE[k]
+
+
 # Semaphore that caps concurrent heavy aggregation operations.
 # Initialised lazily from settings so tests can override max_concurrent_aggregations.
 _agg_semaphore: threading.Semaphore | None = None
+_agg_semaphore_limit: int = 0  # tracks the limit the semaphore was created with
 _agg_semaphore_lock = threading.Lock()
 
 
 def _get_agg_semaphore() -> threading.Semaphore | None:
     """Return the global aggregation semaphore, creating it on first call."""
-    global _agg_semaphore
+    global _agg_semaphore, _agg_semaphore_limit
     limit = _eostrata_config.settings.max_concurrent_aggregations
     if limit <= 0:
         return None
-    if _agg_semaphore is None or _agg_semaphore._value != limit:  # type: ignore[attr-defined]
+    if _agg_semaphore is None or _agg_semaphore_limit != limit:
         with _agg_semaphore_lock:
-            if _agg_semaphore is None or _agg_semaphore._value != limit:  # type: ignore[attr-defined]
+            if _agg_semaphore is None or _agg_semaphore_limit != limit:
                 _agg_semaphore = threading.Semaphore(limit)
+                _agg_semaphore_limit = limit
     return _agg_semaphore
 
 
@@ -137,10 +215,15 @@ def _chunked_reduce(
 
 
 def _chunked_mean(da: xr.DataArray, batch_size: int) -> xr.DataArray:
-    """Compute da.mean("time") in batches, correctly weighted for unequal final batch."""
-    n = da.sizes["time"]
+    """Compute da.mean("time") in batches, handling NaN values correctly.
+
+    Uses per-pixel non-NaN counts as the denominator so that masked pixels
+    (NaN values common in geospatial/climate data) are weighted correctly.
+    Pixels with zero valid values across all timesteps return NaN.
+    """
     total = _chunked_reduce(da, lambda b: b.sum("time"), lambda a, b: a + b, batch_size)
-    return total / n
+    count = _chunked_reduce(da, lambda b: b.count("time"), lambda a, b: a + b, batch_size)
+    return xr.where(count > 0, total / count, np.nan)
 
 
 def _chunked_aggregate(da: xr.DataArray, agg: AggMethod, batch_size: int) -> xr.DataArray:
@@ -219,6 +302,12 @@ def apply_temporal_aggregation(
         _, first_occurrence = np.unique(time_idx, return_index=True)
         da = da.isel(time=first_occurrence)
 
+    # Keep a reference to the full (sorted, deduplicated) array.  Anomaly
+    # baselines are selected from here so they are not constrained to the
+    # datetime_str window — a user requesting datetime_str="2021/2022" with
+    # baseline="2015/2019" must be able to reach the pre-2021 data.
+    da_full = da
+
     t0, t1 = _parse_datetime_interval(datetime_str)
     if t0:
         t0 = _strip_tz(t0)
@@ -288,7 +377,7 @@ def apply_temporal_aggregation(
                 b0 = _strip_tz(b0)
             if b1:
                 b1 = _strip_tz(b1)
-            baseline_da = da.sel(time=slice(b0, b1))
+            baseline_da = da_full.sel(time=slice(b0, b1))
             if baseline_da.sizes.get("time", 0) == 0:
                 raise ValueError(f"No data found for baseline='{baseline}'.")
             mean_fn: Callable[[xr.DataArray], xr.DataArray] = (
@@ -399,10 +488,17 @@ class AggregatingReader(Reader):
 
         # Record per-timestamp access AFTER time coord is normalised and BEFORE
         # apply_temporal_aggregation collapses the time dimension.
+        # Store the resolved list on self so tile() can include it in the cache
+        # entry — without it, cache hits in _load_array (zonal-stats) would never
+        # call record_access and timestamps would appear unaccessed to the LRU scorer.
         if self.group:
-            accessed = resolve_accessed_times(self.ds, agg_datetime, agg_method, agg_baseline)
-            if accessed:
-                record_access(Path(self.src_path), self.group, accessed)
+            self._cache_accessed = resolve_accessed_times(
+                self.ds, agg_datetime, agg_method, agg_baseline
+            )
+            if self._cache_accessed:
+                record_access(Path(self.src_path), self.group, self._cache_accessed)
+        else:
+            self._cache_accessed: list = []
 
         # Strip any time-related sel entries — we handle time ourselves via
         # apply_temporal_aggregation so that range queries and agg methods work.
@@ -439,13 +535,19 @@ class AggregatingReader(Reader):
             self._tile_baseline = None
 
     def tile(self, tile_x: int, tile_y: int, tile_z: int, tilesize: int | None = None, **kwargs):  # type: ignore[override]
-        """Render a map tile, clipping spatially to the tile bbox before aggregating.
+        """Render a map tile, using the aggregation cache when available.
 
-        For datasets with a time dimension this clips the lazy 3D zarr array to
-        the tile's geographic bounding box first, then aggregates only the
-        ~256×256 pixel region needed — rather than aggregating the full global
-        raster and discarding all but the tile pixels afterward.  This reduces
-        peak RAM from O(global_extent × timesteps) to O(tile_pixels × timesteps).
+        When ``agg_cache_maxsize > 0`` (default):
+          - **Cache hit**: renders the tile from the cached full-extent 2D array
+            with zero Zarr reads — all 64 tiles in a zoom session share one
+            aggregation computation.
+          - **Cache miss**: aggregates the full spatial extent, caches the result,
+            then renders this tile.  Subsequent tiles are served from cache.
+
+        When ``agg_cache_maxsize == 0`` (cache disabled, memory-safe mode):
+          - Clips the lazy 3D array to the tile bbox first, then aggregates only
+            the ~256×256 pixel region, keeping peak RAM bounded to
+            O(tile_pixels × timesteps).  Recommended for ≤ 512 MB instances.
         """
         if self._unagg_input is None:
             # No time dimension — use the standard reader implementation.
@@ -454,6 +556,42 @@ class AggregatingReader(Reader):
         if not self.tile_exists(tile_x, tile_y, tile_z):
             raise _TileOutsideBounds(f"Tile(x={tile_x}, y={tile_y}, z={tile_z}) is outside bounds")
 
+        matrix = self.tms.matrix(tile_z)
+        ts = tilesize or matrix.tileHeight
+
+        # ── Cache path (agg_cache_maxsize > 0) ────────────────────────────────
+        if _eostrata_config.settings.agg_cache_maxsize > 0:
+            cache_key = _agg_cache_key(
+                self.src_path,
+                self.group,
+                self.variable,
+                self._tile_datetime,
+                self._tile_method,
+                self._tile_baseline,
+            )
+            hit = _get_agg_cache(cache_key)
+            if hit is not None:
+                agg_2d, _accessed = hit
+                agg_2d = agg_2d.rio.write_crs(self.crs)
+                tmp = _XarrayReader(agg_2d, tms=self.tms, options=self.options)
+                return tmp.tile(tile_x, tile_y, tile_z, tilesize=ts, **kwargs)
+
+            # Cache miss: aggregate the full spatial extent so the result can
+            # be shared across all tiles at any zoom level.
+            agg_2d = apply_temporal_aggregation(
+                self._unagg_input,
+                datetime_str=self._tile_datetime,
+                agg=self._tile_method,
+                baseline=self._tile_baseline,
+            )
+            # Pass the accessed timestamps resolved in __attrs_post_init__ so that
+            # cache hits in _load_array (zonal-stats) can call record_access correctly.
+            _put_agg_cache(cache_key, agg_2d, self._cache_accessed)
+            agg_2d = agg_2d.rio.write_crs(self.crs)
+            tmp = _XarrayReader(agg_2d, tms=self.tms, options=self.options)
+            return tmp.tile(tile_x, tile_y, tile_z, tilesize=ts, **kwargs)
+
+        # ── Clip-first path (cache disabled) ──────────────────────────────────
         # Get tile bounds in WGS84 (the coordinate system of eostrata zarr data).
         tile_bounds_tms = self.tms.xy_bounds(_Tile(x=tile_x, y=tile_y, z=tile_z))
         w, s, e, n = _transform_bounds(
@@ -490,16 +628,8 @@ class AggregatingReader(Reader):
         )
         agg_2d = agg_2d.rio.write_crs(self.crs)
 
-        # Render via a temporary XarrayReader wrapping the small 2D result.
-        matrix = self.tms.matrix(tile_z)
         tmp = _XarrayReader(agg_2d, tms=self.tms, options=self.options)
-        return tmp.tile(
-            tile_x,
-            tile_y,
-            tile_z,
-            tilesize=tilesize or matrix.tileHeight,
-            **kwargs,
-        )
+        return tmp.tile(tile_x, tile_y, tile_z, tilesize=ts, **kwargs)
 
     def get_variable(
         self,

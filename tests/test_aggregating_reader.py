@@ -9,6 +9,8 @@ import pytest
 import xarray as xr
 
 from eostrata.aggregate import (
+    _AGG_CACHE,
+    _AGG_CACHE_LOCK,
     _CTX_AGG_BASELINE,
     _CTX_AGG_DATETIME,
     _CTX_AGG_METHOD,
@@ -217,3 +219,110 @@ class TestAggregatingReader:
         da = reader.get_variable(ds, "v")
         # 2D — aggregation should be skipped
         assert da.dims == ("y", "x")
+
+
+class TestAggregatingReaderCache:
+    """Integration tests: AggregatingReader.tile() uses the aggregation cache."""
+
+    def setup_method(self):
+        """Clear the aggregation cache before each test."""
+        with _AGG_CACHE_LOCK:
+            _AGG_CACHE.clear()
+
+    def test_tile_populates_cache_and_second_call_hits_it(self, tmp_path, monkeypatch):
+        """First tile call populates the cache; second call must not recompute."""
+        import eostrata.aggregate as agg_mod
+        import eostrata.config as cfg
+
+        monkeypatch.setattr(cfg.settings, "agg_cache_maxsize", 4)
+        monkeypatch.setattr(cfg.settings, "agg_cache_ttl_seconds", 300)
+
+        zarr_root = tmp_path / "zarr"
+        times = np.array(
+            [np.datetime64("2020-01-01"), np.datetime64("2021-01-01")], dtype="datetime64[ns]"
+        )
+        data = np.stack([np.full((32, 32), float(y), dtype="float32") for y in [2020, 2021]])
+        ds = xr.Dataset(
+            {"population": (("time", "y", "x"), data)},
+            coords={
+                "time": times,
+                "y": np.linspace(14.0, 4.0, 32),
+                "x": np.linspace(2.0, 15.0, 32),
+            },
+        )
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w", consolidated=True)
+
+        call_count = {"n": 0}
+        original_apply = agg_mod.apply_temporal_aggregation
+
+        def counting_apply(da, **kwargs):
+            call_count["n"] += 1
+            return original_apply(da, **kwargs)
+
+        monkeypatch.setattr(agg_mod, "apply_temporal_aggregation", counting_apply)
+
+        _CTX_AGG_DATETIME.set("2020-01-01/2021-12-31")
+        _CTX_AGG_METHOD.set("mean")
+        _CTX_AGG_BASELINE.set(None)
+        try:
+            reader1 = AggregatingReader(str(zarr_root), variable="population", group="worldpop/nga")
+            reader1.tile(0, 0, 0)  # cache miss — apply_temporal_aggregation called
+
+            reader2 = AggregatingReader(str(zarr_root), variable="population", group="worldpop/nga")
+            reader2.tile(0, 0, 0)  # cache hit — apply_temporal_aggregation NOT called again
+        finally:
+            _CTX_AGG_DATETIME.set(None)
+            _CTX_AGG_METHOD.set(None)
+            _CTX_AGG_BASELINE.set(None)
+
+        assert call_count["n"] == 1, (
+            f"apply_temporal_aggregation called {call_count['n']} times; expected 1 (cache hit on second tile)"
+        )
+
+    def test_tile_falls_back_to_clip_first_when_cache_disabled(self, tmp_path, monkeypatch):
+        """When agg_cache_maxsize=0, clip-first path is used (apply called per tile)."""
+        import eostrata.aggregate as agg_mod
+        import eostrata.config as cfg
+
+        monkeypatch.setattr(cfg.settings, "agg_cache_maxsize", 0)
+
+        zarr_root = tmp_path / "zarr"
+        times = np.array(
+            [np.datetime64("2020-01-01"), np.datetime64("2021-01-01")], dtype="datetime64[ns]"
+        )
+        data = np.stack([np.full((32, 32), float(y), dtype="float32") for y in [2020, 2021]])
+        ds = xr.Dataset(
+            {"population": (("time", "y", "x"), data)},
+            coords={
+                "time": times,
+                "y": np.linspace(14.0, 4.0, 32),
+                "x": np.linspace(2.0, 15.0, 32),
+            },
+        )
+        ds.to_zarr(str(zarr_root), group="worldpop/nga", mode="w", consolidated=True)
+
+        call_count = {"n": 0}
+        original_apply = agg_mod.apply_temporal_aggregation
+
+        def counting_apply(da, **kwargs):
+            call_count["n"] += 1
+            return original_apply(da, **kwargs)
+
+        monkeypatch.setattr(agg_mod, "apply_temporal_aggregation", counting_apply)
+
+        _CTX_AGG_DATETIME.set("2020-01-01/2021-12-31")
+        _CTX_AGG_METHOD.set("mean")
+        _CTX_AGG_BASELINE.set(None)
+        try:
+            for _ in range(2):
+                reader = AggregatingReader(
+                    str(zarr_root), variable="population", group="worldpop/nga"
+                )
+                reader.tile(0, 0, 0)
+        finally:
+            _CTX_AGG_DATETIME.set(None)
+            _CTX_AGG_METHOD.set(None)
+            _CTX_AGG_BASELINE.set(None)
+
+        # Cache disabled → apply called once per tile
+        assert call_count["n"] == 2

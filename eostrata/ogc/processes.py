@@ -178,15 +178,31 @@ def _load_array(
     """Open the Zarr group and return the requested variable as a loaded 2D DataArray.
 
     Applies temporal aggregation when the array has a ``time`` dimension.
-    When *clip_bbox* (west, south, east, north) is provided the array is
-    clipped spatially **before** temporal aggregation, drastically reducing
-    the memory footprint for large time ranges over small areas.
+    When ``agg_cache_maxsize > 0`` the aggregated result is cached in memory
+    and reused on subsequent calls with the same parameters (including from
+    tile requests), making repeated queries free.  When caching is disabled
+    (``agg_cache_maxsize=0``) the *clip_bbox* spatial pre-clip is applied to
+    bound memory usage to the features' bounding box.
     The DataArray is fully materialised into memory before returning so that
     callers (e.g. the zonal-stats feature loop) can clip it N times without
     triggering N separate zarr reads.  The underlying dataset is closed before
     this function returns to avoid open file-handle accumulation under load.
     """
+    # Deferred import to avoid circular dependency (aggregate → cache → aggregate).
+    from eostrata.aggregate import _agg_cache_key, _get_agg_cache, _put_agg_cache
+
     store_path = url or str(settings.zarr_root)
+
+    # ── Cache check ────────────────────────────────────────────────────────────
+    if settings.agg_cache_maxsize > 0:
+        cache_key = _agg_cache_key(store_path, group, variable, datetime, agg, baseline)
+        hit = _get_agg_cache(cache_key)
+        if hit is not None:
+            cached_da, accessed = hit
+            if accessed:
+                record_access(Path(store_path), group, accessed)
+            return cached_da
+
     ds = xr.open_zarr(store_path, group=group, consolidated=True)
     try:
         if variable not in ds:
@@ -201,9 +217,17 @@ def _load_array(
         if "valid_time" in da.coords and "time" not in da.dims:
             da = da.assign_coords(time=da["valid_time"]).swap_dims({"valid_time": "time"})
 
-        # Spatial pre-clip: slice to the features' combined bbox before temporal
-        # aggregation so each batch only processes the pixels we actually need.
-        if clip_bbox is not None and "x" in da.dims and "y" in da.dims:
+        # Spatial pre-clip: applied when caching is disabled, OR when the array
+        # has no time dimension (nothing to aggregate and cache, so clip always).
+        # When caching is on and a time dim is present we compute the full-extent
+        # result so it is reusable by any tile/stats request.
+        has_time = "time" in da.dims
+        if (
+            clip_bbox is not None
+            and (settings.agg_cache_maxsize == 0 or not has_time)
+            and "x" in da.dims
+            and "y" in da.dims
+        ):
             w, s, e, n = clip_bbox
             y_vals = da.y.values
             # y may be descending (north→south) — slice direction must match
@@ -238,6 +262,10 @@ def _load_array(
         # Materialise into memory so the zarr store can be released and callers
         # can clip the same in-memory array N times (once per input polygon).
         da = da.load()
+
+        # Store in cache for subsequent tile and stats requests with same params.
+        if settings.agg_cache_maxsize > 0:
+            _put_agg_cache(cache_key, da, accessed)  # type: ignore[possibly-undefined]
     finally:
         ds.close()
     return da
@@ -355,9 +383,7 @@ def _execute_zonalstats(job_id: str, body: ExecutionRequest) -> dict:
     inp = body.inputs
 
     n_features = len(
-        (inp.features.get("features") or [inp.features])
-        if isinstance(inp.features, dict)
-        else []
+        (inp.features.get("features") or [inp.features]) if isinstance(inp.features, dict) else []
     )
     logger.info(
         "Job %s started: zonalstats group=%s variable=%s datetime=%s agg=%s features=%d",

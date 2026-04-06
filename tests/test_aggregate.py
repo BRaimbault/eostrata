@@ -7,11 +7,17 @@ import pytest
 import xarray as xr
 
 from eostrata.aggregate import (
+    _AGG_CACHE,
+    _AGG_CACHE_LOCK,
+    _agg_cache_key,
     _chunked_aggregate,
     _chunked_mean,
+    _get_agg_cache,
     _parse_datetime_interval,
+    _put_agg_cache,
     _strip_tz,
     apply_temporal_aggregation,
+    invalidate_agg_cache_for_group,
     resolve_accessed_times,
 )
 
@@ -229,6 +235,23 @@ class TestApplyTemporalAggregation:
         assert result.dims == ("y", "x")
         assert float(result.mean()) == pytest.approx((2021.0 + 2022.0) / 2)
 
+    def test_agg_anomaly_baseline_outside_datetime_range(self):
+        """Baseline period that does not overlap with datetime_str must still work.
+
+        Regression test: da was sliced to datetime_str BEFORE baseline selection,
+        making non-overlapping baselines always raise ValueError.
+        """
+        da = _make_da([2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022])
+        # datetime_str is 2021-2022, baseline is 2015-2019 — no overlap.
+        result = apply_temporal_aggregation(
+            da,
+            datetime_str="2021-01-01/2022-12-31",
+            agg="anomaly",
+            baseline="2015-01-01/2019-12-31",
+        )
+        # mean(2021,2022) = 2021.5; baseline mean(2015..2019) = 2017.0 → anomaly = 4.5
+        assert float(result.mean()) == pytest.approx(4.5)
+
 
 class TestChunkedAggregation:
     """Batched helpers produce the same result as single-pass xarray reductions."""
@@ -283,6 +306,26 @@ class TestChunkedAggregation:
         da = _make_da([5, 2, 8, 1, 3])
         result = _chunked_aggregate(da, "max", batch_size=2)
         np.testing.assert_allclose(result.values, da.max("time").values, rtol=1e-5)
+
+    def test_chunked_mean_nan_handling(self):
+        """_chunked_mean must produce the same result as da.mean("time") for NaN data.
+
+        Regression test: the original implementation used sum/n_total_timesteps,
+        which gave a result 3x too small for a pixel with 2 NaN and 1 valid value.
+        """
+        times = np.array([np.datetime64(f"{y}-01-01") for y in [2020, 2021, 2022]])
+        data = np.array(
+            [
+                [[1.0, np.nan], [np.nan, 4.0]],  # 2020
+                [[np.nan, np.nan], [np.nan, np.nan]],  # 2021 — all NaN
+                [[3.0, np.nan], [np.nan, 8.0]],  # 2022
+            ],
+            dtype="float32",
+        )
+        da = xr.DataArray(data, dims=("time", "y", "x"), coords={"time": times})
+        result = _chunked_mean(da, batch_size=2)
+        expected = da.mean("time").values
+        np.testing.assert_allclose(result.values, expected, rtol=1e-5, equal_nan=True)
 
     def test_apply_uses_batched_path_when_limit_set(self, monkeypatch):
         """apply_temporal_aggregation routes to batched path when limit is exceeded."""
@@ -425,3 +468,101 @@ class TestMaxConcurrentAggregationsValidator:
 
         s = Settings(max_concurrent_aggregations=0)
         assert s.max_concurrent_aggregations == 0
+
+
+class TestAggCache:
+    """Tests for the in-memory aggregation result cache."""
+
+    def setup_method(self):
+        """Clear the cache before each test to avoid inter-test pollution."""
+        with _AGG_CACHE_LOCK:
+            _AGG_CACHE.clear()
+
+    def _make_da_2d(self) -> xr.DataArray:
+        return xr.DataArray(
+            np.ones((4, 4), dtype="float32"),
+            dims=("y", "x"),
+            coords={"y": np.arange(4.0), "x": np.arange(4.0)},
+        )
+
+    def test_cache_miss_returns_none(self):
+        key = _agg_cache_key("path", "group", "var", "2021", "mean", None)
+        assert _get_agg_cache(key) is None
+
+    def test_put_then_get_returns_entry(self, monkeypatch):
+        import eostrata.config as cfg
+
+        monkeypatch.setattr(cfg.settings, "agg_cache_maxsize", 4)
+        monkeypatch.setattr(cfg.settings, "agg_cache_ttl_seconds", 300)
+
+        da = self._make_da_2d()
+        key = _agg_cache_key("path", "group", "var", "2021", "mean", None)
+        _put_agg_cache(key, da, [])
+        result = _get_agg_cache(key)
+        assert result is not None
+        cached_da, accessed = result
+        np.testing.assert_array_equal(cached_da.values, da.values)
+        assert accessed == []
+
+    def test_cache_ttl_expiry(self, monkeypatch):
+        import eostrata.aggregate as agg_mod
+        import eostrata.config as cfg
+
+        monkeypatch.setattr(cfg.settings, "agg_cache_maxsize", 4)
+        monkeypatch.setattr(cfg.settings, "agg_cache_ttl_seconds", 10)
+
+        da = self._make_da_2d()
+        key = _agg_cache_key("path", "group", "var", "2021", "mean", None)
+        # Put entry with current time
+        _put_agg_cache(key, da, [])
+        assert _get_agg_cache(key) is not None
+
+        # Advance monotonic clock past TTL
+        monkeypatch.setattr(agg_mod._time, "monotonic", lambda: 1e12)
+        assert _get_agg_cache(key) is None  # expired
+
+    def test_cache_maxsize_evicts_oldest(self, monkeypatch):
+        import eostrata.config as cfg
+
+        monkeypatch.setattr(cfg.settings, "agg_cache_maxsize", 2)
+        monkeypatch.setattr(cfg.settings, "agg_cache_ttl_seconds", 300)
+
+        da = self._make_da_2d()
+        key_a = _agg_cache_key("p", "g", "v", "2020", "mean", None)
+        key_b = _agg_cache_key("p", "g", "v", "2021", "mean", None)
+        key_c = _agg_cache_key("p", "g", "v", "2022", "mean", None)
+        _put_agg_cache(key_a, da, [])
+        _put_agg_cache(key_b, da, [])
+        _put_agg_cache(key_c, da, [])  # should evict key_a (oldest)
+
+        assert _get_agg_cache(key_a) is None
+        assert _get_agg_cache(key_b) is not None
+        assert _get_agg_cache(key_c) is not None
+
+    def test_put_noop_when_maxsize_zero(self, monkeypatch):
+        import eostrata.config as cfg
+
+        monkeypatch.setattr(cfg.settings, "agg_cache_maxsize", 0)
+        monkeypatch.setattr(cfg.settings, "agg_cache_ttl_seconds", 300)
+
+        da = self._make_da_2d()
+        key = _agg_cache_key("path", "group", "var", "2021", "mean", None)
+        _put_agg_cache(key, da, [])
+        assert _get_agg_cache(key) is None  # nothing stored
+
+    def test_invalidate_removes_only_target_group(self, monkeypatch):
+        import eostrata.config as cfg
+
+        monkeypatch.setattr(cfg.settings, "agg_cache_maxsize", 8)
+        monkeypatch.setattr(cfg.settings, "agg_cache_ttl_seconds", 300)
+
+        da = self._make_da_2d()
+        key_nga = _agg_cache_key("p", "worldpop/nga", "pop", "2021", "mean", None)
+        key_tza = _agg_cache_key("p", "worldpop/tza", "pop", "2021", "mean", None)
+        _put_agg_cache(key_nga, da, [])
+        _put_agg_cache(key_tza, da, [])
+
+        invalidate_agg_cache_for_group("worldpop/nga")
+
+        assert _get_agg_cache(key_nga) is None
+        assert _get_agg_cache(key_tza) is not None

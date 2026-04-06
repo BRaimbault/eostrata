@@ -133,6 +133,30 @@ class Settings(BaseSettings):
             )
         return v
 
+    # Max in-memory aggregated 2-D arrays to cache across tile and zonal-stats requests.
+    # Each entry holds one fully-computed (y, x) DataArray — typically 4–16 MB for
+    # country-level 1-km datasets.  Set to 0 to disable caching and use the memory-safe
+    # clip-first path for every tile request (recommended for instances with ≤ 512 MB RAM).
+    agg_cache_maxsize: int = 4
+
+    @field_validator("agg_cache_maxsize")
+    @classmethod
+    def validate_agg_cache_maxsize(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("agg_cache_maxsize must be 0 (disabled) or a positive integer")
+        return v
+
+    # Seconds before a cached aggregated array is considered stale and recomputed.
+    # Should exceed a typical interactive map session (default 5 minutes).
+    agg_cache_ttl_seconds: int = 300
+
+    @field_validator("agg_cache_ttl_seconds")
+    @classmethod
+    def validate_agg_cache_ttl_seconds(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("agg_cache_ttl_seconds must be a positive integer")
+        return v
+
     # ── Ingestion ─────────────────────────────────────────────────────────────
     # Maximum number of concurrent ingestion jobs.  Increase for deployments
     # that serve many users submitting ingest requests simultaneously.

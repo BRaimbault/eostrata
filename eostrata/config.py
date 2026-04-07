@@ -174,11 +174,6 @@ class Settings(BaseSettings):
     worldpop_base_url: str = "https://data.worldpop.org/GIS/Population/Global_2000_2020"
     worldpop_resolution: str = "1km"
 
-    # ── Sentinel NDVI (CGLS) ──────────────────────────────────────────────────
-    # Optional Copernicus Land Service API token.  Leave empty for public access.
-    # Register at https://land.copernicus.eu/global/ to obtain a token.
-    cgls_api_key: str = ""
-
     # ── CDS / ERA5 (Climate Data Store) ──────────────────────────────────────
     # CDS API URL.  Defaults to the public CDS endpoint.
     # Override only if using a custom/mirror CDS instance.

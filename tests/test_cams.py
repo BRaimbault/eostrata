@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -187,6 +188,12 @@ class TestDownloadCams:
         mock_cdsapi = mocker.MagicMock()
         mock_cdsapi.Client.return_value = mock_client
 
+        def _fake_retrieve(_ds, _req, path):
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_bytes(b"\x89HDF\r\n\x1a\n")  # HDF5 magic — not a ZIP
+
+        mock_client.retrieve.side_effect = _fake_retrieve
+
         mocker.patch("eostrata.sources.cams._get_cdsapi", return_value=mock_cdsapi)
         mock_settings = mocker.patch("eostrata.config.settings")
         mock_settings.ads_url = "https://ads.example.com/api"
@@ -209,6 +216,12 @@ class TestDownloadCams:
         mock_cdsapi = mocker.MagicMock()
         mock_cdsapi.Client.return_value = mock_client
 
+        def _fake_retrieve(_ds, _req, path):
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_bytes(b"\x89HDF\r\n\x1a\n")
+
+        mock_client.retrieve.side_effect = _fake_retrieve
+
         mocker.patch("eostrata.sources.cams._get_cdsapi", return_value=mock_cdsapi)
         mock_settings = mocker.patch("eostrata.config.settings")
         mock_settings.ads_url = "https://ads.example.com/api"
@@ -229,6 +242,12 @@ class TestDownloadCams:
         mock_cdsapi = mocker.MagicMock()
         mock_cdsapi.Client.return_value = mock_client
 
+        def _fake_retrieve(_ds, _req, path):
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_bytes(b"\x89HDF\r\n\x1a\n")
+
+        mock_client.retrieve.side_effect = _fake_retrieve
+
         mocker.patch("eostrata.sources.cams._get_cdsapi", return_value=mock_cdsapi)
         mock_settings = mocker.patch("eostrata.config.settings")
         mock_settings.ads_url = ""  # falsy → should fall back
@@ -236,6 +255,40 @@ class TestDownloadCams:
         _download_cams(dest, variable="co", year=2022, months=[1], bbox=(0, 0, 10, 10))
 
         mock_cdsapi.Client.assert_called_once_with(url=_DEFAULT_ADS_URL, quiet=True)
+
+    def test_download_extracts_nc_from_zip(self, tmp_path, mocker):
+        """If ADS returns a ZIP archive, the .nc member is extracted in-place."""
+        import io
+        import zipfile as zf
+
+        dest = tmp_path / "cams" / "cams_pm2p5_2023_06.nc"
+        nc_content = b"\x89HDF\r\n\x1a\n" + b"\x00" * 100  # fake HDF5 bytes
+
+        # Build an in-memory ZIP containing one .nc file
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as z:
+            z.writestr("data.nc", nc_content)
+        zip_bytes = buf.getvalue()
+
+        mock_client = mocker.MagicMock()
+        mock_cdsapi = mocker.MagicMock()
+        mock_cdsapi.Client.return_value = mock_client
+
+        def _fake_retrieve(_ds, _req, path):
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_bytes(zip_bytes)
+
+        mock_client.retrieve.side_effect = _fake_retrieve
+        mocker.patch("eostrata.sources.cams._get_cdsapi", return_value=mock_cdsapi)
+        mock_settings = mocker.patch("eostrata.config.settings")
+        mock_settings.ads_url = "https://ads.example.com/api"
+        mock_settings.ads_key = "k"
+
+        result = _download_cams(dest, variable="pm2p5", year=2023, months=[6], bbox=(0, 0, 1, 1))
+
+        assert result == dest
+        assert dest.read_bytes() == nc_content  # ZIP was unpacked
+        assert not dest.with_suffix(".zip").exists()  # temp ZIP cleaned up
 
 
 class TestCAMSSourceDownload:

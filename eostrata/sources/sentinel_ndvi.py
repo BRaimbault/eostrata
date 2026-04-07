@@ -1,23 +1,20 @@
-"""Sentinel-3 NDVI source via Copernicus Global Land Service (CGLS) WCS.
+"""Sentinel-3 NDVI source via Sentinel Hub BYOC / Copernicus Data Space.
 
-Product:    CGLS NDVI 300m v2 — Sentinel-3 OLCI 10-day composites
-Resolution: 300 m spatial, 10-day (dekadal) temporal
+Product:    CGLS NDVI 300m v3 — Sentinel-3 OLCI 10-day composites
+Resolution: ~300 m spatial, 10-day (dekadal) temporal
 Coverage:   Global, 2014-present
-Provider:   VITO / Copernicus Global Land Service
-WCS:        https://globalland.vito.be/geoserver/ows
+Provider:   JRC / EEA / Copernicus Global Land Service
 
-The public WCS endpoint is accessible without credentials for standard use.
-For higher-throughput or restricted datasets, set EOSTRATA_CGLS_API_KEY to
-a valid Copernicus Land Service API token; it is sent as a Bearer token.
+Access:
+    Sentinel Hub BYOC Process API on the Copernicus Data Space Ecosystem (CDSE).
+    BYOC collection ID: 6303088f-3c19-4967-9038-119267c6d090
 
-URL pattern (WCS 2.0.1):
-    SERVICE=WCS&VERSION=2.0.1&REQUEST=GetCoverage
-    &COVERAGEID=ndvi_300m_v2_10daily
-    &FORMAT=image/tiff
-    &SUBSETTINGCRS=http://www.opengis.net/def/crs/EPSG/0/4326
-    &SUBSET=Lat(south,north)
-    &SUBSET=Long(west,east)
-    &SUBSET=ansi("YYYY-MM-DDT00:00:00.000Z","YYYY-MM-DDT23:59:59.999Z")
+    Requires CDSE credentials (same account used for TROPOMI):
+      EOSTRATA_CDSE_USER and EOSTRATA_CDSE_PASSWORD
+
+Band encoding (UINT8):
+    NDVI = raw_DN / 250.0 - 0.08    (range: -0.08 to 0.92)
+    DN 255 is the fill/nodata value.
 
 Dekad conventions:
     dekad=1  → days  1-10  of the month (timestep: YYYY-MM-01)
@@ -29,7 +26,6 @@ from __future__ import annotations
 
 import calendar
 import logging
-import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,7 +33,6 @@ from typing import Any
 
 import httpx
 import numpy as np
-from tqdm import tqdm
 
 from eostrata.constants import PROP_RESOLUTION, PROP_SOURCE, PROP_VARIABLE
 from eostrata.sources.base import BaseSource, register_source
@@ -45,11 +40,83 @@ from eostrata.store import geotiff_to_zarr
 
 logger = logging.getLogger(__name__)
 
-_WCS_BASE = "https://globalland.vito.be/geoserver/ows"
-_COVERAGE_ID = "ndvi_300m_v2_10daily"
+# ── Sentinel Hub BYOC constants ────────────────────────────────────────────────
+
+_SH_PROCESS_URL = "https://sh.dataspace.copernicus.eu/api/v1/process"
+_BYOC_COLLECTION_ID = "6303088f-3c19-4967-9038-119267c6d090"
+
+# CGLS NDVI 300m grid spacing (1/336 °, ≈ 300 m at the equator)
+_NDVI_RESOLUTION_DEG = 1.0 / 336.0
+
+# DN 255 → nodata; remaining: physical_value = DN / 250.0 - 0.08
+_EVALSCRIPT = """\
+//VERSION=3
+function setup() {
+  return {
+    input: [{bands: ["NDVI"], units: "DN"}],
+    output: {bands: 1, sampleType: "FLOAT32"}
+  };
+}
+function evaluatePixel(sample) {
+  if (sample.NDVI === 255) return [NaN];
+  return [sample.NDVI / 250.0 - 0.08];
+}
+"""
+
 _DEKAD_START_DAYS = {1: 1, 2: 11, 3: 21}
-_DOWNLOAD_RETRIES = 2
-_RETRY_DELAYS = (5, 15)
+
+# Sentinel Hub Process API hard limit (pixels per dimension)
+_SH_MAX_PIXELS = 2500
+
+
+def _clamp_resolution(
+    bbox: tuple[float, float, float, float],
+    resolution_deg: float,
+) -> float:
+    """Return the coarsest of *resolution_deg* and the minimum needed to fit within 2500 px.
+
+    Logs a warning when the resolution has to be reduced.
+    """
+    west, south, east, north = bbox
+    min_resx = (east - west) / _SH_MAX_PIXELS
+    min_resy = (north - south) / _SH_MAX_PIXELS
+    clamped = max(resolution_deg, min_resx, min_resy)
+    if clamped > resolution_deg:
+        logger.warning(
+            "Requested resolution %.6f° would exceed Sentinel Hub's %d-pixel limit "
+            "for this bbox — automatically coarsened to %.6f° (≈ %.0f m at equator)",
+            resolution_deg,
+            _SH_MAX_PIXELS,
+            clamped,
+            clamped * 111_320,
+        )
+    return clamped
+
+
+# ── CDSE authentication ────────────────────────────────────────────────────────
+
+_CDSE_TOKEN_URL = (
+    "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
+)
+
+
+def _get_cdse_token(user: str, password: str) -> str:
+    """Obtain an OAuth2 Bearer token from the CDSE identity service."""
+    resp = httpx.post(
+        _CDSE_TOKEN_URL,
+        data={
+            "grant_type": "password",
+            "username": user,
+            "password": password,
+            "client_id": "cdse-public",
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()["access_token"]
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
 
 def _end_day_of_dekad(year: int, month: int, dekad: int) -> int:
@@ -61,86 +128,97 @@ def _end_day_of_dekad(year: int, month: int, dekad: int) -> int:
     return calendar.monthrange(year, month)[1]
 
 
-def _build_wcs_url(
+def _fetch_ndvi_geotiff(
     bbox: tuple[float, float, float, float],
-    year: int,
-    month: int,
-    dekad: int,
-) -> str:
-    """Build a WCS 2.0.1 GetCoverage URL for the CGLS NDVI 300m product."""
+    start_date: str,
+    end_date: str,
+    dest: Path,
+    token: str,
+) -> Path:
+    """Request a NDVI GeoTIFF from the Sentinel Hub Process API and save to *dest*.
+
+    Parameters
+    ----------
+    bbox:
+        (west, south, east, north) in EPSG:4326.
+    start_date / end_date:
+        ISO date strings ``YYYY-MM-DD`` for the dekad window.
+    dest:
+        Destination path for the downloaded GeoTIFF.
+    token:
+        CDSE OAuth2 Bearer token.
+    """
     west, south, east, north = bbox
-    start_day = _DEKAD_START_DAYS[dekad]
-    end_day = _end_day_of_dekad(year, month, dekad)
-    t0 = f"{year:04d}-{month:02d}-{start_day:02d}T00:00:00.000Z"
-    t1 = f"{year:04d}-{month:02d}-{end_day:02d}T23:59:59.999Z"
-    return (
-        f"{_WCS_BASE}?SERVICE=WCS&VERSION=2.0.1&REQUEST=GetCoverage"
-        f"&COVERAGEID={_COVERAGE_ID}"
-        f"&FORMAT=image/tiff"
-        f"&SUBSETTINGCRS=http://www.opengis.net/def/crs/EPSG/0/4326"
-        f"&SUBSET=Lat({south},{north})"
-        f"&SUBSET=Long({west},{east})"
-        f'&SUBSET=ansi("{t0}","{t1}")'
-    )
+    resolution = _clamp_resolution(bbox, _NDVI_RESOLUTION_DEG)
+    payload = {
+        "input": {
+            "bounds": {
+                "bbox": [west, south, east, north],
+                "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"},
+            },
+            "data": [
+                {
+                    "type": f"byoc-{_BYOC_COLLECTION_ID}",
+                    "dataFilter": {
+                        "timeRange": {
+                            "from": f"{start_date}T00:00:00Z",
+                            "to": f"{end_date}T23:59:59Z",
+                        },
+                        "mosaickingOrder": "mostRecent",
+                    },
+                }
+            ],
+        },
+        "output": {
+            "resx": resolution,
+            "resy": resolution,
+            "responses": [{"identifier": "default", "format": {"type": "image/tiff"}}],
+        },
+        "evalscript": _EVALSCRIPT,
+    }
 
-
-def _download(url: str, dest: Path, *, api_key: str = "") -> Path:
-    """Stream *url* to *dest* with optional Bearer auth and retry logic."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists():
-        logger.info("Already downloaded: %s", dest.name)
-        return dest
+    logger.info("Requesting NDVI GeoTIFF from Sentinel Hub for %s – %s", start_date, end_date)
 
-    headers: dict[str, str] = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    with httpx.stream(
+        "POST",
+        _SH_PROCESS_URL,
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+        follow_redirects=True,
+        timeout=300,
+    ) as resp:
+        if not resp.is_success:
+            resp.read()  # populate body while still inside the streaming context
+        resp.raise_for_status()
+        content_type = resp.headers.get("content-type", "")
+        if "application/json" in content_type or "text/html" in content_type:
+            body = resp.read()
+            raise RuntimeError(
+                f"Sentinel Hub Process API returned unexpected content-type {content_type!r}. "
+                f"Response: {body[:500]!r}"
+            )
+        with open(dest, "wb") as fh:
+            for chunk in resp.iter_bytes(chunk_size=1 << 20):
+                fh.write(chunk)
 
-    last_exc: Exception | None = None
-    for attempt in range(1, _DOWNLOAD_RETRIES + 2):
-        try:
-            logger.info("Downloading %s (attempt %d)", url, attempt)
-            with httpx.stream(
-                "GET", url, headers=headers, follow_redirects=True, timeout=None
-            ) as resp:
-                resp.raise_for_status()
-                total = int(resp.headers.get("content-length", 0))
-                with (
-                    open(dest, "wb") as fh,
-                    tqdm(total=total, unit="B", unit_scale=True, desc=dest.name) as bar,
-                ):
-                    for chunk in resp.iter_bytes(chunk_size=1 << 20):
-                        fh.write(chunk)
-                        bar.update(len(chunk))
-            logger.info("Saved to %s", dest)
-            return dest
-        except httpx.TransportError as exc:
-            last_exc = exc
-            dest.unlink(missing_ok=True)
-            if attempt <= _DOWNLOAD_RETRIES:
-                delay = _RETRY_DELAYS[attempt - 1]
-                logger.warning(
-                    "Download failed (attempt %d/%d): %s — retrying in %ds",
-                    attempt,
-                    _DOWNLOAD_RETRIES + 1,
-                    exc,
-                    delay,
-                )
-                time.sleep(delay)
-            else:
-                logger.error("Download failed after %d attempts: %s", _DOWNLOAD_RETRIES + 1, exc)
+    logger.info("Saved NDVI GeoTIFF to %s", dest)
+    return dest
 
-    raise last_exc  # type: ignore[misc]
+
+# ── Source class ───────────────────────────────────────────────────────────────
 
 
 @register_source
 class SentinelNDVISource(BaseSource):
-    """Sentinel-3 NDVI 300m dekadal composites from the Copernicus Global Land Service."""
+    """Sentinel-3 NDVI 300m dekadal composites — CGLS v3 via Sentinel Hub BYOC."""
 
     id = "cgls"
     collection_id = "cgls"
-    collection_title = "Sentinel-3 NDVI — CGLS composites (300 m, dekadal)"
+    collection_title = "Sentinel-3 NDVI — CGLS v3 composites (300 m, dekadal)"
     collection_description = (
-        "Sentinel-3 NDVI 300m dekadal composites from the Copernicus Global Land Service"
+        "Sentinel-3 NDVI 300m dekadal composites from the Copernicus Global Land Service "
+        "(v3, 2014-present), accessed via the Sentinel Hub BYOC API on CDSE."
     )
     zarr_prefix = "cgls"
     temporal_resolution = "dekadal"
@@ -152,9 +230,13 @@ class SentinelNDVISource(BaseSource):
     def is_configured(cls) -> tuple[bool, str]:
         from eostrata.config import settings
 
-        if settings.cgls_api_key:
+        if settings.cdse_user and settings.cdse_password:
             return True, ""
-        return False, "CGLS API key missing — set EOSTRATA_CGLS_API_KEY"
+        return (
+            False,
+            "CDSE credentials missing — set EOSTRATA_CDSE_USER + EOSTRATA_CDSE_PASSWORD "
+            "(register for free at https://dataspace.copernicus.eu)",
+        )
 
     @classmethod
     def catalog_meta(cls, dataset_name: str) -> dict:
@@ -174,7 +256,7 @@ class SentinelNDVISource(BaseSource):
         dekad: int = 1,
         **_: Any,
     ) -> list[Path]:
-        """Download a single CGLS NDVI 300m dekadal GeoTIFF.
+        """Download a single CGLS NDVI 300m dekadal GeoTIFF via Sentinel Hub.
 
         Parameters
         ----------
@@ -182,18 +264,31 @@ class SentinelNDVISource(BaseSource):
         month:  Month (1-12).
         dekad:  Dekad number: 1 (days 1-10), 2 (days 11-20), 3 (days 21-end).
         """
+        from eostrata.config import settings
+
+        user = settings.cdse_user
+        password = settings.cdse_password
+        if not user or not password:
+            raise RuntimeError(
+                "CDSE credentials are required for the CGLS NDVI source.\n"
+                "Set EOSTRATA_CDSE_USER and EOSTRATA_CDSE_PASSWORD in your .env file.\n"
+                "Register for free at https://dataspace.copernicus.eu"
+            )
+
         start_day = _DEKAD_START_DAYS[dekad]
-        filename = f"ndvi_300m_v2_{year:04d}{month:02d}{start_day:02d}.tif"
+        end_day = _end_day_of_dekad(year, month, dekad)
+        start_date = f"{year:04d}-{month:02d}-{start_day:02d}"
+        end_date = f"{year:04d}-{month:02d}-{end_day:02d}"
+
+        filename = f"ndvi_300m_v3_{year:04d}{month:02d}{start_day:02d}.tif"
         dest = Path(raw_dir) / "cgls" / filename
 
         if dest.exists():
             logger.info("Already available: %s", dest.name)
             return [dest]
 
-        from eostrata.config import settings
-
-        url = _build_wcs_url(bbox, year, month, dekad)
-        _download(url, dest, api_key=settings.cgls_api_key)
+        token = _get_cdse_token(user, password)
+        _fetch_ndvi_geotiff(bbox, start_date, end_date, dest, token)
         return [dest]
 
     def to_zarr(
@@ -233,8 +328,8 @@ class SentinelNDVISource(BaseSource):
         return {
             PROP_VARIABLE: self.VARIABLE,
             PROP_RESOLUTION: "300m",
-            "eostrata:release": "v2",
-            "eostrata:product": _COVERAGE_ID,
+            "eostrata:release": "v3",
+            "eostrata:byoc_collection": _BYOC_COLLECTION_ID,
             PROP_SOURCE: "Sentinel-3 OLCI",
             "eostrata:period": (
                 f"{year:04d}-{month:02d}-{start_day:02d}/{year:04d}-{month:02d}-{end_day:02d}"

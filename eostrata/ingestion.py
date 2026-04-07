@@ -72,6 +72,10 @@ def run_ingest(
             logger.exception("%s: failed to download %s", pfx, label)
             failed.append(label)
             continue
+        if not paths:
+            logger.info("%s: %s — no files downloaded, skipping", pfx, label)
+            failed.append(label)
+            continue
         try:
             ds = source.to_zarr(paths[0], zarr_root, bbox, **period_kwargs)
         except Exception:

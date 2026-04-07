@@ -30,6 +30,7 @@ Coverage: Global, 2003–present
 from __future__ import annotations
 
 import logging
+import zipfile
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -130,7 +131,36 @@ def _download_cams(
         # Falls back to ~/.adsapirc
         c = cdsapi.Client(url=url, quiet=True)
 
-    c.retrieve(_ADS_DATASET, request, str(dest))
+    try:
+        c.retrieve(_ADS_DATASET, request, str(dest))
+    except Exception as exc:
+        msg = str(exc)
+        if "MarsNoDataError" in msg or "MARS returned no data" in msg:
+            raise RuntimeError(
+                f"CAMS EAC4 returned no data for {variable} year={year} months={months}. "
+                "The dataset has a ~4-month production lag — check that the requested "
+                "period has been published."
+            ) from None
+        raise
+
+    # ADS sometimes returns a ZIP archive even when format="netcdf" is requested.
+    # Detect by magic bytes (PK = ZIP) and extract the first .nc member in-place.
+    with open(dest, "rb") as fh:
+        magic = fh.read(2)
+    if magic == b"PK":
+        tmp = dest.with_suffix(".zip")
+        dest.rename(tmp)
+        try:
+            with zipfile.ZipFile(tmp) as zf:
+                nc_names = [n for n in zf.namelist() if n.endswith(".nc")]
+                if not nc_names:
+                    raise RuntimeError(f"No .nc file found in CAMS ZIP for {dest.name}")
+                zf.extract(nc_names[0], dest.parent)
+                extracted = dest.parent / nc_names[0]
+                extracted.rename(dest)
+        finally:
+            tmp.unlink(missing_ok=True)
+
     logger.info("CAMS file saved: %s", dest)
     return dest
 
@@ -144,7 +174,7 @@ def _cams_netcdf_to_zarr(
     bbox: tuple[float, float, float, float],
 ) -> xr.Dataset:
     """Read a CAMS EAC4 NetCDF, normalise coordinates, clip to bbox, write Zarr."""
-    ds = xr.open_dataset(nc_path)
+    ds = xr.open_dataset(nc_path, engine="h5netcdf")
 
     # Rename spatial and time coordinates to (x, y, time)
     rename: dict[str, str] = {}

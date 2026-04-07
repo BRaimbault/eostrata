@@ -1272,8 +1272,11 @@
       if (v === null || v === undefined) return '—';
       const n = Number(v);
       if (!isFinite(n)) return '—';
-      return Math.abs(n) >= 1000 ? n.toLocaleString(undefined, { maximumFractionDigits: 0 })
-        : Math.abs(n) >= 1 ? n.toLocaleString(undefined, { maximumFractionDigits: 2 })
+      const abs = Math.abs(n);
+      if (abs === 0) return '0';
+      if (abs < 0.001) return n.toPrecision(4);
+      return abs >= 1000 ? n.toLocaleString(undefined, { maximumFractionDigits: 0 })
+        : abs >= 1 ? n.toLocaleString(undefined, { maximumFractionDigits: 2 })
           : n.toLocaleString(undefined, { maximumFractionDigits: 4 });
     }
 
@@ -1367,7 +1370,14 @@
       _pendingTile = null; // tile will be rendered by the refreshTile call below
       const range = _autoScaleRange(stats);
       if (range) {
-        const [lo, hi] = range.map(v => parseFloat(v.toFixed(4)));
+        const [lo, hi] = range.map(v => {
+          if (v === 0) return 0;
+          const abs = Math.abs(v);
+          // Use significant digits for very small/large values, fixed decimals otherwise
+          return abs < 0.001 || abs >= 100000
+            ? parseFloat(v.toPrecision(4))
+            : parseFloat(v.toFixed(4));
+        });
         const inp = document.getElementById('inp-rescale');
         inp.value = lo + ',' + hi;
         inp.disabled = true;

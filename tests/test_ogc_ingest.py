@@ -139,6 +139,30 @@ class TestInputValidation:
         )
         assert resp.status_code == 422
 
+    def test_tropomi_valid_variable_accepted(self, client, sync_executor):
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)) as mock_fn:
+            resp = client.post(
+                "/processes/ingest/execution",
+                json={"inputs": {"source": "tropomi", "variable": "co", "years": [2024], "months": [1], "days": [1]}},
+            )
+        assert resp.status_code == 201
+        assert mock_fn.call_args.kwargs["variable"] == "co"
+
+    def test_tropomi_invalid_variable_returns_422(self, client):
+        resp = client.post(
+            "/processes/ingest/execution",
+            json={"inputs": {"source": "tropomi", "variable": "t2m"}},
+        )
+        assert resp.status_code == 422
+
+    def test_tropomi_default_variable_is_no2(self, client, sync_executor):
+        with patch("eostrata.ingestion.run_ingest", return_value=([], True)) as mock_fn:
+            client.post(
+                "/processes/ingest/execution",
+                json={"inputs": {"source": "tropomi", "years": [2024], "months": [1], "days": [1]}},
+            )
+        assert mock_fn.call_args.kwargs["variable"] == "no2"
+
 
 # ── WorldPop execution ────────────────────────────────────────────────────────
 

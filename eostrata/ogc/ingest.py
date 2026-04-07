@@ -89,8 +89,12 @@ _INGEST_DESCRIPTION = {
         },
         "variable": {
             "title": "Variable",
-            "description": "ERA5 short name (cds only): t2m, tp, u10, v10, sp.",
-            "schema": {"type": "string", "enum": ["t2m", "tp", "u10", "v10", "sp"]},
+            "description": (
+                "Variable short name for sources that support multiple variables "
+                "(cds: t2m/tp/u10/v10/sp; tropomi: no2/co/o3/so2/ch4/hcho/aer_ai). "
+                "Defaults to the source's primary variable when omitted."
+            ),
+            "schema": {"type": "string"},
         },
         "years": {
             "title": "Years",
@@ -164,8 +168,8 @@ class IngestInputs(BaseModel):
     iso3: Annotated[str, Field(min_length=3, max_length=3)] | None = Field(
         None, description="ISO 3166-1 alpha-3 country code (worldpop only)"
     )
-    variable: Literal["t2m", "tp", "u10", "v10", "sp"] | None = Field(
-        None, description="ERA5 variable short name (cds only)"
+    variable: str | None = Field(
+        None, description="Variable short name (source-specific, e.g. 't2m' for cds, 'no2' for tropomi)"
     )
     years: list[int] | None = Field(None, description="Years to ingest")
     months: list[Month] | Literal["ALL"] | None = Field(
@@ -209,6 +213,12 @@ class IngestInputs(BaseModel):
             return self  # Invalid source already caught by validate_source
         if "iso3" in source_cls.ui_fields and self.iso3 is None:
             raise ValueError(f"iso3 is required when source is '{self.source}'")
+        if "variable" in source_cls.ui_fields and self.variable is not None:
+            valid = source_cls.VARIABLES if source_cls.VARIABLES else [source_cls.VARIABLE]
+            if self.variable not in valid:
+                raise ValueError(
+                    f"variable must be one of {valid} for source '{self.source}'"
+                )
         return self
 
 
@@ -219,6 +229,15 @@ class IngestExecutionRequest(BaseModel):
                 {"inputs": {"source": "worldpop", "iso3": "NGA", "years": [2023]}},
                 {"inputs": {"source": "chirps", "years": [2024], "months": [1, 2, 3]}},
                 {"inputs": {"source": "cds", "variable": "t2m", "years": [2023]}},
+                {
+                    "inputs": {
+                        "source": "tropomi",
+                        "variable": "no2",
+                        "years": [2024],
+                        "months": [1],
+                        "days": [1],
+                    }
+                },
                 {
                     "inputs": {
                         "source": "cgls",
@@ -335,7 +354,7 @@ def execute_ingest(body: IngestExecutionRequest, response: Response) -> dict:
     if "iso3" in source_cls.ui_fields:
         source_params["iso3"] = inp.iso3.upper()
     if "variable" in source_cls.ui_fields:
-        source_params["variable"] = inp.variable or "t2m"
+        source_params["variable"] = inp.variable or source_cls.VARIABLE
     if "years" in source_cls.ui_fields:
         source_params["years"] = inp.years or [latest.year]
     if "months" in source_cls.ui_fields:

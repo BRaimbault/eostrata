@@ -55,7 +55,7 @@ _CDSE_TOKEN_URL = (
     "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
 )
 _CDSE_SEARCH_URL = "https://catalogue.dataspace.copernicus.eu/odata/v1/Products"
-_CDSE_DOWNLOAD_URL = "https://zipper.dataspace.copernicus.eu/odata/v1/Products"
+_CDSE_DOWNLOAD_URL = "https://download.dataspace.copernicus.eu/odata/v1/Products"
 
 # Quality value threshold (ESA recommended: 0.75 for most variables)
 _QA_THRESHOLD = 0.75
@@ -171,7 +171,7 @@ def _download_product(product_id: str, dest: Path, token: str) -> Path:
         logger.info("Already downloaded: %s", dest.name)
         return dest
 
-    url = f"{_CDSE_DOWNLOAD_URL}('{product_id}')/$value"
+    url = f"{_CDSE_DOWNLOAD_URL}({product_id})/$value"
     logger.info("Downloading product %s", product_id)
 
     tmp = dest.with_suffix(".tmp")

@@ -338,6 +338,12 @@ def apply_temporal_aggregation(
         # No aggregation — use last available timestep
         return da.isel(time=-1) if "time" in da.dims else da
 
+    # Scalar time selection (t0 == t1 nearest-neighbour) drops the time dim.
+    # When an agg method is requested the result is still valid — the single
+    # selected timestep *is* the aggregation output.
+    if "time" not in da.dims:
+        return da
+
     n_ts = da.sizes.get("time", 1)
     max_ts = _eostrata_config.settings.max_aggregation_timesteps
     batch_size = max_ts

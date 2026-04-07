@@ -235,6 +235,23 @@ class TestApplyTemporalAggregation:
         assert result.dims == ("y", "x")
         assert float(result.mean()) == pytest.approx((2021.0 + 2022.0) / 2)
 
+    def test_agg_with_single_timestamp_interval(self):
+        """Regression: interval with t0==t1 (UI sends same-date start/end for single-image
+        collections) should not crash when an agg method is specified.
+
+        When WorldPop has one image, the UI sets both inp-start and inp-end to the
+        same date, producing datetime_str='2020-01-01/2020-01-01'.  Previously this
+        triggered scalar time selection (method='nearest') which drops the time dim,
+        causing da.mean/max/etc('time') to raise 'time not found in array dimensions'.
+        """
+        da = _make_da([2020])  # single timestep
+        for agg in ("mean", "sum", "min", "max"):
+            result = apply_temporal_aggregation(
+                da, datetime_str="2020-01-01/2020-01-01", agg=agg
+            )
+            assert result.dims == ("y", "x"), f"agg={agg} should return 2D array"
+            assert float(result.mean()) == pytest.approx(2020.0)
+
     def test_agg_anomaly_baseline_outside_datetime_range(self):
         """Baseline period that does not overlap with datetime_str must still work.
 

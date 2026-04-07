@@ -178,10 +178,10 @@ def _load_array(
     """Open the Zarr group and return the requested variable as a loaded 2D DataArray.
 
     Applies temporal aggregation when the array has a ``time`` dimension.
-    When ``agg_cache_maxsize > 0`` the aggregated result is cached in memory
+    When ``agg_cache_max_entries > 0`` the aggregated result is cached in memory
     and reused on subsequent calls with the same parameters (including from
     tile requests), making repeated queries free.  When caching is disabled
-    (``agg_cache_maxsize=0``) the *clip_bbox* spatial pre-clip is applied to
+    (``agg_cache_max_entries=0``) the *clip_bbox* spatial pre-clip is applied to
     bound memory usage to the features' bounding box.
     The DataArray is fully materialised into memory before returning so that
     callers (e.g. the zonal-stats feature loop) can clip it N times without
@@ -194,7 +194,7 @@ def _load_array(
     store_path = url or str(settings.zarr_root)
 
     # ── Cache check ────────────────────────────────────────────────────────────
-    if settings.agg_cache_maxsize > 0:
+    if settings.agg_cache_max_entries > 0:
         cache_key = _agg_cache_key(store_path, group, variable, datetime, agg, baseline)
         hit = _get_agg_cache(cache_key)
         if hit is not None:
@@ -224,7 +224,7 @@ def _load_array(
         has_time = "time" in da.dims
         if (
             clip_bbox is not None
-            and (settings.agg_cache_maxsize == 0 or not has_time)
+            and (settings.agg_cache_max_entries == 0 or not has_time)
             and "x" in da.dims
             and "y" in da.dims
         ):
@@ -264,7 +264,7 @@ def _load_array(
         da = da.load()
 
         # Store in cache for subsequent tile and stats requests with same params.
-        if settings.agg_cache_maxsize > 0:
+        if settings.agg_cache_max_entries > 0:
             _put_agg_cache(cache_key, da, accessed)  # type: ignore[possibly-undefined]
     finally:
         ds.close()

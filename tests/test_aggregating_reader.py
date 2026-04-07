@@ -234,7 +234,7 @@ class TestAggregatingReaderCache:
         import eostrata.aggregate as agg_mod
         import eostrata.config as cfg
 
-        monkeypatch.setattr(cfg.settings, "agg_cache_maxsize", 4)
+        monkeypatch.setattr(cfg.settings, "agg_cache_max_entries", 4)
         monkeypatch.setattr(cfg.settings, "agg_cache_ttl_seconds", 300)
 
         zarr_root = tmp_path / "zarr"
@@ -280,11 +280,11 @@ class TestAggregatingReaderCache:
         )
 
     def test_tile_falls_back_to_clip_first_when_cache_disabled(self, tmp_path, monkeypatch):
-        """When agg_cache_maxsize=0, clip-first path is used (apply called per tile)."""
+        """When agg_cache_max_entries=0, clip-first path is used (apply called per tile)."""
         import eostrata.aggregate as agg_mod
         import eostrata.config as cfg
 
-        monkeypatch.setattr(cfg.settings, "agg_cache_maxsize", 0)
+        monkeypatch.setattr(cfg.settings, "agg_cache_max_entries", 0)
 
         zarr_root = tmp_path / "zarr"
         times = np.array(

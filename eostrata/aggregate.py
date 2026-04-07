@@ -35,7 +35,7 @@ from eostrata.cache import record_access
 # processes.py) so that zooming (64 tiles, same datetime/agg) and repeated
 # stats queries skip the expensive temporal reduction entirely.
 #
-# When agg_cache_maxsize=0 the cache is disabled and every request uses the
+# When agg_cache_max_entries=0 the cache is disabled and every request uses the
 # memory-safe clip-first path (recommended for ≤ 512 MB instances).
 # ---------------------------------------------------------------------------
 
@@ -77,7 +77,7 @@ def _get_agg_cache(key: tuple) -> tuple[xr.DataArray, list] | None:
 
 def _put_agg_cache(key: tuple, da: xr.DataArray, accessed: list) -> None:
     """Store *(da, accessed)* in the cache if caching is enabled."""
-    maxsize = _eostrata_config.settings.agg_cache_maxsize
+    maxsize = _eostrata_config.settings.agg_cache_max_entries
     if maxsize <= 0:
         return
     ttl = _eostrata_config.settings.agg_cache_ttl_seconds
@@ -340,7 +340,7 @@ def apply_temporal_aggregation(
 
     n_ts = da.sizes.get("time", 1)
     max_ts = _eostrata_config.settings.max_aggregation_timesteps
-    batch_size = _eostrata_config.settings.aggregation_batch_size
+    batch_size = max_ts
     use_batched = max_ts > 0 and "time" in da.dims and n_ts > max_ts
     if use_batched:
         logger.info(
@@ -542,14 +542,14 @@ class AggregatingReader(Reader):
     def tile(self, tile_x: int, tile_y: int, tile_z: int, tilesize: int | None = None, **kwargs):  # type: ignore[override]
         """Render a map tile, using the aggregation cache when available.
 
-        When ``agg_cache_maxsize > 0`` (default):
+        When ``agg_cache_max_entries > 0`` (default):
           - **Cache hit**: renders the tile from the cached full-extent 2D array
             with zero Zarr reads — all 64 tiles in a zoom session share one
             aggregation computation.
           - **Cache miss**: aggregates the full spatial extent, caches the result,
             then renders this tile.  Subsequent tiles are served from cache.
 
-        When ``agg_cache_maxsize == 0`` (cache disabled, memory-safe mode):
+        When ``agg_cache_max_entries == 0`` (cache disabled, memory-safe mode):
           - Clips the lazy 3D array to the tile bbox first, then aggregates only
             the ~256×256 pixel region, keeping peak RAM bounded to
             O(tile_pixels × timesteps).  Recommended for ≤ 512 MB instances.
@@ -564,8 +564,8 @@ class AggregatingReader(Reader):
         matrix = self.tms.matrix(tile_z)
         ts = tilesize or matrix.tileHeight
 
-        # ── Cache path (agg_cache_maxsize > 0) ────────────────────────────────
-        if _eostrata_config.settings.agg_cache_maxsize > 0:
+        # ── Cache path (agg_cache_max_entries > 0) ────────────────────────────────
+        if _eostrata_config.settings.agg_cache_max_entries > 0:
             cache_key = _agg_cache_key(
                 self.src_path,
                 self.group,

@@ -492,7 +492,7 @@ class TestAggCache:
     def test_put_then_get_returns_entry(self, monkeypatch):
         import eostrata.config as cfg
 
-        monkeypatch.setattr(cfg.settings, "agg_cache_maxsize", 4)
+        monkeypatch.setattr(cfg.settings, "agg_cache_max_entries", 4)
         monkeypatch.setattr(cfg.settings, "agg_cache_ttl_seconds", 300)
 
         da = self._make_da_2d()
@@ -508,7 +508,7 @@ class TestAggCache:
         import eostrata.aggregate as agg_mod
         import eostrata.config as cfg
 
-        monkeypatch.setattr(cfg.settings, "agg_cache_maxsize", 4)
+        monkeypatch.setattr(cfg.settings, "agg_cache_max_entries", 4)
         monkeypatch.setattr(cfg.settings, "agg_cache_ttl_seconds", 10)
 
         da = self._make_da_2d()
@@ -524,7 +524,7 @@ class TestAggCache:
     def test_cache_maxsize_evicts_oldest(self, monkeypatch):
         import eostrata.config as cfg
 
-        monkeypatch.setattr(cfg.settings, "agg_cache_maxsize", 2)
+        monkeypatch.setattr(cfg.settings, "agg_cache_max_entries", 2)
         monkeypatch.setattr(cfg.settings, "agg_cache_ttl_seconds", 300)
 
         da = self._make_da_2d()
@@ -542,7 +542,7 @@ class TestAggCache:
     def test_put_noop_when_maxsize_zero(self, monkeypatch):
         import eostrata.config as cfg
 
-        monkeypatch.setattr(cfg.settings, "agg_cache_maxsize", 0)
+        monkeypatch.setattr(cfg.settings, "agg_cache_max_entries", 0)
         monkeypatch.setattr(cfg.settings, "agg_cache_ttl_seconds", 300)
 
         da = self._make_da_2d()
@@ -553,7 +553,7 @@ class TestAggCache:
     def test_invalidate_removes_only_target_group(self, monkeypatch):
         import eostrata.config as cfg
 
-        monkeypatch.setattr(cfg.settings, "agg_cache_maxsize", 8)
+        monkeypatch.setattr(cfg.settings, "agg_cache_max_entries", 8)
         monkeypatch.setattr(cfg.settings, "agg_cache_ttl_seconds", 300)
 
         da = self._make_da_2d()

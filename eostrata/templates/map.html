@@ -1,260 +1,615 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-  <meta charset="utf-8"/>
-  <title>eostrata viewer</title>
-  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no"/>
+  <meta charset="utf-8" />
+  <title>eostrata map</title>
+  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css"
-        integrity="sha384-o/2yZuJZWGJ4s/adjxVW71R+EO/LyCwdQfP5UWSgX/w87iiTXuvDZaejd3TsN7mf"
-        crossorigin="anonymous"/>
+    integrity="sha384-o/2yZuJZWGJ4s/adjxVW71R+EO/LyCwdQfP5UWSgX/w87iiTXuvDZaejd3TsN7mf" crossorigin="anonymous" />
   <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"
-          integrity="sha384-okbbMvvx/qfQkmiQKfd5VifbKZ/W8p1qIsWvE1ROPUfHWsDcC8/BnHohF7vPg2T6"
-          crossorigin="anonymous"></script>
+    integrity="sha384-okbbMvvx/qfQkmiQKfd5VifbKZ/W8p1qIsWvE1ROPUfHWsDcC8/BnHohF7vPg2T6"
+    crossorigin="anonymous"></script>
   <style>
     /* ── Design tokens ───────────────────────────────────────────────────────
        Type scale : 11px (xs) · 12px (sm) · 13px (base) · 14px (md)
        Gray palette: Tailwind gray-500/400/300/100/50 + white
        Accent      : blue-600   Warning: amber-700
     ─────────────────────────────────────────────────────────────────────── */
-    body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }
-    #map  { position: absolute; top: 0; bottom: 0; width: 100%; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+
+    #map {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 100%;
+    }
 
     /* Panel */
     #controls {
-      position: absolute; top: 10px; left: 10px; z-index: 1000;
-      background: #fff; padding: 14px 16px; border-radius: 8px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.18);
-      width: 300px; box-sizing: border-box; overflow: hidden;
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+      background: #fff;
+      padding: 14px 16px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+      width: 300px;
+      box-sizing: border-box;
+      overflow: hidden;
     }
+
     #controls h3 {
-      margin: 0; font-size: 14px; font-weight: 600; color: #111827;
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: #111827;
     }
+
     #controls-header {
-      display: flex; align-items: center; justify-content: space-between;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
       margin-bottom: 10px;
     }
-    #controls-header nav { display: flex; gap: 8px; }
-    #controls-header nav a {
-      font-size: 11px; color: #6b7280; text-decoration: none;
+
+    #controls-header nav {
+      display: flex;
+      gap: 8px;
     }
-    #controls-header nav a:hover { color: #2563eb; }
+
+    #controls-header nav a {
+      font-size: 11px;
+      color: #6b7280;
+      text-decoration: none;
+    }
+
+    #controls-header nav a:hover {
+      color: #2563eb;
+    }
 
     /* Tab nav — proper tab appearance */
     .tab-nav {
-      display: flex; gap: 3px; margin-bottom: 0;
+      display: flex;
+      gap: 3px;
+      margin-bottom: 0;
       border-bottom: 2px solid #2563eb;
     }
+
     .tab-nav button {
-      padding: 5px 12px; font-size: 12px; font-family: inherit;
-      color: #6b7280; border: 1px solid #d1d5db; border-bottom: none;
-      border-radius: 4px 4px 0 0; background: #f3f4f6;
-      cursor: pointer; transition: background 0.12s, color 0.12s;
-      margin-bottom: -2px; position: relative;
+      padding: 5px 12px;
+      font-size: 12px;
+      font-family: inherit;
+      color: #6b7280;
+      border: 1px solid #d1d5db;
+      border-bottom: none;
+      border-radius: 4px 4px 0 0;
+      background: #f3f4f6;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+      margin-bottom: -2px;
+      position: relative;
     }
+
     .tab-nav button.active {
-      background: #fff; color: #2563eb; font-weight: 600;
-      border-color: #d1d5db; border-bottom: 2px solid #fff;
+      background: #fff;
+      color: #2563eb;
+      font-weight: 600;
+      border-color: #d1d5db;
+      border-bottom: 2px solid #fff;
     }
-    .tab-nav button:not(.active):hover { background: #e5e7eb; color: #111827; }
-    .tab-panel { padding-top: 10px; }
+
+    .tab-nav button:not(.active):hover {
+      background: #e5e7eb;
+      color: #111827;
+    }
+
+    .tab-panel {
+      padding-top: 10px;
+    }
 
     /* Labels — uppercase, xs size, secondary color */
     #controls label {
-      display: block; margin-top: 8px;
-      font-size: 11px; font-weight: 500; color: #6b7280;
-      text-transform: uppercase; letter-spacing: 0.05em;
+      display: block;
+      margin-top: 8px;
+      font-size: 11px;
+      font-weight: 500;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
 
     /* Inputs & selects */
     #controls select,
     #controls input[type="text"],
     #controls input[type="date"] {
-      width: 100%; margin-top: 3px; padding: 5px 7px;
-      font-size: 13px; font-family: inherit; color: #111827;
-      box-sizing: border-box; border: 1px solid #d1d5db; border-radius: 4px;
+      width: 100%;
+      margin-top: 3px;
+      padding: 5px 7px;
+      font-size: 13px;
+      font-family: inherit;
+      color: #111827;
+      box-sizing: border-box;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
       background: #fff;
     }
+
     #controls select:focus,
     #controls input[type="text"]:focus,
     #controls input[type="date"]:focus {
-      outline: none; border-color: #2563eb;
-      box-shadow: 0 0 0 2px rgba(37,99,235,0.15);
+      outline: none;
+      border-color: #2563eb;
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
     }
 
     /* Segmented date-mode toggle */
     .date-mode-toggle {
-      display: flex; margin-top: 3px; border-radius: 4px; overflow: hidden;
+      display: flex;
+      margin-top: 3px;
+      border-radius: 4px;
+      overflow: hidden;
       border: 1px solid #d1d5db;
     }
+
     .date-mode-toggle button {
-      flex: 1; padding: 5px 0; font-size: 12px; font-family: inherit;
-      color: #6b7280; border: none; background: #f9fafb;
-      cursor: pointer; transition: background 0.12s, color 0.12s;
+      flex: 1;
+      padding: 5px 0;
+      font-size: 12px;
+      font-family: inherit;
+      color: #6b7280;
+      border: none;
+      background: #f9fafb;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
     }
-    .date-mode-toggle button.active  { background: #2563eb; color: #fff; }
-    .date-mode-toggle button:not(.active):hover { background: #f3f4f6; color: #111827; }
+
+    .date-mode-toggle button.active {
+      background: #2563eb;
+      color: #fff;
+    }
+
+    .date-mode-toggle button:not(.active):hover {
+      background: #f3f4f6;
+      color: #111827;
+    }
 
     /* Two-column date row */
-    .row-2 { display: flex; gap: 6px; }
-    .row-2 > div { flex: 1; min-width: 0; }
-    .row-2 label { margin-top: 0; }
+    .row-2 {
+      display: flex;
+      gap: 6px;
+    }
+
+    .row-2>div {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .row-2 label {
+      margin-top: 0;
+    }
 
     /* Collapsible sections */
-    #section-interval { display: none; }
-    #section-baseline { display: none; margin-top: 2px; }
+    #section-interval {
+      display: none;
+    }
+
+    #section-baseline {
+      display: none;
+      margin-top: 2px;
+    }
 
     /* Dividers */
     .section-divider {
-      border: none; border-top: 1px solid #d1d5db; margin: 10px 0 4px;
+      border: none;
+      border-top: 1px solid #d1d5db;
+      margin: 10px 0 4px;
     }
 
     /* Checkbox label — same size as small text, no uppercase */
     .label-checkbox {
-      display: flex; align-items: center; gap: 6px; margin-top: 6px;
-      font-size: 12px; font-weight: 400; color: #6b7280;
-      text-transform: none; letter-spacing: 0; cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 6px;
+      font-size: 12px;
+      font-weight: 400;
+      color: #6b7280;
+      text-transform: none;
+      letter-spacing: 0;
+      cursor: pointer;
     }
-    .label-checkbox input[type="checkbox"] { width: auto; margin: 0; }
-    #inp-rescale:disabled { background: #f3f4f6; color: #9ca3af; cursor: not-allowed; }
+
+    .label-checkbox input[type="checkbox"] {
+      width: auto;
+      margin: 0;
+    }
+
+    #inp-rescale:disabled {
+      background: #f3f4f6;
+      color: #9ca3af;
+      cursor: not-allowed;
+    }
 
     /* Status bar */
-    #status  { font-size: 11px; color: #9ca3af; margin-top: 10px; min-height: 14px; }
-    #warning { font-size: 12px; color: #b45309; margin-top: 8px; display: none; }
+    #status {
+      font-size: 11px;
+      color: #9ca3af;
+      margin-top: 10px;
+      min-height: 14px;
+    }
+
+    #warning {
+      font-size: 12px;
+      color: #b45309;
+      margin-top: 8px;
+      display: none;
+    }
 
     /* Zonal stats panel */
-    #stats-section { display: none; margin-top: 2px; }
-    #stats-section h4 {
-      margin: 8px 0 6px; font-size: 11px; font-weight: 500; color: #6b7280;
-      text-transform: uppercase; letter-spacing: 0.05em;
+    #stats-section {
+      display: none;
+      margin-top: 2px;
     }
+
+    #stats-section h4 {
+      margin: 8px 0 6px;
+      font-size: 11px;
+      font-weight: 500;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
     #stats-grid {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px 10px;
       font-size: 12px;
     }
-    .stat-item  { display: flex; justify-content: space-between; }
-    .stat-label { color: #9ca3af; }
-    .stat-value { font-weight: 600; color: #111827; }
-    #stats-msg  { font-size: 11px; color: #9ca3af; margin-top: 4px; min-height: 14px; }
+
+    .stat-item {
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .stat-label {
+      color: #9ca3af;
+    }
+
+    .stat-value {
+      font-weight: 600;
+      color: #111827;
+    }
+
+    #stats-msg {
+      font-size: 11px;
+      color: #9ca3af;
+      margin-top: 4px;
+      min-height: 14px;
+    }
 
     /* ── Ingest tab ─────────────────────────────────────────────────────── */
     .btn {
-      display: block; width: 100%; margin-top: 8px; padding: 6px 10px;
-      font-size: 13px; font-family: inherit; font-weight: 500;
-      border: none; border-radius: 4px; cursor: pointer;
-      background: #2563eb; color: #fff; transition: background 0.12s;
+      display: block;
+      width: 100%;
+      margin-top: 8px;
+      padding: 6px 10px;
+      font-size: 13px;
+      font-family: inherit;
+      font-weight: 500;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      background: #2563eb;
+      color: #fff;
+      transition: background 0.12s;
     }
-    .btn:hover:not(:disabled) { background: #1d4ed8; }
-    .btn:disabled { background: #93c5fd; cursor: not-allowed; }
-    .btn.secondary {
-      background: #f3f4f6; color: #374151; border: 1px solid #d1d5db;
-    }
-    .btn.secondary:hover:not(:disabled) { background: #e5e7eb; }
 
-    .ing-msg { font-size: 11px; margin-top: 6px; min-height: 14px; }
-    .ing-msg.ok  { color: #166534; }
-    .ing-msg.err { color: #991b1b; }
-    .ing-msg.dim { color: #9ca3af; }
+    .btn:hover:not(:disabled) {
+      background: #1d4ed8;
+    }
+
+    .btn:disabled {
+      background: #93c5fd;
+      cursor: not-allowed;
+    }
+
+    .btn.secondary {
+      background: #f3f4f6;
+      color: #374151;
+      border: 1px solid #d1d5db;
+    }
+
+    .btn.secondary:hover:not(:disabled) {
+      background: #e5e7eb;
+    }
+
+    .ing-msg {
+      font-size: 11px;
+      margin-top: 6px;
+      min-height: 14px;
+    }
+
+    .ing-msg.ok {
+      color: #166534;
+    }
+
+    .ing-msg.err {
+      color: #991b1b;
+    }
+
+    .ing-msg.dim {
+      color: #9ca3af;
+    }
 
     /* Job list */
-    #jobs-list { margin-top: 6px; max-height: 200px; overflow-y: auto; }
+    #jobs-list {
+      margin-top: 6px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
     .job-card {
-      border: 1px solid #e5e7eb; border-radius: 4px; padding: 6px 8px;
-      margin-bottom: 5px; font-size: 12px;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+      padding: 6px 8px;
+      margin-bottom: 5px;
+      font-size: 12px;
     }
-    .job-card-header { display: flex; justify-content: space-between; align-items: center; }
-    .job-source { font-weight: 600; color: #111827; }
-    .job-id     { font-size: 10px; color: #9ca3af; margin-top: 2px;
-                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .job-time   { font-size: 10px; color: #9ca3af; margin-top: 1px; }
-    .job-error  { font-size: 10px; color: #991b1b; margin-top: 3px;
-                  white-space: pre-wrap; word-break: break-all; max-height: 60px;
-                  overflow-y: auto; }
+
+    .job-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .job-source {
+      font-weight: 600;
+      color: #111827;
+    }
+
+    .job-id {
+      font-size: 10px;
+      color: #9ca3af;
+      margin-top: 2px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .job-time {
+      font-size: 10px;
+      color: #9ca3af;
+      margin-top: 1px;
+    }
+
+    .job-error {
+      font-size: 10px;
+      color: #991b1b;
+      margin-top: 3px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 60px;
+      overflow-y: auto;
+    }
+
     .badge {
-      display: inline-block; padding: 1px 7px; border-radius: 9px;
-      font-size: 11px; font-weight: 500; white-space: nowrap;
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 9px;
+      font-size: 11px;
+      font-weight: 500;
+      white-space: nowrap;
     }
-    .badge-running    { background: #dbeafe; color: #1e40af; }
-    .badge-successful { background: #dcfce7; color: #166534; }
-    .badge-partial    { background: #fef9c3; color: #854d0e; }
-    .badge-failed     { background: #fee2e2; color: #991b1b; }
-    .job-message { font-size: 10px; color: #854d0e; margin-top: 3px; }
+
+    .badge-running {
+      background: #dbeafe;
+      color: #1e40af;
+    }
+
+    .badge-successful {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .badge-partial {
+      background: #fef9c3;
+      color: #854d0e;
+    }
+
+    .badge-failed {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .job-message {
+      font-size: 10px;
+      color: #854d0e;
+      margin-top: 3px;
+    }
 
     /* Ingest tab section headers */
     .ing-section-hdr {
-      display: flex; justify-content: space-between; align-items: center;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
       margin-top: 4px;
     }
+
     .ing-section-hdr span {
-      font-size: 11px; font-weight: 500; color: #6b7280;
-      text-transform: uppercase; letter-spacing: 0.05em;
+      font-size: 11px;
+      font-weight: 500;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
+
     .ing-section-hdr button {
-      font-size: 11px; font-family: inherit; padding: 2px 8px;
-      border: 1px solid #d1d5db; border-radius: 4px; background: #f9fafb;
-      cursor: pointer; color: #374151;
+      font-size: 11px;
+      font-family: inherit;
+      padding: 2px 8px;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      background: #f9fafb;
+      cursor: pointer;
+      color: #374151;
     }
-    .ing-section-hdr button:hover { background: #e5e7eb; }
+
+    .ing-section-hdr button:hover {
+      background: #e5e7eb;
+    }
 
     /* ── Config tab ─────────────────────────────────────────────────────── */
-    .cfg-section { margin-bottom: 7px; }
+    .cfg-section {
+      margin-bottom: 7px;
+    }
+
     .cfg-hdr {
-      font-size: 10px; font-weight: 600; color: #9ca3af;
-      text-transform: uppercase; letter-spacing: 0.06em;
+      font-size: 10px;
+      font-weight: 600;
+      color: #9ca3af;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
       margin-bottom: 3px;
     }
+
     .cfg-grid {
-      display: grid; grid-template-columns: auto 1fr; gap: 2px 8px;
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 2px 8px;
       font-size: 11px;
     }
-    .cfg-key { color: #9ca3af; white-space: nowrap; }
-    .cfg-val { color: #111827; font-weight: 500; word-break: break-all; }
-    .cfg-path { font-family: monospace; font-size: 10px; font-weight: 400; }
-    .cfg-group-toggle {
-      width: 100%; text-align: left; background: #f9fafb; border: none;
-      padding: 4px 6px; cursor: pointer; font-family: monospace; font-weight: 600;
-      font-size: 12px; color: #111827;
+
+    .cfg-key {
+      color: #9ca3af;
+      white-space: nowrap;
     }
-    .cfg-group-toggle:hover { background: #f3f4f6; }
-    .cfg-group-toggle .cfg-arrow { display: inline-block; width: 12px; color: #9ca3af; }
+
+    .cfg-val {
+      color: #111827;
+      font-weight: 500;
+      word-break: break-all;
+    }
+
+    .cfg-path {
+      font-family: monospace;
+      font-size: 10px;
+      font-weight: 400;
+    }
+
+    .cfg-group-toggle {
+      width: 100%;
+      text-align: left;
+      background: #f9fafb;
+      border: none;
+      padding: 4px 6px;
+      cursor: pointer;
+      font-family: monospace;
+      font-weight: 600;
+      font-size: 12px;
+      color: #111827;
+    }
+
+    .cfg-group-toggle:hover {
+      background: #f3f4f6;
+    }
+
+    .cfg-group-toggle .cfg-arrow {
+      display: inline-block;
+      width: 12px;
+      color: #9ca3af;
+    }
+
     #cfg-bbox-map {
-      width: 100%; height: 80px; margin-top: 6px; border-radius: 4px;
-      border: 1px solid #e5e7eb; background: #f9fafb;
+      width: 100%;
+      height: 80px;
+      margin-top: 6px;
+      border-radius: 4px;
+      border: 1px solid #e5e7eb;
+      background: #f9fafb;
     }
 
     /* ── Sources table ─────────────────────────────────────────────────────── */
     .sources-table {
-      width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 6px;
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      margin-top: 6px;
     }
+
     .sources-table th {
-      font-size: 10px; font-weight: 600; color: #6b7280; text-align: left;
-      padding: 3px 6px; border-bottom: 1px solid #e5e7eb; white-space: nowrap;
-      text-transform: uppercase; letter-spacing: 0.04em;
+      font-size: 10px;
+      font-weight: 600;
+      color: #6b7280;
+      text-align: left;
+      padding: 3px 6px;
+      border-bottom: 1px solid #e5e7eb;
+      white-space: nowrap;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
     }
+
     .sources-table td {
-      padding: 3px 6px; vertical-align: top; color: #111827;
+      padding: 3px 6px;
+      vertical-align: top;
+      color: #111827;
       border-bottom: 1px solid #f3f4f6;
     }
-    .sources-table td:first-child { font-weight: 600; white-space: nowrap; }
-    .sources-table .vars { color: #6b7280; font-size: 10px; }
+
+    .sources-table td:first-child {
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .sources-table .vars {
+      color: #6b7280;
+      font-size: 10px;
+    }
 
     /* ── Tooltip helper ────────────────────────────────────────────────────── */
-    [data-tooltip] { position: relative; cursor: help; }
+    [data-tooltip] {
+      position: relative;
+      cursor: help;
+    }
+
     [data-tooltip]::after {
       content: attr(data-tooltip);
-      position: absolute; bottom: 125%; left: 50%; transform: translateX(-50%);
-      background: #1f2937; color: #f9fafb; font-size: 11px; font-weight: 400;
-      white-space: normal; min-width: 180px; max-width: 260px;
-      padding: 5px 8px; border-radius: 4px; pointer-events: none;
-      opacity: 0; transition: opacity 0.15s; z-index: 9999; line-height: 1.4;
+      position: absolute;
+      bottom: 125%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1f2937;
+      color: #f9fafb;
+      font-size: 11px;
+      font-weight: 400;
+      white-space: normal;
+      min-width: 180px;
+      max-width: 260px;
+      padding: 5px 8px;
+      border-radius: 4px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s;
+      z-index: 9999;
+      line-height: 1.4;
     }
-    [data-tooltip]:hover::after { opacity: 1; }
+
+    [data-tooltip]:hover::after {
+      opacity: 1;
+    }
   </style>
 </head>
+
 <body>
   <div id="map"></div>
   <div id="controls">
     <div id="controls-header">
-      <h3>eostrata viewer</h3>
+      <h3>eostrata map</h3>
       <nav>
         <a href="/scheduler">scheduler</a>
         <a href="/docs">docs</a>
@@ -270,10 +625,14 @@
     <!-- ── Map tab ──────────────────────────────────────────────────────── -->
     <div id="tab-map-content" class="tab-panel">
       <label>Collection</label>
-      <select id="sel-collection"><option value="">Loading…</option></select>
+      <select id="sel-collection">
+        <option value="">Loading…</option>
+      </select>
 
       <label>Item</label>
-      <select id="sel-item"><option value="">—</option></select>
+      <select id="sel-item">
+        <option value="">—</option>
+      </select>
 
       <label>Date mode</label>
       <div class="date-mode-toggle">
@@ -283,18 +642,20 @@
 
       <div id="section-single">
         <label>Date</label>
-        <select id="sel-datetime"><option value="">latest</option></select>
+        <select id="sel-datetime">
+          <option value="">latest</option>
+        </select>
       </div>
 
       <div id="section-interval">
         <div class="row-2">
           <div>
             <label>Start</label>
-            <input id="inp-start" type="date"/>
+            <input id="inp-start" type="date" />
           </div>
           <div>
             <label>End</label>
-            <input id="inp-end" type="date"/>
+            <input id="inp-end" type="date" />
           </div>
         </div>
         <label>Aggregation</label>
@@ -306,21 +667,21 @@
           <option value="anomaly">anomaly (deviation from baseline)</option>
         </select>
         <div id="section-baseline">
-          <hr class="section-divider"/>
+          <hr class="section-divider" />
           <div class="row-2">
             <div>
               <label>Baseline start</label>
-              <input id="inp-baseline-start" type="date"/>
+              <input id="inp-baseline-start" type="date" />
             </div>
             <div>
               <label>Baseline end</label>
-              <input id="inp-baseline-end" type="date"/>
+              <input id="inp-baseline-end" type="date" />
             </div>
           </div>
         </div>
       </div>
 
-      <hr class="section-divider"/>
+      <hr class="section-divider" />
       <label>Colormap</label>
       <select id="sel-colormap">
         <option value="">default</option>
@@ -344,16 +705,16 @@
         </optgroup>
       </select>
       <label>Value range (min,max)</label>
-      <input id="inp-rescale" type="text" placeholder="e.g. 0,1000 — blank = auto" disabled/>
+      <input id="inp-rescale" type="text" placeholder="e.g. 0,1000 — blank = auto" disabled />
       <label class="label-checkbox">
-        <input id="chk-autoscale" type="checkbox" checked/>
+        <input id="chk-autoscale" type="checkbox" checked />
         Auto-scale from stats
       </label>
 
       <div id="warning"></div>
       <div id="status"></div>
       <div id="stats-section">
-        <hr class="section-divider"/>
+        <hr class="section-divider" />
         <h4>Statistics — bbox</h4>
         <div id="stats-grid"></div>
         <div id="stats-msg"></div>
@@ -370,8 +731,7 @@
 
       <div id="ing-iso3-row" style="display:none">
         <label>ISO3 country code</label>
-        <input id="ing-iso3" type="text" placeholder="e.g. NGA" maxlength="3"
-               style="text-transform:uppercase"/>
+        <input id="ing-iso3" type="text" placeholder="e.g. NGA" maxlength="3" style="text-transform:uppercase" />
       </div>
 
       <div id="ing-var-row" style="display:none">
@@ -380,27 +740,27 @@
       </div>
 
       <label>Years (comma-separated, blank = latest)</label>
-      <input id="ing-years" type="text" placeholder="e.g. 2023,2024"/>
+      <input id="ing-years" type="text" placeholder="e.g. 2023,2024" />
 
       <div id="ing-months-row" style="display:none">
         <label>Months (comma-separated, blank = latest)</label>
-        <input id="ing-months" type="text" placeholder="e.g. 1,2,3 or ALL"/>
+        <input id="ing-months" type="text" placeholder="e.g. 1,2,3 or ALL" />
       </div>
 
       <div id="ing-days-row" style="display:none">
         <label>Days (comma-separated, blank = latest)</label>
-        <input id="ing-days" type="text" placeholder="e.g. 1,2,3 or ALL"/>
+        <input id="ing-days" type="text" placeholder="e.g. 1,2,3 or ALL" />
       </div>
 
       <div id="ing-dekads-row" style="display:none">
         <label>Dekads (comma-separated, blank = latest)</label>
-        <input id="ing-dekads" type="text" placeholder="e.g. 1,2,3 or ALL"/>
+        <input id="ing-dekads" type="text" placeholder="e.g. 1,2,3 or ALL" />
       </div>
 
       <button class="btn" id="btn-ingest" onclick="startIngest()">Start ingestion job</button>
       <div id="ing-msg" class="ing-msg dim"></div>
 
-      <hr class="section-divider"/>
+      <hr class="section-divider" />
 
       <!-- Jobs list -->
       <div class="ing-section-hdr">
@@ -417,7 +777,9 @@
       <div class="cfg-section">
         <div class="cfg-hdr" style="display:flex;align-items:center;justify-content:space-between">
           Disk usage
-          <button id="btn-quota-refresh" onclick="populateQuota()" style="font-size:11px;padding:2px 8px;border:1px solid #d1d5db;border-radius:4px;background:#f9fafb;cursor:pointer;color:#374151">↻ Refresh</button>
+          <button id="btn-quota-refresh" onclick="populateQuota()"
+            style="font-size:11px;padding:2px 8px;border:1px solid #d1d5db;border-radius:4px;background:#f9fafb;cursor:pointer;color:#374151">↻
+            Refresh</button>
         </div>
         <div class="cfg-grid">
           <span class="cfg-key">Used</span><span id="cfg-used" class="cfg-val"></span>
@@ -491,7 +853,6 @@
         <div class="cfg-grid">
           <span class="cfg-key">Chunk size</span><span id="cfg-chunk-size" class="cfg-val"></span>
           <span class="cfg-key">Agg batch</span><span id="cfg-agg-batch" class="cfg-val"></span>
-          <span class="cfg-key">Batch size</span><span id="cfg-agg-batch-size" class="cfg-val"></span>
           <span class="cfg-key">Concurrent agg</span><span id="cfg-concurrent-agg" class="cfg-val"></span>
           <span class="cfg-key">Track access</span><span id="cfg-track-access" class="cfg-val"></span>
           <span class="cfg-key">CORS origins</span><span id="cfg-cors" class="cfg-val"></span>
@@ -528,8 +889,8 @@
   </div>
   <script>
     const PRESELECT = __PRESELECT__;
-    const CONFIG    = __CONFIG__;
-    const SOURCES   = __SOURCES__;
+    const CONFIG = __CONFIG__;
+    const SOURCES = __SOURCES__;
 
     const map = L.map('map').setView([5, 20], 4);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -544,28 +905,27 @@
       if (isWorld) return; // skip trivial world bbox
       L.rectangle([[s, w], [n, e]], {
         color: '#2563eb', weight: 2, dashArray: '6 4', fill: false,
-      }).addTo(map).bindTooltip('Config bbox', {permanent: false});
-      map.fitBounds([[s, w], [n, e]], {padding: [20, 20]});
+      }).addTo(map).bindTooltip('Config bbox', { permanent: false });
+      map.fitBounds([[s, w], [n, e]], { padding: [20, 20] });
     })();
 
     // Populate static config tab values (bbox, storage paths, sources table)
     (function populateConfig() {
       const [w, s, e, n] = CONFIG.bbox;
-      const fmtDeg = function(v) { return (Number.isInteger(v) ? v : v.toFixed(2)) + '°'; };
+      const fmtDeg = function (v) { return (Number.isInteger(v) ? v : v.toFixed(2)) + '°'; };
       document.getElementById('cfg-bbox-w').textContent = fmtDeg(w);
       document.getElementById('cfg-bbox-s').textContent = fmtDeg(s);
       document.getElementById('cfg-bbox-e').textContent = fmtDeg(e);
       document.getElementById('cfg-bbox-n').textContent = fmtDeg(n);
-      document.getElementById('cfg-zarr-root').textContent  = CONFIG.zarr_root;
-      document.getElementById('cfg-raw-dir').textContent    = CONFIG.raw_dir;
-      document.getElementById('cfg-catalog').textContent    = CONFIG.catalog_path;
-      document.getElementById('cfg-log-file').textContent   = CONFIG.log_file || '(disabled)';
+      document.getElementById('cfg-zarr-root').textContent = CONFIG.zarr_root;
+      document.getElementById('cfg-raw-dir').textContent = CONFIG.raw_dir;
+      document.getElementById('cfg-catalog').textContent = CONFIG.catalog_path;
+      document.getElementById('cfg-log-file').textContent = CONFIG.log_file || '(disabled)';
       document.getElementById('cfg-ingest-workers').textContent = CONFIG.ingest_max_workers;
-      document.getElementById('cfg-ingest-queued').textContent  = CONFIG.ingest_max_queued;
+      document.getElementById('cfg-ingest-queued').textContent = CONFIG.ingest_max_queued;
       document.getElementById('cfg-chunk-size').textContent = CONFIG.zarr_chunk_size + ' px';
-      document.getElementById('cfg-agg-batch').textContent  =
+      document.getElementById('cfg-agg-batch').textContent =
         CONFIG.max_aggregation_timesteps > 0 ? CONFIG.max_aggregation_timesteps + ' timesteps' : 'Unlimited';
-      document.getElementById('cfg-agg-batch-size').textContent = CONFIG.aggregation_batch_size + ' timesteps';
       document.getElementById('cfg-concurrent-agg').textContent =
         CONFIG.max_concurrent_aggregations > 0 ? CONFIG.max_concurrent_aggregations : 'Unlimited';
       document.getElementById('cfg-track-access').textContent = CONFIG.track_access ? 'Yes' : 'No';
@@ -574,10 +934,10 @@
 
       // Sources table
       const tbody = document.getElementById('cfg-sources-tbody');
-      SOURCES.forEach(function(s) {
+      SOURCES.forEach(function (s) {
         const descs = s.variable_descriptions || {};
         const vars = s.variables || [];
-        const fullDescs = vars.map(function(v) {
+        const fullDescs = vars.map(function (v) {
           return descs[v] ? v + ' — ' + descs[v] : v;
         }).join(' · ');
         const varHtml = vars.length
@@ -604,17 +964,17 @@
       const btn = document.getElementById('btn-quota-refresh');
       if (btn) { btn.disabled = true; btn.textContent = '↻ …'; }
 
-      const fmtMb = function(mb) {
+      const fmtMb = function (mb) {
         return mb >= 1024 ? (mb / 1024).toFixed(2) + ' GB' : mb.toFixed(1) + ' MB';
       };
-      const fmtTs = function(iso) { return iso ? iso.slice(0, 10) : '—'; };
+      const fmtTs = function (iso) { return iso ? iso.slice(0, 10) : '—'; };
 
       document.getElementById('cfg-quota').textContent =
         CONFIG.quota_mb > 0 ? CONFIG.quota_mb.toLocaleString() + ' MB' : 'Unlimited';
       document.getElementById('cfg-buffer').textContent =
         CONFIG.eviction_buffer_mb > 0 ? CONFIG.eviction_buffer_mb.toLocaleString() + ' MB' : 'None';
 
-      fetch('/store-usage').then(function(r) { return r.json(); }).then(function(u) {
+      fetch('/store-usage').then(function (r) { return r.json(); }).then(function (u) {
         document.getElementById('cfg-used').textContent = fmtMb(u.used_mb);
         if (!u.quota_unlimited && u.used_pct !== null) {
           const pct = Math.min(u.used_pct, 100);
@@ -640,8 +1000,8 @@
               }
             }
           }
-          u.groups.forEach(function(g, gi) {
-            const evictRisk = (g.timestamps || []).some(function(ts) {
+          u.groups.forEach(function (g, gi) {
+            const evictRisk = (g.timestamps || []).some(function (ts) {
               return atRiskTs.has(g.group + '|' + ts.datetime);
             });
             const groupId = 'cfg-grp-' + gi;
@@ -666,11 +1026,11 @@
               ' <span style="font-weight:normal;color:#6b7280">(' + fmtMb(g.size_mb) +
               ', ' + (g.timestamps || []).length + ' timestamp' +
               ((g.timestamps || []).length !== 1 ? 's' : '') + ')</span>';
-            btn.onclick = function() {
+            btn.onclick = function () {
               const expanded = this.getAttribute('aria-expanded') === 'true';
               this.setAttribute('aria-expanded', String(!expanded));
               this.querySelector('.cfg-arrow').textContent = expanded ? '▶' : '▼';
-              document.querySelectorAll('.' + groupId).forEach(function(r) {
+              document.querySelectorAll('.' + groupId).forEach(function (r) {
                 r.style.display = expanded ? 'none' : '';
               });
             };
@@ -679,7 +1039,7 @@
             tbody.appendChild(trg);
 
             // Per-timestamp sub-rows, hidden by default
-            (g.timestamps || []).forEach(function(ts) {
+            (g.timestamps || []).forEach(function (ts) {
               const tr = document.createElement('tr');
               tr.className = groupId;
               tr.style.display = 'none';
@@ -694,7 +1054,7 @@
                 ? 'accessed ' + fmtTs(ts.last_accessed)
                 : ts.ingested ? '<span style="color:#9ca3af">ingested ' + fmtTs(ts.ingested) + '</span>' : '—';
               tr.innerHTML =
-                '<td style="padding:2px 6px 2px 18px;font-family:monospace;font-size:11px">' + ts.datetime.slice(0,10) + '</td>' +
+                '<td style="padding:2px 6px 2px 18px;font-family:monospace;font-size:11px">' + ts.datetime.slice(0, 10) + '</td>' +
                 '<td style="padding:2px 6px;text-align:right;font-size:11px">' + fmtMb(ts.size_mb) + '</td>' +
                 '<td style="padding:2px 6px;text-align:right;font-size:11px">' + accessCell + '</td>';
               tbody.appendChild(tr);
@@ -702,7 +1062,7 @@
           });
           document.getElementById('cfg-groups-wrap').style.display = 'block';
         }
-      }).finally(function() {
+      }).finally(function () {
         const btn = document.getElementById('btn-quota-refresh');
         if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
       });
@@ -815,7 +1175,7 @@
       const aggVal = dateMode === 'interval' ? document.getElementById('sel-agg').value : null;
       const baselineVal = aggVal === 'anomaly'
         ? (document.getElementById('inp-baseline-start').value || '') + '/' +
-          (document.getElementById('inp-baseline-end').value || '')
+        (document.getElementById('inp-baseline-end').value || '')
         : null;
       return { collId, itemId, dt, aggVal, baselineVal };
     }
@@ -912,9 +1272,9 @@
       if (v === null || v === undefined) return '—';
       const n = Number(v);
       if (!isFinite(n)) return '—';
-      return Math.abs(n) >= 1000 ? n.toLocaleString(undefined, {maximumFractionDigits: 0})
-           : Math.abs(n) >= 1    ? n.toLocaleString(undefined, {maximumFractionDigits: 2})
-           : n.toLocaleString(undefined, {maximumFractionDigits: 4});
+      return Math.abs(n) >= 1000 ? n.toLocaleString(undefined, { maximumFractionDigits: 0 })
+        : Math.abs(n) >= 1 ? n.toLocaleString(undefined, { maximumFractionDigits: 2 })
+          : n.toLocaleString(undefined, { maximumFractionDigits: 4 });
     }
 
     async function fetchStats(collId, itemId, dt, aggParam, baselineParam) {
@@ -944,7 +1304,7 @@
       try {
         const resp = await fetch('/processes/zonalstats/execution', {
           method: 'POST',
-          headers: {'Content-Type': 'application/json'},
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
         if (!resp.ok) {
@@ -974,10 +1334,10 @@
       statsMsg.textContent = stats.count.toLocaleString() + ' valid pixels' + (jobId ? ' [' + jobId + ']' : '');
       const rows = [
         ['mean', stats.mean], ['min', stats.min],
-        ['max', stats.max],   ['std', stats.std],
-        ['p5',  stats.percentiles?.p5],  ['p95', stats.percentiles?.p95],
+        ['max', stats.max], ['std', stats.std],
+        ['p5', stats.percentiles?.p5], ['p95', stats.percentiles?.p95],
         ['p25', stats.percentiles?.p25], ['p75', stats.percentiles?.p75],
-        ['sum', stats.sum],   ['nodata', stats.nodata_count],
+        ['sum', stats.sum], ['nodata', stats.nodata_count],
       ];
       statsGrid.innerHTML = rows.map(([label, val]) =>
         `<div class="stat-item"><span class="stat-label">${label}</span><span class="stat-value">${fmt(val)}</span></div>`
@@ -993,11 +1353,11 @@
 
     function _autoScaleRange(stats) {
       // Prefer p5/p95, fall back to p25/p75, then min/max
-      const p5  = stats.percentiles?.p5;
+      const p5 = stats.percentiles?.p5;
       const p95 = stats.percentiles?.p95;
       const p25 = stats.percentiles?.p25;
       const p75 = stats.percentiles?.p75;
-      if (isFinite(p5) && isFinite(p95))  return [p5,  p95];
+      if (isFinite(p5) && isFinite(p95)) return [p5, p95];
       if (isFinite(p25) && isFinite(p75)) return [p25, p75];
       if (isFinite(stats.min) && isFinite(stats.max)) return [stats.min, stats.max];
       return null;
@@ -1164,7 +1524,7 @@
     let _quotaLoaded = false;
 
     function showTab(tab) {
-      ['map', 'ingest', 'quota', 'config'].forEach(function(t) {
+      ['map', 'ingest', 'quota', 'config'].forEach(function (t) {
         document.getElementById('tab-' + t + '-content').style.display = t === tab ? '' : 'none';
         document.getElementById('tab-btn-' + t).classList.toggle('active', t === tab);
       });
@@ -1192,7 +1552,7 @@
     function initIngestForm() {
       const sel = document.getElementById('ing-source');
       sel.innerHTML = '';
-      SOURCES.forEach(function(s) {
+      SOURCES.forEach(function (s) {
         const opt = document.createElement('option');
         opt.value = s.id;
         opt.textContent = (s.configured === false ? '⚠ ' : '') + s.label;
@@ -1203,13 +1563,13 @@
 
     function onIngSourceChange() {
       const src = document.getElementById('ing-source').value;
-      const def = SOURCES.find(function(s) { return s.id === src; });
+      const def = SOURCES.find(function (s) { return s.id === src; });
       const fields = def ? def.fields : [];
-      document.getElementById('ing-iso3-row').style.display   = fields.includes('iso3')     ? '' : 'none';
-      document.getElementById('ing-var-row').style.display    = fields.includes('variable')  ? '' : 'none';
-      document.getElementById('ing-months-row').style.display = fields.includes('months')    ? '' : 'none';
-      document.getElementById('ing-days-row').style.display   = fields.includes('days')      ? '' : 'none';
-      document.getElementById('ing-dekads-row').style.display = fields.includes('dekads')    ? '' : 'none';
+      document.getElementById('ing-iso3-row').style.display = fields.includes('iso3') ? '' : 'none';
+      document.getElementById('ing-var-row').style.display = fields.includes('variable') ? '' : 'none';
+      document.getElementById('ing-months-row').style.display = fields.includes('months') ? '' : 'none';
+      document.getElementById('ing-days-row').style.display = fields.includes('days') ? '' : 'none';
+      document.getElementById('ing-dekads-row').style.display = fields.includes('dekads') ? '' : 'none';
 
       const warn = document.getElementById('ing-config-warning');
       if (def && def.configured === false) {
@@ -1224,7 +1584,7 @@
         const sel = document.getElementById('ing-variable');
         sel.innerHTML = '';
         const descs = def.variable_descriptions || {};
-        (def.variables || []).forEach(function(v) {
+        (def.variables || []).forEach(function (v) {
           const opt = document.createElement('option');
           opt.value = v;
           opt.textContent = descs[v] ? v + ' — ' + descs[v] : v;
@@ -1238,14 +1598,14 @@
     }
 
     async function startIngest() {
-      const src    = document.getElementById('ing-source').value;
+      const src = document.getElementById('ing-source').value;
       const fields = _sourceFields();
-      const years  = document.getElementById('ing-years').value.trim();
+      const years = document.getElementById('ing-years').value.trim();
       const months = document.getElementById('ing-months').value.trim();
       const dekads = document.getElementById('ing-dekads').value.trim();
-      const ddays  = document.getElementById('ing-days').value.trim();
-      const iso3   = document.getElementById('ing-iso3').value.trim().toUpperCase();
-      const varbl  = document.getElementById('ing-variable').value;
+      const ddays = document.getElementById('ing-days').value.trim();
+      const iso3 = document.getElementById('ing-iso3').value.trim().toUpperCase();
+      const varbl = document.getElementById('ing-variable').value;
 
       const inputs = { source: src };
       if (fields.includes('iso3')) {
@@ -1255,7 +1615,7 @@
         inputs.iso3 = iso3;
       }
       if (fields.includes('variable')) inputs.variable = varbl;
-      if (years)  inputs.years  = _parseInts(years);
+      if (years) inputs.years = _parseInts(years);
       if (months && fields.includes('months'))
         inputs.months = months.toUpperCase() === 'ALL' ? 'ALL' : _parseInts(months);
       if (ddays && fields.includes('days'))
@@ -1269,7 +1629,7 @@
       try {
         const resp = await fetch('/processes/ingest/execution', {
           method: 'POST',
-          headers: {'Content-Type': 'application/json'},
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ inputs }),
         });
         const data = await resp.json();
@@ -1326,7 +1686,7 @@
         refreshCatalog();
       }
 
-      const el   = document.getElementById('jobs-list');
+      const el = document.getElementById('jobs-list');
       if (!jobs.length) {
         el.innerHTML = '<span style="font-size:12px;color:#9ca3af">No jobs yet.</span>';
         return;
@@ -1334,10 +1694,10 @@
 
       el.innerHTML = jobs.map(j => {
         const isPartial = j.status === 'successful' && j.message;
-        const badgeCls = j.status === 'running'    ? 'badge-running'
-                       : isPartial                 ? 'badge-partial'
-                       : j.status === 'successful' ? 'badge-successful'
-                       :                             'badge-failed';
+        const badgeCls = j.status === 'running' ? 'badge-running'
+          : isPartial ? 'badge-partial'
+            : j.status === 'successful' ? 'badge-successful'
+              : 'badge-failed';
         const badgeLabel = isPartial ? 'partial' : j.status;
         const params = Object.entries(j.params || {})
           .map(([k, v]) => k + '=' + (Array.isArray(v) ? v.join(',') : v))
@@ -1351,15 +1711,15 @@
           : '';
         return (
           '<div class="job-card">' +
-            '<div class="job-card-header">' +
-              '<span class="job-source">' + j.source + '</span>' +
-              '<span class="badge ' + badgeCls + '">' + badgeLabel + '</span>' +
-            '</div>' +
-            '<div class="job-id">' + j.jobID + '</div>' +
-            (params ? '<div class="job-time">' + params + '</div>' : '') +
-            '<div class="job-time">' + updated + '</div>' +
-            msgHtml +
-            errHtml +
+          '<div class="job-card-header">' +
+          '<span class="job-source">' + j.source + '</span>' +
+          '<span class="badge ' + badgeCls + '">' + badgeLabel + '</span>' +
+          '</div>' +
+          '<div class="job-id">' + j.jobID + '</div>' +
+          (params ? '<div class="job-time">' + params + '</div>' : '') +
+          '<div class="job-time">' + updated + '</div>' +
+          msgHtml +
+          errHtml +
           '</div>'
         );
       }).join('');
@@ -1397,4 +1757,5 @@
     }
   </script>
 </body>
+
 </html>

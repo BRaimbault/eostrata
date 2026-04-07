@@ -86,7 +86,7 @@ class Settings(BaseSettings):
 
     # Threshold for switching to batched temporal aggregation.
     # When a request spans more timesteps than this limit, the reduction is split
-    # into sequential batches of aggregation_batch_size timesteps each.
+    # into sequential batches of max_aggregation_timesteps timesteps each.
     # Set to 0 to process all timesteps in a single pass (lowest latency, highest RAM).
     #
     # Recommended values by available RAM:
@@ -102,19 +102,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 "max_aggregation_timesteps must be 0 (unlimited) or a positive integer"
             )
-        return v
-
-    # Number of timesteps loaded per batch when batched aggregation is active.
-    # Lower values reduce peak RAM at the cost of more sequential zarr reads.
-    # On a 512 MB instance with global CHIRPS (≈103 MB/month): set to 1.
-    # Ignored when max_aggregation_timesteps=0 (no batching).
-    aggregation_batch_size: int = 1
-
-    @field_validator("aggregation_batch_size")
-    @classmethod
-    def validate_aggregation_batch_size(cls, v: int) -> int:
-        if v < 1:
-            raise ValueError("aggregation_batch_size must be a positive integer")
         return v
 
     # Maximum number of concurrent temporal aggregations (tile renders + zonalstats)
@@ -143,13 +130,13 @@ class Settings(BaseSettings):
     # Enable caching only on instances with sufficient RAM:
     #   global datasets (CHIRPS, ERA5): ≥ 2 GB → maxsize 4
     #   country-level 1-km datasets:    ≥ 512 MB → maxsize 4–8
-    agg_cache_maxsize: int = 0
+    agg_cache_max_entries: int = 0
 
-    @field_validator("agg_cache_maxsize")
+    @field_validator("agg_cache_max_entries")
     @classmethod
-    def validate_agg_cache_maxsize(cls, v: int) -> int:
+    def validate_agg_cache_max_entries(cls, v: int) -> int:
         if v < 0:
-            raise ValueError("agg_cache_maxsize must be 0 (disabled) or a positive integer")
+            raise ValueError("agg_cache_max_entries must be 0 (disabled) or a positive integer")
         return v
 
     # Seconds before a cached aggregated array is considered stale and recomputed.

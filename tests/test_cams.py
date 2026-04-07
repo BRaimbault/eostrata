@@ -668,3 +668,77 @@ class TestIsConfigured:
         monkeypatch.setattr("pathlib.Path.home", lambda: __import__("pathlib").Path("/nonexistent"))
         ok, msg = CAMSSource.is_configured()
         assert ok is False and "ADS" in msg
+
+
+class TestDownloadCamsMarsNoData:
+    """Cover lines 136-144 (MarsNoDataError) and line 157 (ZIP with no .nc member)."""
+
+    def test_non_mars_exception_is_reraised(self, tmp_path, mocker):
+        """Non-MARS exceptions from retrieve() are re-raised as-is (line 144)."""
+        dest = tmp_path / "cams" / "cams_no2_2022_01.nc"
+        mock_client = mocker.MagicMock()
+        mock_cdsapi = mocker.MagicMock()
+        mock_cdsapi.Client.return_value = mock_client
+
+        def _fake_retrieve(_ds, _req, path):
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            raise ConnectionError("network error")
+
+        mock_client.retrieve.side_effect = _fake_retrieve
+        mocker.patch("eostrata.sources.cams._get_cdsapi", return_value=mock_cdsapi)
+        mock_settings = mocker.patch("eostrata.config.settings")
+        mock_settings.ads_url = "https://ads.example.com/api"
+        mock_settings.ads_key = "k"
+
+        with pytest.raises(ConnectionError, match="network error"):
+            _download_cams(dest, variable="no2", year=2022, months=[1], bbox=(0, 0, 10, 10))
+
+    def test_mars_no_data_raises_runtime_error(self, tmp_path, mocker):
+        """If ADS raises with MarsNoDataError in the message, a RuntimeError is raised."""
+        dest = tmp_path / "cams" / "cams_no2_2022_01.nc"
+        mock_client = mocker.MagicMock()
+        mock_cdsapi = mocker.MagicMock()
+        mock_cdsapi.Client.return_value = mock_client
+
+        def _fake_retrieve(_ds, _req, path):
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            raise Exception("MarsNoDataError: dataset not available")
+
+        mock_client.retrieve.side_effect = _fake_retrieve
+        mocker.patch("eostrata.sources.cams._get_cdsapi", return_value=mock_cdsapi)
+        mock_settings = mocker.patch("eostrata.config.settings")
+        mock_settings.ads_url = "https://ads.example.com/api"
+        mock_settings.ads_key = "k"
+
+        with pytest.raises(RuntimeError, match="production lag"):
+            _download_cams(dest, variable="no2", year=2022, months=[1], bbox=(0, 0, 10, 10))
+
+    def test_zip_without_nc_raises_runtime_error(self, tmp_path, mocker):
+        """If ADS returns a ZIP containing no .nc file, a RuntimeError is raised."""
+        import io
+        import zipfile as zf
+
+        dest = tmp_path / "cams" / "cams_pm2p5_2023_06.nc"
+
+        # Build a ZIP with no .nc member
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as z:
+            z.writestr("data.txt", b"not netcdf")
+        zip_bytes = buf.getvalue()
+
+        mock_client = mocker.MagicMock()
+        mock_cdsapi = mocker.MagicMock()
+        mock_cdsapi.Client.return_value = mock_client
+
+        def _fake_retrieve(_ds, _req, path):
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_bytes(zip_bytes)
+
+        mock_client.retrieve.side_effect = _fake_retrieve
+        mocker.patch("eostrata.sources.cams._get_cdsapi", return_value=mock_cdsapi)
+        mock_settings = mocker.patch("eostrata.config.settings")
+        mock_settings.ads_url = "https://ads.example.com/api"
+        mock_settings.ads_key = "k"
+
+        with pytest.raises(RuntimeError, match="No .nc file"):
+            _download_cams(dest, variable="pm2p5", year=2023, months=[6], bbox=(0, 0, 1, 1))

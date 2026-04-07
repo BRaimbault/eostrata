@@ -588,3 +588,107 @@ class TestFeaturesBbox:
         da = _load_array(str(zarr_root), "test/asc", "val", clip_bbox=(2.0, 3.0, 8.0, 7.0))
         assert da.x.values.min() >= 1.5  # clipped
         assert da.x.values.max() <= 8.5
+
+
+class TestLoadArrayCache:
+    """Cover lines 198-204 (cache hit in _load_array) and line 268 (_put_agg_cache)."""
+
+    def test_cache_hit_returns_cached_da(self, tmp_path):
+        """When agg_cache_max_entries > 0, _load_array caches result and returns it on second call."""
+        # Create a mock settings that has the right cache config.
+        # We patch the `settings` name INSIDE processes.py directly.
+        from unittest.mock import MagicMock, patch
+
+        from eostrata.aggregate import _AGG_CACHE, _AGG_CACHE_LOCK
+        from eostrata.ogc import processes as proc_mod
+        from eostrata.ogc.processes import _load_array
+
+        mock_settings = MagicMock()
+        mock_settings.agg_cache_max_entries = 4
+        mock_settings.agg_cache_ttl_seconds = 300
+        mock_settings.zarr_root = str(tmp_path / "zarr_default")
+
+        # Also patch agg_mod._eostrata_config.settings so _put_agg_cache checks work
+        import eostrata.config as cfg
+
+        orig_max_entries = cfg.settings.agg_cache_max_entries
+        orig_ttl = cfg.settings.agg_cache_ttl_seconds
+        cfg.settings.agg_cache_max_entries = 4
+        cfg.settings.agg_cache_ttl_seconds = 300
+
+        with _AGG_CACHE_LOCK:
+            _AGG_CACHE.clear()
+
+        try:
+            zarr_root = tmp_path / "zarr"
+            y = np.linspace(14.0, 4.0, 20)
+            x = np.linspace(2.0, 15.0, 20)
+            data = np.ones((20, 20), dtype="float32") * 7.0
+            ds = xr.Dataset({"val": (("y", "x"), data)}, coords={"y": y, "x": x})
+            ds.to_zarr(str(zarr_root), group="test/grp", mode="w", consolidated=True)
+
+            with patch.object(proc_mod, "settings", mock_settings):
+                # First call — cache miss, populates cache (line 268)
+                da1 = _load_array(str(zarr_root), "test/grp", "val")
+                # Cache should now have an entry
+                with _AGG_CACHE_LOCK:
+                    assert len(_AGG_CACHE) == 1
+
+                # Inject a non-empty accessed list into the cache entry so the
+                # `if accessed: record_access(...)` branch (line 202-203) is hit
+                from eostrata.aggregate import _agg_cache_key, _put_agg_cache
+
+                cache_key = _agg_cache_key(str(zarr_root), "test/grp", "val", None, None, None)
+                fake_accessed = [np.datetime64("2021-01-01", "ns")]
+                _put_agg_cache(cache_key, da1, fake_accessed)
+
+                with patch.object(proc_mod, "record_access", return_value=None) as mock_ra:
+                    # Second call — cache hit with non-empty accessed (lines 198-204)
+                    da2 = _load_array(str(zarr_root), "test/grp", "val")
+                    mock_ra.assert_called_once()
+                np.testing.assert_array_equal(da1.values, da2.values)
+        finally:
+            cfg.settings.agg_cache_max_entries = orig_max_entries
+            cfg.settings.agg_cache_ttl_seconds = orig_ttl
+            with _AGG_CACHE_LOCK:
+                _AGG_CACHE.clear()
+
+
+class TestFeatureStatsLoopException:
+    """Cover lines 465-467: exception in the _feature_stats loop returns 500."""
+
+    def test_feature_stats_exception_returns_500(self, app_client, zarr_root, monkeypatch):
+        """If _feature_stats raises unexpectedly, the endpoint returns 500."""
+        from eostrata.ogc import processes
+
+        monkeypatch.setattr(
+            processes,
+            "_feature_stats",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+
+        payload = {
+            "inputs": {
+                "url": str(zarr_root),
+                "group": "worldpop/nga",
+                "variable": "population",
+                "features": {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "properties": {},
+                            "geometry": {
+                                "type": "Polygon",
+                                "coordinates": [
+                                    [[3.0, 5.0], [8.0, 5.0], [8.0, 9.0], [3.0, 9.0], [3.0, 5.0]]
+                                ],
+                            },
+                        }
+                    ],
+                },
+            }
+        }
+        resp = app_client.post("/processes/zonalstats/execution", json=payload)
+        assert resp.status_code == 500
+        assert "Failed to compute statistics" in resp.json()["detail"]

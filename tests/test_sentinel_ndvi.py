@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from unittest.mock import MagicMock
 
-import httpx
 import numpy as np
 import pytest
 import rasterio
@@ -13,13 +13,12 @@ import rasterio.transform
 
 from eostrata.constants import PROP_RESOLUTION, PROP_SOURCE, PROP_VARIABLE
 from eostrata.sources.sentinel_ndvi import (
-    SentinelNDVISource,
     _BYOC_COLLECTION_ID,
+    SentinelNDVISource,
     _end_day_of_dekad,
     _fetch_ndvi_geotiff,
     _get_cdse_token,
 )
-
 
 # ── _end_day_of_dekad() ────────────────────────────────────────────────────────
 
@@ -138,7 +137,9 @@ class TestFetchNdviGeotiff:
             "eostrata.sources.sentinel_ndvi.httpx.stream", return_value=mock_resp
         )
 
-        _fetch_ndvi_geotiff((2.0, 4.0, 14.0, 13.0), "2023-06-01", "2023-06-10", tmp_path / "f.tif", "tok")
+        _fetch_ndvi_geotiff(
+            (2.0, 4.0, 14.0, 13.0), "2023-06-01", "2023-06-10", tmp_path / "f.tif", "tok"
+        )
         payload = mock_stream.call_args.kwargs["json"]
         assert payload["input"]["bounds"]["bbox"] == [2.0, 4.0, 14.0, 13.0]
 
@@ -255,9 +256,7 @@ class TestDownloadMethod:
         self.source = SentinelNDVISource()
 
     def _patch_cdse(self, mocker, tif_content: bytes = b"TIFF"):
-        mocker.patch(
-            "eostrata.sources.sentinel_ndvi._get_cdse_token", return_value="fake-token"
-        )
+        mocker.patch("eostrata.sources.sentinel_ndvi._get_cdse_token", return_value="fake-token")
         mock_resp = _make_sh_stream_mock(tif_content)
         mocker.patch("eostrata.sources.sentinel_ndvi.httpx.stream", return_value=mock_resp)
 
@@ -410,3 +409,30 @@ class TestIsConfigured:
         ok, reason = SentinelNDVISource.is_configured()
         assert ok is False
         assert "CDSE" in reason
+
+
+class TestFetchNdviGeotiffErrorResponse:
+    """Cover line 192: resp.read() is called when resp.is_success is False."""
+
+    def test_non_success_response_calls_read_before_raise(self, tmp_path, mocker):
+        """When resp.is_success is False, resp.read() is called before raise_for_status()."""
+        import httpx
+
+        mock_resp = MagicMock()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_resp.is_success = False  # triggers the resp.read() branch
+        mock_resp.headers = {"content-type": "image/tiff"}
+        mock_resp.read = MagicMock(return_value=b"error body")
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "401 Unauthorized",
+            request=MagicMock(),
+            response=MagicMock(status_code=401),
+        )
+        mocker.patch("eostrata.sources.sentinel_ndvi.httpx.stream", return_value=mock_resp)
+
+        dest = tmp_path / "ndvi.tif"
+        with pytest.raises(httpx.HTTPStatusError):
+            _fetch_ndvi_geotiff((0, 0, 1, 1), "2023-06-01", "2023-06-10", dest, "tok")
+
+        mock_resp.read.assert_called_once()

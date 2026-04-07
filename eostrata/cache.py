@@ -164,20 +164,26 @@ def _consolidate_metadata_with_timeout(zarr_root: Path, timeout_s: int = 30) -> 
     Because the zarr store is a clean hierarchy (no lock/access directories),
     zarr 3 consolidation runs without spurious ZarrUserWarnings.
     """
-    from concurrent.futures import ThreadPoolExecutor
-    from concurrent.futures import TimeoutError as FuturesTimeoutError
+    import threading
 
-    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="zarr_consolidate") as ex:
-        future = ex.submit(zarr.consolidate_metadata, str(zarr_root))
+    exc_box: list[Exception] = []
+
+    def _run() -> None:
         try:
-            future.result(timeout=timeout_s)
-        except FuturesTimeoutError:
-            logger.warning(
-                "zarr.consolidate_metadata timed out after %d s — metadata may be stale",
-                timeout_s,
-            )
-        except OSError as exc:
-            logger.warning("Could not consolidate zarr metadata after eviction: %s", exc)
+            zarr.consolidate_metadata(str(zarr_root))
+        except Exception as exc:  # noqa: BLE001
+            exc_box.append(exc)
+
+    t = threading.Thread(target=_run, name="zarr_consolidate", daemon=True)
+    t.start()
+    t.join(timeout=timeout_s)
+    if t.is_alive():
+        logger.warning(
+            "zarr.consolidate_metadata timed out after %d s — metadata may be stale",
+            timeout_s,
+        )
+    elif exc_box:
+        logger.warning("Could not consolidate zarr metadata after eviction: %s", exc_box[0])
 
 
 def _eviction_sort_key(ts_iso: str, last_access: float, ingestion_time: float) -> tuple:

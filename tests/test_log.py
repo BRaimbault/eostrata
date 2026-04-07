@@ -97,3 +97,30 @@ class TestSuppressPollingFilter:
         f = _SuppressPollingFilter()
         record = __import__("logging").makeLogRecord({"msg": 'GET /store-usage HTTP/1.1" 200'})
         assert f.filter(record) is False
+
+
+class TestJobIdFilter:
+    def test_prepends_job_id_when_set(self):
+        from eostrata.log import _JobIdFilter, current_job_id
+
+        token = current_job_id.set("abc123")
+        try:
+            f = _JobIdFilter()
+            record = __import__("logging").makeLogRecord({"msg": "hello"})
+            result = f.filter(record)
+            assert result is True
+            assert "abc123" in record.msg
+        finally:
+            current_job_id.reset(token)
+
+    def test_no_job_id_leaves_msg_unchanged(self):
+        from eostrata.log import _JobIdFilter, current_job_id
+
+        token = current_job_id.set(None)
+        try:
+            f = _JobIdFilter()
+            record = __import__("logging").makeLogRecord({"msg": "hello"})
+            f.filter(record)
+            assert record.msg == "hello"
+        finally:
+            current_job_id.reset(token)

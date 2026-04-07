@@ -172,3 +172,28 @@ class TestIsConfigured:
         monkeypatch.setattr("pathlib.Path.home", lambda: __import__("pathlib").Path("/nonexistent"))
         ok, msg = CDSSource.is_configured()
         assert ok is False and "CDS" in msg
+
+
+class TestDownloadEra5NoKey:
+    def test_calls_cdsapi_without_key_when_cds_key_empty(self, tmp_path, mocker, monkeypatch):
+        """When cds_key is '' (falsy), cdsapi.Client is called without key (line 126)."""
+        import sys
+
+        from eostrata.config import settings
+        from eostrata.sources.cds import _download_era5
+
+        monkeypatch.setattr(settings, "cds_key", "")
+
+        dest = tmp_path / "era5_t2m_2023_nokey.nc"
+        fake_client = mocker.MagicMock()
+        fake_cdsapi = mocker.MagicMock()
+        fake_cdsapi.Client.return_value = fake_client
+        fake_client.retrieve.side_effect = lambda _d, _p, path: Path(path).write_bytes(b"nc")
+
+        mocker.patch.dict(sys.modules, {"cdsapi": fake_cdsapi})
+        mocker.patch("eostrata.sources.cds._get_cdsapi", return_value=fake_cdsapi)
+        _download_era5(dest, variable="2m_temperature", year=2023, months=[1], bbox=(2, 4, 15, 14))
+
+        # Client should be called WITHOUT key argument
+        call_kwargs = fake_cdsapi.Client.call_args[1] if fake_cdsapi.Client.call_args else {}
+        assert "key" not in call_kwargs

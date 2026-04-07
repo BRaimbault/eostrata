@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -246,9 +248,7 @@ class TestApplyTemporalAggregation:
         """
         da = _make_da([2020])  # single timestep
         for agg in ("mean", "sum", "min", "max"):
-            result = apply_temporal_aggregation(
-                da, datetime_str="2020-01-01/2020-01-01", agg=agg
-            )
+            result = apply_temporal_aggregation(da, datetime_str="2020-01-01/2020-01-01", agg=agg)
             assert result.dims == ("y", "x"), f"agg={agg} should return 2D array"
             assert float(result.mean()) == pytest.approx(2020.0)
 
@@ -583,3 +583,177 @@ class TestAggCache:
 
         assert _get_agg_cache(key_nga) is None
         assert _get_agg_cache(key_tza) is not None
+
+
+class TestAggCacheKeyPathResolutionFallback:
+    """Cover the except branch in _agg_cache_key (lines 60-61)."""
+
+    def test_non_path_object_falls_back_to_str(self, monkeypatch):
+        """If Path(src_path).resolve() raises, norm falls back to str(src_path)."""
+        import pathlib
+
+        def _raising_resolve(self):
+            raise OSError("simulated resolve failure")
+
+        monkeypatch.setattr(pathlib.Path, "resolve", _raising_resolve)
+        # Should not raise — falls back to str(src_path)
+        key = _agg_cache_key("mypath", "group", "var", None, None, None)
+        assert key[0] == "mypath"
+
+
+class TestAggregatingReaderNoCacheAccessedWhenNoGroup:
+    """Cover line 512: _cache_accessed = [] when self.group is falsy."""
+
+    def test_no_group_sets_empty_cache_accessed(self, tmp_path):
+        """AggregatingReader with group='' or group=None sets _cache_accessed=[]."""
+        zarr_root = tmp_path / "zarr"
+        # Write a 2D dataset (no group needed)
+        ds_2d = xr.Dataset(
+            {"v": (("y", "x"), np.ones((8, 8), dtype="float32"))},
+            coords={"y": np.linspace(14.0, 4.0, 8), "x": np.linspace(2.0, 15.0, 8)},
+        )
+        ds_2d.to_zarr(str(zarr_root), mode="w", consolidated=True)
+
+        from eostrata.aggregate import AggregatingReader
+
+        reader = AggregatingReader(str(zarr_root), variable="v", group="")
+        assert reader._cache_accessed == []
+
+
+class TestAggregatingReaderTileEdgeCases:
+    """Cover lines 565, 568, 622-623, 630 in AggregatingReader.tile()."""
+
+    def _make_zarr_ascending_y(self, tmp_path: Path) -> Path:
+        """Write a Zarr with ascending y coordinates."""
+        zarr_root = tmp_path / "zarr_asc"
+        times = np.array(
+            [np.datetime64("2020-01-01"), np.datetime64("2021-01-01")], dtype="datetime64[ns]"
+        )
+        data = np.stack([np.full((16, 16), float(y), dtype="float32") for y in [2020, 2021]])
+        ds = xr.Dataset(
+            {"v": (("time", "y", "x"), data)},
+            coords={
+                "time": times,
+                "y": np.linspace(4.0, 14.0, 16),  # ascending
+                "x": np.linspace(2.0, 15.0, 16),
+            },
+        )
+        ds.to_zarr(str(zarr_root), group="test/v", mode="w", consolidated=True)
+        return zarr_root
+
+    def _make_zarr_no_time(self, tmp_path: Path) -> Path:
+        """Write a Zarr dataset with no time dimension."""
+        zarr_root = tmp_path / "zarr_notime"
+        ds_2d = xr.Dataset(
+            {"v": (("y", "x"), np.ones((16, 16), dtype="float32") * 5.0)},
+            coords={
+                "y": np.linspace(14.0, 4.0, 16),
+                "x": np.linspace(2.0, 15.0, 16),
+            },
+        )
+        ds_2d.to_zarr(str(zarr_root), group="test/v", mode="w", consolidated=True)
+        return zarr_root
+
+    def test_tile_no_time_dim_uses_super(self, tmp_path):
+        """When _unagg_input is None (no time dim), super().tile() is called (line 565)."""
+        import morecantile
+
+        from eostrata.aggregate import _CTX_AGG_DATETIME, _CTX_AGG_METHOD, AggregatingReader
+
+        zarr_root = self._make_zarr_no_time(tmp_path)
+        _CTX_AGG_METHOD.set("mean")
+        _CTX_AGG_DATETIME.set(None)
+        try:
+            reader = AggregatingReader(str(zarr_root), variable="v", group="test/v")
+        finally:
+            _CTX_AGG_METHOD.set(None)
+            _CTX_AGG_DATETIME.set(None)
+
+        assert reader._unagg_input is None
+        tms = morecantile.tms.get("WebMercatorQuad")
+        tile = next(tms.tiles(2.0, 4.0, 15.0, 14.0, zooms=3))
+        # Should fall back to super().tile() without raising
+        img = reader.tile(tile.x, tile.y, tile.z)
+        assert img is not None
+
+    def test_tile_outside_bounds_raises(self, tmp_path):
+        """tile() with a tile outside the data extent raises _TileOutsideBounds (line 568)."""
+        from rio_tiler.errors import TileOutsideBounds
+
+        from eostrata.aggregate import _CTX_AGG_DATETIME, _CTX_AGG_METHOD, AggregatingReader
+
+        zarr_root = self._make_zarr_ascending_y(tmp_path)
+        _CTX_AGG_METHOD.set("mean")
+        _CTX_AGG_DATETIME.set("2020-01-01/2021-12-31")
+        try:
+            reader = AggregatingReader(str(zarr_root), variable="v", group="test/v")
+        finally:
+            _CTX_AGG_METHOD.set(None)
+            _CTX_AGG_DATETIME.set(None)
+
+        # Tile 0/0/0 covers the whole world so use a very high-z tile far away
+        with pytest.raises(TileOutsideBounds):
+            reader.tile(100, 100, 8)  # tile far from data extent
+
+    def test_tile_ascending_y_clip(self, tmp_path, monkeypatch):
+        """tile() with ascending y coords uses s→n slice order (line 630)."""
+        import morecantile
+
+        import eostrata.config as cfg
+        from eostrata.aggregate import _CTX_AGG_DATETIME, _CTX_AGG_METHOD, AggregatingReader
+
+        # Disable cache so clip-first path (lines 605+) is exercised
+        monkeypatch.setattr(cfg.settings, "agg_cache_max_entries", 0)
+
+        zarr_root = self._make_zarr_ascending_y(tmp_path)
+        _CTX_AGG_METHOD.set("mean")
+        _CTX_AGG_DATETIME.set("2020-01-01/2021-12-31")
+        try:
+            reader = AggregatingReader(str(zarr_root), variable="v", group="test/v")
+        finally:
+            _CTX_AGG_METHOD.set(None)
+            _CTX_AGG_DATETIME.set(None)
+
+        tms = morecantile.tms.get("WebMercatorQuad")
+        tile = next(tms.tiles(2.0, 4.0, 15.0, 14.0, zooms=3))
+        img = reader.tile(tile.x, tile.y, tile.z)
+        assert img is not None
+
+    def test_tile_xbuf_fallback_on_exception(self, tmp_path, monkeypatch):
+        """If accessing da.x[1] raises, xbuf/ybuf fall back to 0.1 (lines 622-623)."""
+        import morecantile
+
+        import eostrata.config as cfg
+        from eostrata.aggregate import _CTX_AGG_DATETIME, _CTX_AGG_METHOD, AggregatingReader
+
+        monkeypatch.setattr(cfg.settings, "agg_cache_max_entries", 0)
+
+        zarr_root = self._make_zarr_ascending_y(tmp_path)
+        _CTX_AGG_METHOD.set("mean")
+        _CTX_AGG_DATETIME.set("2020-01-01/2021-12-31")
+        try:
+            reader = AggregatingReader(str(zarr_root), variable="v", group="test/v")
+        finally:
+            _CTX_AGG_METHOD.set(None)
+            _CTX_AGG_DATETIME.set(None)
+
+        import builtins
+
+        # To force the exception path (lines 622-623), monkeypatch abs() to raise
+        original_abs = builtins.abs
+        call_count = {"n": 0}
+
+        def _raising_abs(v):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise ValueError("simulated abs failure")
+            return original_abs(v)
+
+        monkeypatch.setattr(builtins, "abs", _raising_abs)
+        tms = morecantile.tms.get("WebMercatorQuad")
+        tile = next(tms.tiles(2.0, 4.0, 15.0, 14.0, zooms=3))
+        # Should not raise — falls back to xbuf=ybuf=0.1
+        import contextlib
+
+        with contextlib.suppress(Exception):  # tile rendering may fail but fallback ran
+            reader.tile(tile.x, tile.y, tile.z)

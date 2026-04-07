@@ -169,7 +169,8 @@ class IngestInputs(BaseModel):
         None, description="ISO 3166-1 alpha-3 country code (worldpop only)"
     )
     variable: str | None = Field(
-        None, description="Variable short name (source-specific, e.g. 't2m' for cds, 'no2' for tropomi)"
+        None,
+        description="Variable short name (source-specific, e.g. 't2m' for cds, 'no2' for tropomi)",
     )
     years: list[int] | None = Field(None, description="Years to ingest")
     months: list[Month] | Literal["ALL"] | None = Field(
@@ -216,9 +217,7 @@ class IngestInputs(BaseModel):
         if "variable" in source_cls.ui_fields and self.variable is not None:
             valid = source_cls.VARIABLES if source_cls.VARIABLES else [source_cls.VARIABLE]
             if self.variable not in valid:
-                raise ValueError(
-                    f"variable must be one of {valid} for source '{self.source}'"
-                )
+                raise ValueError(f"variable must be one of {valid} for source '{self.source}'")
         return self
 
 

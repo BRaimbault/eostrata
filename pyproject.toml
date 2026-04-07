@@ -32,10 +32,11 @@ dependencies = [
     "filelock>=3.12",
     "apscheduler>=3.11",
     "pyyaml>=6.0",
+    "pandas>=2.0",
+    "morecantile>=5.0",
 ]
 
 [project.optional-dependencies]
-cds = ["cdsapi>=0.7.7"]
 dev = [
     "pytest>=9",
     "pytest-asyncio>=1.3",

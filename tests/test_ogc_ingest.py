@@ -143,7 +143,15 @@ class TestInputValidation:
         with patch("eostrata.ingestion.run_ingest", return_value=([], True)) as mock_fn:
             resp = client.post(
                 "/processes/ingest/execution",
-                json={"inputs": {"source": "tropomi", "variable": "co", "years": [2024], "months": [1], "days": [1]}},
+                json={
+                    "inputs": {
+                        "source": "tropomi",
+                        "variable": "co",
+                        "years": [2024],
+                        "months": [1],
+                        "days": [1],
+                    }
+                },
             )
         assert resp.status_code == 201
         assert mock_fn.call_args.kwargs["variable"] == "co"
@@ -820,6 +828,38 @@ class TestIngestionFunctions:
             )
 
         mock_save.assert_called_once()
+
+    def test_empty_paths_added_to_failed(self, tmp_path):
+        """When download returns an empty list, the period is added to failed."""
+        from eostrata import ingestion
+
+        with ExitStack() as stack:
+            src, _, mock_save = _setup_source(
+                stack,
+                "worldpop",
+                "worldpop/nga",
+                _mock_ds(),
+                tmp_path,
+                periods=[("NGA/2022", {"iso3": "NGA", "year": 2022})],
+                collection_id="worldpop",
+                VARIABLE="population",
+                skip_404=True,
+            )
+            # download returns empty list — simulates "no files downloaded"
+            src.download.return_value = []
+            failed, saved = ingestion.run_ingest(
+                "worldpop",
+                iso3="NGA",
+                years=[2022],
+                zarr_root=tmp_path / "zarr",
+                raw_dir=tmp_path / "raw",
+                catalog_path=tmp_path / "catalog.json",
+                bbox=_BBOX,
+            )
+
+        assert "NGA/2022" in failed
+        assert not saved
+        mock_save.assert_not_called()
 
 
 # ── Rebuild-catalog process description ───────────────────────────────────────

@@ -6,16 +6,25 @@ Climate Data Store via the ``cdsapi`` library.
 Requires:
   - CDS account and API key at https://cds.climate.copernicus.eu
   - ``cdsapi`` package installed  (pip install cdsapi  OR  uv add cdsapi)
-  - ~/.cdsapirc credentials file:
-      url: https://cds.climate.copernicus.eu/api
-      key: <your-uid>:<your-api-key>
+  - Credentials via one of:
+      ~/.cdsapirc file:  url: …  /  key: <uid>:<api-key>
+      OR set EOSTRATA_CDS_URL and EOSTRATA_CDS_KEY environment variables.
 
 Supported ERA5 variables (``--variable`` option):
-  2m_temperature          → t2m        (K, monthly mean)
-  total_precipitation     → tp         (m, monthly total)
-  10m_u_component_of_wind → u10        (m/s, monthly mean)
-  10m_v_component_of_wind → v10        (m/s, monthly mean)
-  surface_pressure        → sp         (Pa, monthly mean)
+  2m_temperature                    → t2m   (K, monthly mean)
+  2m_dewpoint_temperature           → d2m   (K, monthly mean)
+  total_precipitation               → tp    (m, monthly total)
+  10m_u_component_of_wind          → u10   (m/s, monthly mean)
+  10m_v_component_of_wind          → v10   (m/s, monthly mean)
+  surface_pressure                  → sp    (Pa, monthly mean)
+  mean_sea_level_pressure           → msl   (Pa, monthly mean)
+  sea_surface_temperature           → sst   (K, monthly mean — NaN over land)
+  surface_solar_radiation_downwards → ssrd  (J/m², monthly mean)
+  surface_net_solar_radiation       → ssr   (J/m², monthly mean)
+  total_cloud_cover                 → tcc   (fraction 0–1, monthly mean)
+  total_column_water_vapour         → tcwv  (kg/m², monthly mean)
+  total_evaporation                 → e     (m, monthly total)
+  volumetric_soil_water_layer_1     → swvl1 (m³/m³, monthly mean — ~0–7 cm depth)
 
 The default variable is ``2m_temperature``.
 """
@@ -41,10 +50,19 @@ logger = logging.getLogger(__name__)
 # Maps short variable names to the ERA5 CDS variable long name
 _VARIABLE_MAP: dict[str, str] = {
     "t2m": "2m_temperature",
+    "d2m": "2m_dewpoint_temperature",
     "tp": "total_precipitation",
     "u10": "10m_u_component_of_wind",
     "v10": "10m_v_component_of_wind",
     "sp": "surface_pressure",
+    "msl": "mean_sea_level_pressure",
+    "sst": "sea_surface_temperature",
+    "ssrd": "surface_solar_radiation_downwards",
+    "ssr": "surface_net_solar_radiation",
+    "tcc": "total_cloud_cover",
+    "tcwv": "total_column_water_vapour",
+    "e": "total_evaporation",
+    "swvl1": "volumetric_soil_water_layer_1",
 }
 
 _CDS_DATASET = "reanalysis-era5-single-levels-monthly-means"
@@ -96,7 +114,16 @@ def _download_era5(
         bbox,
     )
 
-    c = cdsapi.Client(quiet=True)
+    from eostrata.config import settings
+
+    url = settings.cds_url
+    key = settings.cds_key
+
+    if key:
+        c = cdsapi.Client(url=url, key=key, quiet=True)
+    else:
+        # Falls back to ~/.cdsapirc
+        c = cdsapi.Client(url=url, quiet=True)
     c.retrieve(
         _CDS_DATASET,
         {
@@ -228,28 +255,51 @@ class CDSSource(BaseSource):
     """ERA5 monthly reanalysis from the Copernicus Climate Data Store."""
 
     id = "cds"
-    collection_id = "cds"
-    collection_title = "CDS / ERA5 climate reanalysis"
-    collection_description = "Climate reanalysis data from the Copernicus Climate Data Store"
+    collection_id = "era5"
+    collection_title = "ERA5 — Climate reanalysis (0.25°, monthly)"
+    collection_description = (
+        "Monthly climate reanalysis from the Copernicus Climate Data Store (ERA5)"
+    )
     zarr_prefix = "era5"
     temporal_resolution = "monthly"
     default_lag_days = 90  # ERA5 has ~3-month production lag
     VARIABLE = "t2m"  # default variable short name
-    VARIABLES = ["t2m", "tp", "u10", "v10", "sp"]
+    VARIABLES = list(_VARIABLE_MAP)
     VARIABLE_DESCRIPTIONS = {
         "t2m": "2m temperature (K)",
+        "d2m": "2m dewpoint temperature (K)",
         "tp": "total precipitation (m)",
-        "u10": "10m U-component of wind (m/s)",
-        "v10": "10m V-component of wind (m/s)",
+        "u10": "10m U-wind component (m/s)",
+        "v10": "10m V-wind component (m/s)",
         "sp": "surface pressure (Pa)",
+        "msl": "mean sea level pressure (Pa)",
+        "sst": "sea surface temperature (K)",
+        "ssrd": "surface solar radiation downwards (J/m²)",
+        "ssr": "surface net solar radiation (J/m²)",
+        "tcc": "total cloud cover (0–1)",
+        "tcwv": "total column water vapour (kg/m²)",
+        "e": "total evaporation (m)",
+        "swvl1": "soil water layer 1, 0–7 cm (m³/m³)",
     }
     ui_fields = ["variable", "years", "months"]
+
+    @classmethod
+    def is_configured(cls) -> tuple[bool, str]:
+        from pathlib import Path
+
+        from eostrata.config import settings
+
+        if settings.cds_key:
+            return True, ""
+        if Path.home().joinpath(".cdsapirc").exists():
+            return True, ""
+        return False, "CDS credentials missing — set EOSTRATA_CDS_KEY or add ~/.cdsapirc"
 
     @classmethod
     def catalog_meta(cls, dataset_name: str) -> dict:
         # dataset_name IS the variable (e.g. "t2m" from "era5/t2m")
         return {
-            "item_id": f"era5_{dataset_name}",
+            "item_id": dataset_name,
             "variable": dataset_name,
             "extra": {PROP_VARIABLE: dataset_name},
         }
@@ -319,7 +369,7 @@ class CDSSource(BaseSource):
 
     def stac_item_id(self, *, variable: str = "t2m", **_: Any) -> str:
         """One STAC item per ERA5 variable."""
-        return f"era5_{variable}"
+        return variable
 
     def stac_properties(self, *, variable: str = "t2m", year: int, **_: Any) -> dict:
         cds_name = _VARIABLE_MAP.get(variable, variable)

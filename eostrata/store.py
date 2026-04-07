@@ -22,6 +22,145 @@ from eostrata.cache import _group_lock  # noqa: F401 — re-exported
 logger = logging.getLogger(__name__)
 
 
+def netcdf_to_zarr(
+    nc_path: Path,
+    zarr_root: Path,
+    zarr_group: str,
+    *,
+    variable: str,
+    bbox: tuple[float, float, float, float] | None = None,
+    time_coord: np.datetime64 | None = None,
+    chunks: dict[str, int] | None = None,
+    lat_dim: str = "lat",
+    lon_dim: str = "lon",
+) -> xr.Dataset:
+    """
+    Clip a NetCDF file to bbox, rename lat/lon → y/x, and write to the Zarr store.
+
+    Parameters
+    ----------
+    nc_path:
+        Path to the source NetCDF file.
+    zarr_root:
+        Root directory of the Zarr store.
+    zarr_group:
+        Group name inside the store, e.g. ``cgls/global``.
+    variable:
+        Name of the data variable to extract (e.g. ``"NDVI"``).
+    bbox:
+        Optional (west, south, east, north) clip extent in EPSG:4326.
+    time_coord:
+        Optional datetime64 value. When provided, a leading ``time``
+        dimension is added so multiple files can be appended.
+    chunks:
+        Zarr chunk sizes. Defaults to 512x512.
+    lat_dim:
+        Name of the latitude dimension in the NetCDF file.
+    lon_dim:
+        Name of the longitude dimension in the NetCDF file.
+    """
+    default_tile = _eostrata_config.settings.zarr_chunk_size
+    chunk_sizes = chunks or {"y": default_tile, "x": default_tile}
+    zarr_root = Path(zarr_root)
+    zarr_root.mkdir(parents=True, exist_ok=True)
+
+    with xr.open_dataset(nc_path, engine="h5netcdf", mask_and_scale=True) as nc:
+        da = nc[variable].squeeze()
+
+        if bbox is not None:
+            west, south, east, north = bbox
+            lat = da[lat_dim]
+            # lat may be descending (north→south) or ascending
+            if float(lat[0]) > float(lat[-1]):
+                da = da.sel({lat_dim: slice(north, south), lon_dim: slice(west, east)})
+            else:
+                da = da.sel({lat_dim: slice(south, north), lon_dim: slice(west, east)})
+
+        lats = da[lat_dim].values.astype("float64")
+        lons = da[lon_dim].values.astype("float64")
+        data = da.values.astype("float32")
+
+    var_name = variable.lower()
+
+    coords: dict = {"y": lats, "x": lons}
+    dims: tuple = ("y", "x")
+    arr = data
+
+    if time_coord is not None:
+        coords["time"] = np.array([time_coord], dtype="datetime64[ns]")
+        dims = ("time", "y", "x")
+        arr = data[np.newaxis, ...]
+
+    da_out = xr.DataArray(arr, dims=dims, coords=coords, name=var_name)
+    da_out.attrs.update(grid_mapping="crs", long_name=zarr_group)
+
+    ds = da_out.to_dataset()
+
+    crs_wkt = CRS.from_epsg(4326).to_wkt(version="WKT2_2019")
+    ds["crs"] = xr.DataArray(
+        np.int32(0),
+        attrs={
+            "grid_mapping_name": "latitude_longitude",
+            "crs_wkt": crs_wkt,
+            "spatial_ref": crs_wkt,
+        },
+    )
+    ds.attrs["Conventions"] = "CF-1.8"
+    ds.attrs["source"] = str(nc_path.name)
+
+    cy = chunk_sizes.get("y", 512)
+    cx = chunk_sizes.get("x", 512)
+    encoding: dict = {
+        var_name: {
+            "chunks": (1, cy, cx) if time_coord is not None else (cy, cx),
+        },
+    }
+
+    store_path = str(zarr_root)
+
+    with _group_lock(zarr_root, zarr_group):
+        group_exists = (zarr_root / zarr_group).exists()
+
+        if group_exists and time_coord is not None:
+            try:
+                existing = xr.open_zarr(store_path, group=zarr_group, consolidated=False)
+                try:
+                    already_present = "time" in existing and time_coord in existing["time"].values
+                finally:
+                    existing.close()
+                if already_present:
+                    logger.info(
+                        "Timestamp %s already exists in '%s' — skipping duplicate write",
+                        time_coord,
+                        zarr_group,
+                    )
+                    return ds
+            except (OSError, KeyError, ValueError):
+                logger.debug(
+                    "Could not read existing Zarr group '%s', proceeding with append", zarr_group
+                )
+            logger.info("Appending to existing Zarr dataset '%s'", zarr_group)
+            ds.to_zarr(
+                store_path,
+                group=zarr_group,
+                mode="a",
+                append_dim="time",
+                consolidated=True,
+            )
+        else:
+            logger.info("Writing new Zarr dataset '%s'", zarr_group)
+            ds.to_zarr(
+                store_path,
+                group=zarr_group,
+                mode="w",
+                encoding=encoding,
+                consolidated=True,
+            )
+
+    logger.info("Done: %s", zarr_group)
+    return ds
+
+
 def geotiff_to_zarr(
     tif_path: Path,
     zarr_root: Path,

@@ -346,7 +346,8 @@ class TestTileRoutes:
         from eostrata.server import app
 
         client = TestClient(app)
-        resp = client.get("/collections/worldpop/tiles/WebMercatorQuad/1/0/0?item=worldpop_nga")
+        # z=1,x=1,y=0 covers (0°,0°,180°,85°N) — overlaps Nigeria bbox (2,4,15,14)
+        resp = client.get("/collections/worldpop/tiles/WebMercatorQuad/1/1/0?item=worldpop_nga")
 
         assert resp.status_code == 200
 
@@ -371,8 +372,9 @@ class TestTileRoutes:
         from eostrata.server import app
 
         client = TestClient(app)
+        # z=1,x=1,y=0 covers (0°,0°,180°,85°N) — overlaps Nigeria bbox (2,4,15,14)
         client.get(
-            "/collections/worldpop/tiles/WebMercatorQuad/1/0/0"
+            "/collections/worldpop/tiles/WebMercatorQuad/1/1/0"
             "?item=worldpop_nga&datetime=2020-01-01&colormap_name=viridis&rescale=0,100"
         )
 
@@ -406,8 +408,9 @@ class TestTileRoutes:
         from eostrata.server import app
 
         client = TestClient(app)
+        # z=1,x=1,y=0 covers (0°,0°,180°,85°N) — overlaps Nigeria bbox (2,4,15,14)
         client.get(
-            "/collections/worldpop/tiles/WebMercatorQuad/1/0/0"
+            "/collections/worldpop/tiles/WebMercatorQuad/1/1/0"
             "?item=worldpop_nga"
             "&datetime=2020-01-01/2021-12-31"
             "&agg=mean"
@@ -417,3 +420,61 @@ class TestTileRoutes:
         assert ctx_snapshot["datetime"] == "2020-01-01/2021-12-31"
         assert ctx_snapshot["agg"] == "mean"
         assert ctx_snapshot["baseline"] == "2019-01-01/2019-12-31"
+
+    def test_tile_outside_bbox_returns_empty_png(self, setup, mocker):
+        """Tile entirely outside item bbox returns 200 with transparent PNG, no delegate call."""
+        tmp_path, catalog_path, zarr_root = setup
+
+        mock_settings = mocker.MagicMock()
+        mock_settings.catalog_path = catalog_path
+        mock_settings.zarr_root = zarr_root
+
+        delegate_called = []
+
+        async def fake_delegate(path, params):
+            delegate_called.append(True)
+            from fastapi.responses import Response
+
+            return Response(content=b"\x89PNG", media_type="image/png")
+
+        mocker.patch("eostrata.ogc.tiles.settings", mock_settings)
+        mocker.patch("eostrata.ogc.tiles._delegate", side_effect=fake_delegate)
+        from eostrata.server import app
+
+        client = TestClient(app)
+        # z=1,x=0,y=0 covers (-180°,0°,0°,85°N) — does NOT overlap Nigeria bbox (2,4,15,14)
+        resp = client.get("/collections/worldpop/tiles/WebMercatorQuad/1/0/0?item=worldpop_nga")
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "image/png"
+        assert resp.content[:4] == b"\x89PNG"
+        assert not delegate_called, "_delegate should not be called for out-of-bbox tile"
+
+
+# ── _tile_bbox unit tests ──────────────────────────────────────────────────────
+
+
+class TestTileBbox:
+    def test_zoom0_covers_world(self):
+        from eostrata.ogc.tiles import _tile_bbox
+
+        west, south, east, north = _tile_bbox(0, 0, 0)
+        assert west == pytest.approx(-180.0)
+        assert east == pytest.approx(180.0)
+        assert north == pytest.approx(85.0511, abs=0.01)
+        assert south == pytest.approx(-85.0511, abs=0.01)
+
+    def test_zoom1_quadrants(self):
+        from eostrata.ogc.tiles import _tile_bbox
+
+        # Top-left quadrant: west hemisphere, north
+        w, s, e, n = _tile_bbox(1, 0, 0)
+        assert w == pytest.approx(-180.0)
+        assert e == pytest.approx(0.0)
+        assert s == pytest.approx(0.0)
+        assert n > 0.0
+
+        # Top-right quadrant: east hemisphere, north — overlaps Nigeria
+        w, s, e, n = _tile_bbox(1, 1, 0)
+        assert w == pytest.approx(0.0)
+        assert e == pytest.approx(180.0)

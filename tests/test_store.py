@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 
 import numpy as np
 import rasterio
 import xarray as xr
 from rasterio.transform import from_bounds
 
-from eostrata.store import geotiff_to_zarr
+from eostrata.store import geotiff_to_zarr, netcdf_to_zarr
 
 
 def _write_tif(path, bbox, width=20, height=20, nodata=-9999.0):
@@ -238,3 +239,126 @@ class TestGeotiffToZarr:
         assert len(ds["time"]) == len(timestamps), (
             f"Expected {len(timestamps)} timestamps, got {len(ds['time'])}."
         )
+
+
+def _write_nc(
+    tmp_path: Path,
+    variable: str = "ndvi",
+    lat_dim: str = "lat",
+    lon_dim: str = "lon",
+    ascending: bool = False,
+) -> Path:
+    """Write a minimal NetCDF file for netcdf_to_zarr testing."""
+    lats = np.linspace(0.0, 5.0, 10) if ascending else np.linspace(5.0, 0.0, 10)
+    lons = np.linspace(0.0, 5.0, 10)
+    data = np.ones((10, 10), dtype="float32") * 42.0
+    da = xr.DataArray(
+        data,
+        dims=(lat_dim, lon_dim),
+        coords={lat_dim: lats, lon_dim: lons},
+        name=variable,
+    )
+    nc_path = tmp_path / f"{variable}.nc"
+    da.to_dataset().to_netcdf(str(nc_path))
+    return nc_path
+
+
+class TestNetcdfToZarr:
+    """Tests for netcdf_to_zarr (lines 62-161 in store.py)."""
+
+    def test_basic_write_no_time(self, tmp_path):
+        """netcdf_to_zarr writes a 2D array without a time dimension."""
+        nc = _write_nc(tmp_path, "ndvi")
+        zarr_root = tmp_path / "zarr"
+        ds = netcdf_to_zarr(nc, zarr_root, "cgls/global", variable="ndvi")
+        assert "ndvi" in ds.data_vars
+        assert "time" not in ds.dims
+        assert (zarr_root / "cgls" / "global").exists()
+
+    def test_write_with_time_coord(self, tmp_path):
+        """netcdf_to_zarr adds a time dimension when time_coord is given."""
+        nc = _write_nc(tmp_path, "ndvi")
+        zarr_root = tmp_path / "zarr"
+        tc = np.datetime64("2021-06-01", "ns")
+        ds = netcdf_to_zarr(nc, zarr_root, "cgls/global", variable="ndvi", time_coord=tc)
+        assert "time" in ds.dims
+        assert ds.sizes["time"] == 1
+
+    def test_cf_conventions(self, tmp_path):
+        """Output dataset has CF-1.8 conventions and a crs variable."""
+        nc = _write_nc(tmp_path, "ndvi")
+        zarr_root = tmp_path / "zarr"
+        ds = netcdf_to_zarr(nc, zarr_root, "cgls/global", variable="ndvi")
+        assert ds.attrs.get("Conventions") == "CF-1.8"
+        assert "crs" in ds.data_vars
+
+    def test_bbox_clip_descending_lat(self, tmp_path):
+        """Bbox clip works when latitude is descending (north→south)."""
+        nc = _write_nc(tmp_path, "ndvi", ascending=False)
+        zarr_root = tmp_path / "zarr"
+        ds = netcdf_to_zarr(
+            nc, zarr_root, "cgls/global", variable="ndvi", bbox=(1.0, 1.0, 4.0, 4.0)
+        )
+        assert "ndvi" in ds.data_vars
+        # Clipped extent should be smaller than full extent
+        assert ds.sizes["x"] < 10
+
+    def test_bbox_clip_ascending_lat(self, tmp_path):
+        """Bbox clip works when latitude is ascending (south→north)."""
+        nc = _write_nc(tmp_path, "ndvi", ascending=True)
+        zarr_root = tmp_path / "zarr"
+        ds = netcdf_to_zarr(
+            nc, zarr_root, "cgls/global", variable="ndvi", bbox=(1.0, 1.0, 4.0, 4.0)
+        )
+        assert "ndvi" in ds.data_vars
+        assert ds.sizes["x"] < 10
+
+    def test_append_new_timestamp(self, tmp_path):
+        """Second call with a different time_coord appends to the existing group."""
+        nc = _write_nc(tmp_path, "ndvi")
+        zarr_root = tmp_path / "zarr"
+        tc1 = np.datetime64("2021-01-01", "ns")
+        tc2 = np.datetime64("2021-02-01", "ns")
+        netcdf_to_zarr(nc, zarr_root, "cgls/global", variable="ndvi", time_coord=tc1)
+        netcdf_to_zarr(nc, zarr_root, "cgls/global", variable="ndvi", time_coord=tc2)
+        stored = xr.open_zarr(str(zarr_root), group="cgls/global", consolidated=False)
+        assert len(stored["time"]) == 2
+
+    def test_duplicate_timestamp_skipped(self, tmp_path):
+        """Writing the same time_coord twice does not create a duplicate entry."""
+        nc = _write_nc(tmp_path, "ndvi")
+        zarr_root = tmp_path / "zarr"
+        tc = np.datetime64("2021-06-01", "ns")
+        netcdf_to_zarr(nc, zarr_root, "cgls/global", variable="ndvi", time_coord=tc)
+        netcdf_to_zarr(nc, zarr_root, "cgls/global", variable="ndvi", time_coord=tc)
+        stored = xr.open_zarr(str(zarr_root), group="cgls/global", consolidated=False)
+        assert len(stored["time"]) == 1
+
+    def test_append_falls_back_when_existing_read_fails(self, tmp_path, mocker):
+        """If open_zarr raises during duplicate check, proceed with append."""
+        nc = _write_nc(tmp_path, "ndvi")
+        zarr_root = tmp_path / "zarr"
+        tc1 = np.datetime64("2021-01-01", "ns")
+        netcdf_to_zarr(nc, zarr_root, "cgls/global", variable="ndvi", time_coord=tc1)
+
+        mocker.patch("eostrata.store.xr.open_zarr", side_effect=OSError("corrupted"))
+        tc2 = np.datetime64("2021-02-01", "ns")
+        # Should not raise
+        netcdf_to_zarr(nc, zarr_root, "cgls/global", variable="ndvi", time_coord=tc2)
+
+    def test_no_bbox_uses_full_extent(self, tmp_path):
+        """Without bbox, the full extent of the NetCDF is written."""
+        nc = _write_nc(tmp_path, "ndvi")
+        zarr_root = tmp_path / "zarr"
+        ds = netcdf_to_zarr(nc, zarr_root, "cgls/global", variable="ndvi", bbox=None)
+        assert ds.sizes["x"] == 10
+        assert ds.sizes["y"] == 10
+
+    def test_custom_chunks(self, tmp_path):
+        """Custom chunk sizes are accepted without raising."""
+        nc = _write_nc(tmp_path, "ndvi")
+        zarr_root = tmp_path / "zarr"
+        ds = netcdf_to_zarr(
+            nc, zarr_root, "cgls/global", variable="ndvi", chunks={"y": 64, "x": 64}
+        )
+        assert "ndvi" in ds.data_vars

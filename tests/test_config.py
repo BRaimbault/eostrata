@@ -121,3 +121,11 @@ class TestSettings:
     def test_max_aggregation_timesteps_negative_raises(self):
         with pytest.raises(Exception, match="max_aggregation_timesteps"):
             Settings(max_aggregation_timesteps=-1)
+
+    def test_agg_cache_max_entries_negative_raises(self):
+        with pytest.raises(ValidationError):
+            Settings(agg_cache_max_entries=-1)
+
+    def test_agg_cache_ttl_seconds_zero_raises(self):
+        with pytest.raises(ValidationError):
+            Settings(agg_cache_ttl_seconds=0)

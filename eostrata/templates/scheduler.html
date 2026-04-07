@@ -1,9 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-  <meta charset="utf-8"/>
-  <title>eostrata · Scheduler</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta charset="utf-8" />
+  <title>eostrata scheduler</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     /* ── Design tokens (matches map.html) ──────────────────────────────────
        Type  : 11px xs · 12px sm · 13px base · 14px md
@@ -11,465 +12,918 @@
        Accent: #2563eb (blue-600)   Hover: #1d4ed8
        OK    : #16a34a              Error: #991b1b
     ──────────────────────────────────────────────────────────────────────── */
-    *, *::before, *::after { box-sizing: border-box; }
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+    }
 
     body {
-      margin: 0; font-family: system-ui, -apple-system, sans-serif;
-      font-size: 13px; color: #111827; background: #f9fafb;
+      margin: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 13px;
+      color: #111827;
+      background: #f9fafb;
     }
 
     /* ── Top bar ──────────────────────────────────────────────────────────── */
     #topbar {
-      position: sticky; top: 0; z-index: 100;
-      display: flex; align-items: center; gap: 12px;
-      padding: 0 20px; height: 46px;
-      background: #fff; border-bottom: 1px solid #e5e7eb;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 20px;
+      height: 46px;
+      background: #fff;
+      border-bottom: 1px solid #e5e7eb;
     }
+
     #topbar .brand {
-      font-size: 14px; font-weight: 700; color: #111827;
-      text-decoration: none; white-space: nowrap;
+      font-size: 14px;
+      font-weight: 700;
+      color: #111827;
+      text-decoration: none;
+      white-space: nowrap;
     }
-    #topbar .sep { color: #d1d5db; }
-    #topbar nav { display: flex; gap: 10px; }
+
+    #topbar .sep {
+      color: #d1d5db;
+    }
+
+    #topbar nav {
+      display: flex;
+      gap: 10px;
+    }
+
     #topbar nav a {
-      font-size: 12px; color: #6b7280; text-decoration: none;
+      font-size: 12px;
+      color: #6b7280;
+      text-decoration: none;
     }
-    #topbar nav a:hover { color: #2563eb; }
-    #topbar .spacer { flex: 1; }
+
+    #topbar nav a:hover {
+      color: #2563eb;
+    }
+
+    #topbar .spacer {
+      flex: 1;
+    }
+
     #scheduler-status {
-      display: inline-flex; align-items: center; gap: 5px;
-      font-size: 12px; font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      font-weight: 500;
     }
+
     .status-dot {
-      width: 8px; height: 8px; border-radius: 50%;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
     }
-    .status-dot.running  { background: #16a34a; }
-    .status-dot.stopped  { background: #9ca3af; }
-    .status-dot.error    { background: #dc2626; }
+
+    .status-dot.running {
+      background: #16a34a;
+    }
+
+    .status-dot.stopped {
+      background: #9ca3af;
+    }
+
+    .status-dot.error {
+      background: #dc2626;
+    }
 
     /* ── Page layout ──────────────────────────────────────────────────────── */
     #page {
-      max-width: 1000px; margin: 0 auto; padding: 24px 20px 60px;
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 24px 20px 60px;
     }
 
     /* ── Section heading ──────────────────────────────────────────────────── */
     .section-header {
-      display: flex; align-items: center; justify-content: space-between;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
       margin-bottom: 14px;
     }
+
     .section-header h2 {
-      margin: 0; font-size: 14px; font-weight: 600; color: #111827;
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: #111827;
     }
 
     /* ── Buttons ──────────────────────────────────────────────────────────── */
     .btn {
-      display: inline-flex; align-items: center; gap: 5px;
-      padding: 6px 14px; font-size: 13px; font-family: inherit; font-weight: 500;
-      border: none; border-radius: 5px; cursor: pointer; transition: background 0.12s;
-      background: #2563eb; color: #fff;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 14px;
+      font-size: 13px;
+      font-family: inherit;
+      font-weight: 500;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background 0.12s;
+      background: #2563eb;
+      color: #fff;
     }
-    .btn:hover:not(:disabled) { background: #1d4ed8; }
-    .btn:disabled { background: #93c5fd; cursor: not-allowed; }
+
+    .btn:hover:not(:disabled) {
+      background: #1d4ed8;
+    }
+
+    .btn:disabled {
+      background: #93c5fd;
+      cursor: not-allowed;
+    }
+
     .btn.secondary {
-      background: #f3f4f6; color: #374151; border: 1px solid #d1d5db;
+      background: #f3f4f6;
+      color: #374151;
+      border: 1px solid #d1d5db;
     }
-    .btn.secondary:hover:not(:disabled) { background: #e5e7eb; }
+
+    .btn.secondary:hover:not(:disabled) {
+      background: #e5e7eb;
+    }
+
     .btn.danger {
-      background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5;
+      background: #fee2e2;
+      color: #991b1b;
+      border: 1px solid #fca5a5;
     }
-    .btn.danger:hover:not(:disabled) { background: #fecaca; }
+
+    .btn.danger:hover:not(:disabled) {
+      background: #fecaca;
+    }
+
     .btn.ghost {
-      background: transparent; color: #6b7280; border: 1px solid #e5e7eb;
-      padding: 4px 9px; font-size: 12px;
+      background: transparent;
+      color: #6b7280;
+      border: 1px solid #e5e7eb;
+      padding: 4px 9px;
+      font-size: 12px;
     }
-    .btn.ghost:hover:not(:disabled) { background: #f3f4f6; color: #111827; }
+
+    .btn.ghost:hover:not(:disabled) {
+      background: #f3f4f6;
+      color: #111827;
+    }
+
     .btn.icon {
-      padding: 4px 8px; font-size: 13px; line-height: 1;
-      background: transparent; color: #6b7280; border: 1px solid #e5e7eb;
+      padding: 4px 8px;
+      font-size: 13px;
+      line-height: 1;
+      background: transparent;
+      color: #6b7280;
+      border: 1px solid #e5e7eb;
     }
-    .btn.icon:hover:not(:disabled) { background: #f3f4f6; color: #111827; }
-    .btn.icon.run:hover:not(:disabled)  { background: #dcfce7; color: #166534; border-color: #86efac; }
-    .btn.icon.del:hover:not(:disabled)  { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+
+    .btn.icon:hover:not(:disabled) {
+      background: #f3f4f6;
+      color: #111827;
+    }
+
+    .btn.icon.run:hover:not(:disabled) {
+      background: #dcfce7;
+      color: #166534;
+      border-color: #86efac;
+    }
+
+    .btn.icon.del:hover:not(:disabled) {
+      background: #fee2e2;
+      color: #991b1b;
+      border-color: #fca5a5;
+    }
 
     /* ── Table ────────────────────────────────────────────────────────────── */
     .card {
-      background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
       overflow: hidden;
     }
+
     table {
-      width: 100%; border-collapse: collapse; font-size: 13px;
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
     }
+
     thead th {
-      padding: 9px 14px; text-align: left;
-      font-size: 11px; font-weight: 500; color: #6b7280;
-      text-transform: uppercase; letter-spacing: 0.05em;
-      background: #f9fafb; border-bottom: 1px solid #e5e7eb;
+      padding: 9px 14px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 500;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      background: #f9fafb;
+      border-bottom: 1px solid #e5e7eb;
     }
-    tbody tr { border-bottom: 1px solid #f3f4f6; }
-    tbody tr:last-child { border-bottom: none; }
-    tbody tr:hover { background: #fafafa; }
-    tbody td { padding: 10px 14px; vertical-align: middle; }
-    td.job-id  { font-weight: 600; font-family: ui-monospace, monospace; font-size: 12px; }
-    td.cron    { font-family: ui-monospace, monospace; font-size: 12px; color: #374151; }
-    td.next-run { font-size: 12px; color: #6b7280; }
-    td.actions { white-space: nowrap; }
-    td.actions { display: flex; gap: 4px; align-items: center; }
+
+    tbody tr {
+      border-bottom: 1px solid #f3f4f6;
+    }
+
+    tbody tr:last-child {
+      border-bottom: none;
+    }
+
+    tbody tr:hover {
+      background: #fafafa;
+    }
+
+    tbody td {
+      padding: 10px 14px;
+      vertical-align: middle;
+    }
+
+    td.job-id {
+      font-weight: 600;
+      font-family: ui-monospace, monospace;
+      font-size: 12px;
+    }
+
+    td.cron {
+      font-family: ui-monospace, monospace;
+      font-size: 12px;
+      color: #374151;
+    }
+
+    td.next-run {
+      font-size: 12px;
+      color: #6b7280;
+    }
+
+    td.actions {
+      white-space: nowrap;
+    }
+
+    td.actions {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
 
     /* ── Toggle switch ────────────────────────────────────────────────────── */
     .toggle {
-      position: relative; display: inline-flex; align-items: center;
-      width: 34px; height: 18px; cursor: pointer;
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      width: 34px;
+      height: 18px;
+      cursor: pointer;
     }
-    .toggle input { opacity: 0; width: 0; height: 0; }
+
+    .toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
     .toggle .track {
-      position: absolute; inset: 0; border-radius: 9px;
-      background: #d1d5db; transition: background 0.15s;
+      position: absolute;
+      inset: 0;
+      border-radius: 9px;
+      background: #d1d5db;
+      transition: background 0.15s;
     }
-    .toggle input:checked + .track { background: #2563eb; }
+
+    .toggle input:checked+.track {
+      background: #2563eb;
+    }
+
     .toggle .thumb {
-      position: absolute; top: 2px; left: 2px;
-      width: 14px; height: 14px; border-radius: 50%;
-      background: #fff; transition: transform 0.15s;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #fff;
+      transition: transform 0.15s;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
     }
-    .toggle input:checked ~ .thumb { transform: translateX(16px); }
+
+    .toggle input:checked~.thumb {
+      transform: translateX(16px);
+    }
 
     /* ── Badge ────────────────────────────────────────────────────────────── */
     .badge {
-      display: inline-block; padding: 1px 7px; border-radius: 9px;
-      font-size: 11px; font-weight: 500; white-space: nowrap;
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 9px;
+      font-size: 11px;
+      font-weight: 500;
+      white-space: nowrap;
     }
-    .badge-auto    { background: #dbeafe; color: #1e40af; }
-    .badge-fixed   { background: #f3f4f6; color: #6b7280; }
-    .badge-success { background: #dcfce7; color: #166534; }
-    .badge-failed  { background: #fee2e2; color: #991b1b; }
-    .badge-running { background: #fef9c3; color: #854d0e; }
+
+    .badge-auto {
+      background: #dbeafe;
+      color: #1e40af;
+    }
+
+    .badge-fixed {
+      background: #f3f4f6;
+      color: #6b7280;
+    }
+
+    .badge-success {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .badge-failed {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .badge-running {
+      background: #fef9c3;
+      color: #854d0e;
+    }
 
     /* ── Last-run cell ────────────────────────────────────────────────────── */
-    td.last-run { font-size: 12px; }
-    .lr-err-btn {
-      display: inline-block; margin-left: 5px; font-size: 11px;
-      color: #991b1b; background: none; border: none; cursor: pointer;
-      text-decoration: underline; padding: 0; font-family: inherit;
+    td.last-run {
+      font-size: 12px;
     }
-    .lr-err-btn:hover { color: #7f1d1d; }
+
+    .lr-err-btn {
+      display: inline-block;
+      margin-left: 5px;
+      font-size: 11px;
+      color: #991b1b;
+      background: none;
+      border: none;
+      cursor: pointer;
+      text-decoration: underline;
+      padding: 0;
+      font-family: inherit;
+    }
+
+    .lr-err-btn:hover {
+      color: #7f1d1d;
+    }
+
     .lr-detail {
-      display: none; margin-top: 4px; padding: 6px 8px;
-      background: #fff1f2; border: 1px solid #fecaca; border-radius: 4px;
-      font-family: ui-monospace, monospace; font-size: 11px; color: #991b1b;
-      white-space: pre-wrap; word-break: break-all; max-height: 120px;
+      display: none;
+      margin-top: 4px;
+      padding: 6px 8px;
+      background: #fff1f2;
+      border: 1px solid #fecaca;
+      border-radius: 4px;
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      color: #991b1b;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 120px;
       overflow-y: auto;
     }
 
     /* ── Failures banner ──────────────────────────────────────────────────── */
     #failures-banner {
-      display: none; margin-bottom: 16px; padding: 12px 16px;
-      background: #fff1f2; border: 1px solid #fecaca; border-radius: 8px;
+      display: none;
+      margin-bottom: 16px;
+      padding: 12px 16px;
+      background: #fff1f2;
+      border: 1px solid #fecaca;
+      border-radius: 8px;
     }
+
     #failures-banner .banner-hdr {
-      display: flex; align-items: center; justify-content: space-between;
-      font-size: 13px; font-weight: 600; color: #991b1b;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 600;
+      color: #991b1b;
     }
+
     #failures-banner .banner-hdr button {
-      font-size: 11px; background: none; border: none; cursor: pointer;
-      color: #991b1b; text-decoration: underline; padding: 0; font-family: inherit;
+      font-size: 11px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: #991b1b;
+      text-decoration: underline;
+      padding: 0;
+      font-family: inherit;
     }
+
     #failures-list {
-      margin-top: 8px; display: flex; flex-direction: column; gap: 6px;
+      margin-top: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
     }
+
     .failure-item {
-      font-size: 12px; color: #374151;
+      font-size: 12px;
+      color: #374151;
     }
-    .failure-item strong { font-family: ui-monospace, monospace; }
+
+    .failure-item strong {
+      font-family: ui-monospace, monospace;
+    }
+
     .failure-item .failure-err {
-      display: block; margin-top: 2px; padding: 4px 8px;
-      background: #fee2e2; border-radius: 4px;
-      font-family: ui-monospace, monospace; font-size: 11px; color: #991b1b;
-      white-space: pre-wrap; word-break: break-all; max-height: 80px;
+      display: block;
+      margin-top: 2px;
+      padding: 4px 8px;
+      background: #fee2e2;
+      border-radius: 4px;
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      color: #991b1b;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 80px;
       overflow-y: auto;
     }
 
     /* ── Empty / error state ──────────────────────────────────────────────── */
-    #empty-state, #error-state {
-      padding: 40px 20px; text-align: center; color: #9ca3af;
-      font-size: 13px; display: none;
+    #empty-state,
+    #error-state {
+      padding: 40px 20px;
+      text-align: center;
+      color: #9ca3af;
+      font-size: 13px;
+      display: none;
     }
-    #error-state { color: #991b1b; }
+
+    #error-state {
+      color: #991b1b;
+    }
 
     /* ── Form panel ───────────────────────────────────────────────────────── */
     #form-panel {
-      background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
-      padding: 20px 24px; margin-top: 20px; display: none;
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin-top: 20px;
+      display: none;
     }
+
     #form-panel h3 {
-      margin: 0 0 16px; font-size: 14px; font-weight: 600; color: #111827;
+      margin: 0 0 16px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #111827;
     }
+
     .form-grid {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0 16px;
     }
+
     .form-field {
       margin-bottom: 12px;
     }
-    .form-field.full { grid-column: 1 / -1; }
-    .form-field label {
-      display: block; margin-bottom: 4px;
-      font-size: 11px; font-weight: 500; color: #6b7280;
-      text-transform: uppercase; letter-spacing: 0.05em;
+
+    .form-field.full {
+      grid-column: 1 / -1;
     }
+
+    .form-field label {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
     .form-field input[type="text"],
     .form-field input[type="number"],
     .form-field select,
     .form-field textarea {
-      width: 100%; padding: 6px 8px; font-size: 13px; font-family: inherit;
-      color: #111827; border: 1px solid #d1d5db; border-radius: 4px;
-      background: #fff; transition: border-color 0.12s;
+      width: 100%;
+      padding: 6px 8px;
+      font-size: 13px;
+      font-family: inherit;
+      color: #111827;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      background: #fff;
+      transition: border-color 0.12s;
     }
+
     .form-field input:focus,
     .form-field select:focus,
     .form-field textarea:focus {
-      outline: none; border-color: #2563eb;
-      box-shadow: 0 0 0 2px rgba(37,99,235,0.15);
+      outline: none;
+      border-color: #2563eb;
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
     }
+
     .form-field input:disabled,
     .form-field select:disabled {
-      background: #f9fafb; color: #9ca3af; cursor: not-allowed;
+      background: #f9fafb;
+      color: #9ca3af;
+      cursor: not-allowed;
     }
+
     .form-field .hint {
-      margin-top: 3px; font-size: 11px; color: #9ca3af;
+      margin-top: 3px;
+      font-size: 11px;
+      color: #9ca3af;
     }
+
     .form-field.checkbox-field {
-      display: flex; align-items: center; gap: 8px; margin-top: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
     }
+
     .form-field.checkbox-field label {
-      margin: 0; text-transform: none; letter-spacing: 0;
-      font-size: 13px; font-weight: 400; color: #374151; cursor: pointer;
+      margin: 0;
+      text-transform: none;
+      letter-spacing: 0;
+      font-size: 13px;
+      font-weight: 400;
+      color: #374151;
+      cursor: pointer;
     }
+
     .form-field.checkbox-field input[type="checkbox"] {
-      width: 15px; height: 15px; cursor: pointer; accent-color: #2563eb;
+      width: 15px;
+      height: 15px;
+      cursor: pointer;
+      accent-color: #2563eb;
     }
 
     .form-divider {
-      grid-column: 1 / -1; border: none; border-top: 1px solid #f3f4f6;
+      grid-column: 1 / -1;
+      border: none;
+      border-top: 1px solid #f3f4f6;
       margin: 4px 0 8px;
     }
+
     .form-section-label {
       grid-column: 1 / -1;
-      font-size: 11px; font-weight: 500; color: #9ca3af;
-      text-transform: uppercase; letter-spacing: 0.05em;
+      font-size: 11px;
+      font-weight: 500;
+      color: #9ca3af;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
       margin-bottom: 4px;
     }
 
     .form-actions {
-      display: flex; gap: 8px; margin-top: 16px; padding-top: 14px;
+      display: flex;
+      gap: 8px;
+      margin-top: 16px;
+      padding-top: 14px;
       border-top: 1px solid #f3f4f6;
     }
+
     #form-error {
-      margin-top: 8px; font-size: 12px; color: #991b1b; display: none;
+      margin-top: 8px;
+      font-size: 12px;
+      color: #991b1b;
+      display: none;
     }
 
     /* ── Toast ────────────────────────────────────────────────────────────── */
     #toast {
-      position: fixed; bottom: 24px; right: 24px; z-index: 9999;
-      padding: 10px 18px; border-radius: 6px; font-size: 13px; font-weight: 500;
-      color: #fff; background: #111827;
-      opacity: 0; pointer-events: none;
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 9999;
+      padding: 10px 18px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #fff;
+      background: #111827;
+      opacity: 0;
+      pointer-events: none;
       transition: opacity 0.2s;
     }
-    #toast.show { opacity: 1; }
-    #toast.ok  { background: #16a34a; }
-    #toast.err { background: #dc2626; }
+
+    #toast.show {
+      opacity: 1;
+    }
+
+    #toast.ok {
+      background: #16a34a;
+    }
+
+    #toast.err {
+      background: #dc2626;
+    }
 
     /* ── Cron helper ──────────────────────────────────────────────────────── */
-    #cron-desc { font-size: 11px; color: #2563eb; margin-top: 3px; min-height: 14px; }
+    #cron-desc {
+      font-size: 11px;
+      color: #2563eb;
+      margin-top: 3px;
+      min-height: 14px;
+    }
+
+    .cron-fields {
+      font-size: 10px;
+      color: #9ca3af;
+      font-family: ui-monospace, monospace;
+      letter-spacing: 0.02em;
+      margin-top: 2px;
+    }
+
+    .cron-help-toggle {
+      font-size: 11px;
+      color: #6b7280;
+      cursor: pointer;
+      margin-top: 4px;
+      display: inline-block;
+      user-select: none;
+    }
+
+    .cron-help-toggle:hover {
+      color: #374151;
+    }
+
+    .cron-examples {
+      font-size: 11px;
+      color: #374151;
+      margin-top: 6px;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 5px;
+      padding: 8px 10px;
+      line-height: 1.8;
+    }
+
+    .cron-examples code {
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      background: #e5e7eb;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+
+    .cron-examples table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+
+    .cron-examples td {
+      padding: 1px 6px 1px 0;
+      vertical-align: top;
+    }
+
+    .cron-examples td:first-child {
+      white-space: nowrap;
+    }
 
     /* ── Params section ───────────────────────────────────────────────────── */
-    #params-section { display: contents; }
+    #params-section {
+      display: contents;
+    }
   </style>
 </head>
+
 <body>
 
-<!-- ── Top bar ──────────────────────────────────────────────────────────── -->
-<header id="topbar">
-  <a class="brand" href="/">eostrata</a>
-  <span class="sep">·</span>
-  <nav>
-    <a href="/map">map</a>
-    <a href="/docs">api docs</a>
-  </nav>
-  <span class="spacer"></span>
-  <span id="scheduler-status">
-    <span class="status-dot stopped" id="status-dot"></span>
-    <span id="status-label">checking…</span>
-  </span>
-</header>
+  <!-- ── Top bar ──────────────────────────────────────────────────────────── -->
+  <header id="topbar">
+    <a class="brand" href="/">eostrata scheduler</a>
+    <span class="sep">·</span>
+    <nav>
+      <a href="/map">map</a>
+      <a href="/docs">docs</a>
+    </nav>
+    <span class="spacer"></span>
+    <span id="scheduler-status">
+      <span class="status-dot stopped" id="status-dot"></span>
+      <span id="status-label">checking…</span>
+    </span>
+  </header>
 
-<!-- ── Page ─────────────────────────────────────────────────────────────── -->
-<div id="page">
+  <!-- ── Page ─────────────────────────────────────────────────────────────── -->
+  <div id="page">
 
-  <div class="section-header">
-    <h2>Scheduled Jobs</h2>
-    <button class="btn" id="add-btn" onclick="showAddForm()">+ Add Job</button>
-  </div>
-
-  <!-- Failures banner -->
-  <div id="failures-banner">
-    <div class="banner-hdr">
-      <span id="failures-title">Job failures</span>
-      <button onclick="dismissFailures()">dismiss</button>
-    </div>
-    <div id="failures-list"></div>
-  </div>
-
-  <!-- Jobs table -->
-  <div class="card" id="jobs-card">
-    <table id="jobs-table">
-      <thead>
-        <tr>
-          <th>Job ID</th>
-          <th>Source</th>
-          <th>Cron</th>
-          <th>Period</th>
-          <th>Enabled</th>
-          <th>Next Run</th>
-          <th>Last Run</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody id="jobs-tbody"></tbody>
-    </table>
-    <div id="empty-state">No scheduled jobs yet. Click <strong>+ Add Job</strong> to create one.</div>
-    <div id="error-state"></div>
-  </div>
-
-  <!-- Add / Edit form -->
-  <div id="form-panel">
-    <h3 id="form-title">Add Job</h3>
-    <form id="job-form" onsubmit="submitForm(event)">
-      <div class="form-grid">
-
-        <div class="form-field">
-          <label for="f-id">Job ID</label>
-          <input type="text" id="f-id" placeholder="e.g. chirps_monthly" required
-                 pattern="[a-zA-Z0-9_\-]+" title="Letters, numbers, underscores and hyphens only"/>
-          <div class="hint">Unique identifier — letters, numbers, _ and - only</div>
-        </div>
-
-        <div class="form-field">
-          <label for="f-source">Source</label>
-          <select id="f-source" required onchange="onSourceChange()">
-            <option value="">— select —</option>
-          </select>
-        </div>
-
-        <div class="form-field">
-          <label for="f-cron">Cron Expression</label>
-          <input type="text" id="f-cron" placeholder="0 4 1 * *" required
-                 oninput="updateCronDesc()"/>
-          <div id="cron-desc"></div>
-        </div>
-
-        <div class="form-field" style="padding-top:18px; display:flex; gap:20px; align-items:flex-end;">
-          <div class="checkbox-field form-field" style="margin:0">
-            <input type="checkbox" id="f-auto-period" onchange="onAutoPeriodChange()"/>
-            <label for="f-auto-period">Auto Period</label>
-          </div>
-          <div class="checkbox-field form-field" style="margin:0">
-            <input type="checkbox" id="f-enabled" checked/>
-            <label for="f-enabled">Enabled</label>
-          </div>
-        </div>
-
-        <div class="form-section-label" id="params-header" style="display:none">Parameters</div>
-        <hr class="form-divider" id="params-divider" style="display:none"/>
-
-        <!-- Dynamic params injected here -->
-        <div id="params-section" style="display:contents"></div>
-
-      </div><!-- /form-grid -->
-
-      <div class="form-actions">
-        <button type="submit" class="btn" id="save-btn">Save Job</button>
-        <button type="button" class="btn secondary" onclick="closeForm()">Cancel</button>
+    <div class="section-header">
+      <h2>Scheduled Jobs</h2>
+      <div style="display:flex;gap:8px">
+        <button class="btn secondary" id="refresh-btn" onclick="fetchJobs()" title="Refresh job list">↻ Refresh</button>
+        <button class="btn" id="add-btn" onclick="showAddForm()">+ Add Job</button>
       </div>
-      <div id="form-error"></div>
-    </form>
-  </div><!-- /form-panel -->
+    </div>
 
-</div><!-- /page -->
+    <!-- Failures banner -->
+    <div id="failures-banner">
+      <div class="banner-hdr">
+        <span id="failures-title">Job failures</span>
+        <button onclick="dismissFailures()">dismiss</button>
+      </div>
+      <div id="failures-list"></div>
+    </div>
 
-<div id="toast"></div>
+    <!-- Jobs table -->
+    <div class="card" id="jobs-card">
+      <table id="jobs-table">
+        <thead>
+          <tr>
+            <th>Job ID</th>
+            <th>Source</th>
+            <th>Cron</th>
+            <th>Period</th>
+            <th>Enabled</th>
+            <th>Next Run</th>
+            <th>Last Run</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="jobs-tbody"></tbody>
+      </table>
+      <div id="empty-state">No scheduled jobs yet. Click <strong>+ Add Job</strong> to create one.</div>
+      <div id="error-state"></div>
+    </div>
 
-<script>
-/* ── Injected data ─────────────────────────────────────────────────────── */
-const SOURCES = __SOURCES__;
+    <!-- Add / Edit form -->
+    <div id="form-panel">
+      <h3 id="form-title">Add Job</h3>
+      <form id="job-form" onsubmit="submitForm(event)">
+        <div class="form-grid">
 
-/* ── State ─────────────────────────────────────────────────────────────── */
-let jobs = [];
-let editingJobId = null;
+          <div class="form-field">
+            <label for="f-id">Job ID</label>
+            <input type="text" id="f-id" placeholder="e.g. chirps_monthly" required pattern="[a-zA-Z0-9_\-]+"
+              title="Letters, numbers, underscores and hyphens only" />
+            <div class="hint">Unique identifier — letters, numbers, _ and - only</div>
+          </div>
 
-/* ── Boot ──────────────────────────────────────────────────────────────── */
-populateSourceSelect();
-fetchJobs();
+          <div class="form-field">
+            <label for="f-source">Source</label>
+            <select id="f-source" required onchange="onSourceChange()">
+              <option value="">— select —</option>
+            </select>
+          </div>
 
-/* ── Data fetching ─────────────────────────────────────────────────────── */
-async function fetchJobs() {
-  try {
-    const res = await fetch('/scheduler/jobs');
-    if (res.status === 503) {
-      setStatus('error', 'Scheduler not running');
-      showErrorState('Scheduler is not running. Install APScheduler and PyYAML to enable scheduled jobs.');
-      return;
+          <div class="form-field">
+            <label for="f-cron">Cron Expression</label>
+            <input type="text" id="f-cron" placeholder="0 4 1 * *" required oninput="updateCronDesc()" />
+            <div class="cron-fields">min&nbsp;&nbsp;hour&nbsp;&nbsp;day&nbsp;&nbsp;month&nbsp;&nbsp;weekday</div>
+            <div id="cron-desc"></div>
+            <span class="cron-help-toggle" onclick="toggleCronHelp()">▸ examples</span>
+            <div id="cron-help" style="display:none" class="cron-examples">
+              <table>
+                <tr>
+                  <td><code>0 4 1 * *</code></td>
+                  <td>1st of every month at 04:00 UTC</td>
+                </tr>
+                <tr>
+                  <td><code>0 6 * * 1</code></td>
+                  <td>Every Monday at 06:00 UTC</td>
+                </tr>
+                <tr>
+                  <td><code>30 2 * * *</code></td>
+                  <td>Every day at 02:30 UTC</td>
+                </tr>
+                <tr>
+                  <td><code>0 0 1 1 *</code></td>
+                  <td>1 Jan at midnight UTC</td>
+                </tr>
+                <tr>
+                  <td><code>0 */6 * * *</code></td>
+                  <td>Every 6 hours</td>
+                </tr>
+                <tr>
+                  <td><code>0 8 1,15 * *</code></td>
+                  <td>1st and 15th of each month at 08:00</td>
+                </tr>
+              </table>
+              <div style="margin-top:5px; color:#6b7280">
+                Fields: <code>0–59</code> <code>0–23</code> <code>1–31</code> <code>1–12</code> <code>0–6</code>
+                (0=Sun).
+                Use <code>*</code> for any, <code>*/n</code> for every n, <code>a,b</code> for a list.
+              </div>
+            </div>
+          </div>
+
+          <div class="form-field" style="padding-top:18px; display:flex; gap:20px; align-items:flex-end;">
+            <div class="checkbox-field form-field" style="margin:0">
+              <input type="checkbox" id="f-auto-period" onchange="onAutoPeriodChange()" />
+              <label for="f-auto-period">Auto Period</label>
+            </div>
+            <div class="checkbox-field form-field" style="margin:0">
+              <input type="checkbox" id="f-enabled" checked />
+              <label for="f-enabled">Enabled</label>
+            </div>
+          </div>
+
+          <div class="form-section-label" id="params-header" style="display:none">Parameters</div>
+          <hr class="form-divider" id="params-divider" style="display:none" />
+
+          <!-- Dynamic params injected here -->
+          <div id="params-section" style="display:contents"></div>
+
+        </div><!-- /form-grid -->
+
+        <div class="form-actions">
+          <button type="submit" class="btn" id="save-btn">Save Job</button>
+          <button type="button" class="btn secondary" onclick="closeForm()">Cancel</button>
+        </div>
+        <div id="form-error"></div>
+      </form>
+    </div><!-- /form-panel -->
+
+  </div><!-- /page -->
+
+  <div id="toast"></div>
+
+  <script>
+    /* ── Injected data ─────────────────────────────────────────────────────── */
+    const SOURCES = __SOURCES__;
+
+    /* ── State ─────────────────────────────────────────────────────────────── */
+    let jobs = [];
+    let editingJobId = null;
+
+    /* ── Boot ──────────────────────────────────────────────────────────────── */
+    populateSourceSelect();
+    fetchJobs();
+
+    /* ── Data fetching ─────────────────────────────────────────────────────── */
+    async function fetchJobs() {
+      const refreshBtn = document.getElementById('refresh-btn');
+      if (refreshBtn) { refreshBtn.disabled = true; refreshBtn.textContent = '↻'; }
+      try {
+        const res = await fetch('/scheduler/jobs');
+        if (res.status === 503) {
+          setStatus('error', 'Scheduler not running');
+          showErrorState('Scheduler is not running. Install APScheduler and PyYAML to enable scheduled jobs.');
+          return;
+        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        jobs = data.jobs || [];
+        // Un-dismiss banner if the failures have changed
+        const failedIds = new Set(jobs.filter(j => j.last_run?.status === 'failed').map(j => j.id));
+        if (failedIds.size === 0) _failuresDismissed = false;
+        setStatus('running', `Running · ${jobs.length} job${jobs.length !== 1 ? 's' : ''}`);
+        renderJobs();
+      } catch (e) {
+        setStatus('error', 'Error');
+        showErrorState('Failed to load scheduler jobs: ' + e.message);
+      } finally {
+        if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.textContent = '↻ Refresh'; }
+      }
     }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    jobs = data.jobs || [];
-    // Un-dismiss banner if the failures have changed
-    const failedIds = new Set(jobs.filter(j => j.last_run?.status === 'failed').map(j => j.id));
-    if (failedIds.size === 0) _failuresDismissed = false;
-    setStatus('running', `Running · ${jobs.length} job${jobs.length !== 1 ? 's' : ''}`);
-    renderJobs();
-  } catch (e) {
-    setStatus('error', 'Error');
-    showErrorState('Failed to load scheduler jobs: ' + e.message);
-  }
-}
 
-/* ── Status bar ────────────────────────────────────────────────────────── */
-function setStatus(state, label) {
-  document.getElementById('status-dot').className = 'status-dot ' + state;
-  document.getElementById('status-label').textContent = label;
-}
+    /* ── Status bar ────────────────────────────────────────────────────────── */
+    function setStatus(state, label) {
+      document.getElementById('status-dot').className = 'status-dot ' + state;
+      document.getElementById('status-label').textContent = label;
+    }
 
-function showErrorState(msg) {
-  document.getElementById('jobs-tbody').innerHTML = '';
-  document.getElementById('empty-state').style.display = 'none';
-  const el = document.getElementById('error-state');
-  el.textContent = msg;
-  el.style.display = 'block';
-}
+    function showErrorState(msg) {
+      document.getElementById('jobs-tbody').innerHTML = '';
+      document.getElementById('empty-state').style.display = 'none';
+      const el = document.getElementById('error-state');
+      el.textContent = msg;
+      el.style.display = 'block';
+      document.getElementById('add-btn').disabled = true;
+    }
 
-/* ── Render jobs table ──────────────────────────────────────────────────── */
-function renderJobs() {
-  const tbody = document.getElementById('jobs-tbody');
-  document.getElementById('error-state').style.display = 'none';
+    /* ── Render jobs table ──────────────────────────────────────────────────── */
+    function renderJobs() {
+      const tbody = document.getElementById('jobs-tbody');
+      document.getElementById('error-state').style.display = 'none';
+      document.getElementById('add-btn').disabled = false;
 
-  if (jobs.length === 0) {
-    tbody.innerHTML = '';
-    document.getElementById('empty-state').style.display = 'block';
-    renderFailuresBanner();
-    return;
-  }
-  document.getElementById('empty-state').style.display = 'none';
+      if (jobs.length === 0) {
+        tbody.innerHTML = '';
+        document.getElementById('empty-state').style.display = 'block';
+        renderFailuresBanner();
+        return;
+      }
+      document.getElementById('empty-state').style.display = 'none';
 
-  tbody.innerHTML = jobs.map(j => {
-    const src = SOURCES.find(s => s.id === j.source);
-    const srcLabel = src ? src.label : j.source;
-    const nextRun = j.next_run_time ? formatRelTime(j.next_run_time) : (j.enabled ? '—' : 'disabled');
-    const periodBadge = j.auto_period
-      ? '<span class="badge badge-auto">auto</span>'
-      : '<span class="badge badge-fixed">fixed</span>';
+      tbody.innerHTML = jobs.map(j => {
+        const src = SOURCES.find(s => s.id === j.source);
+        const srcLabel = src ? src.label : j.source;
+        const nextRun = j.next_run_time ? formatRelTime(j.next_run_time) : (j.enabled ? '—' : 'disabled');
+        const periodBadge = j.auto_period
+          ? '<span class="badge badge-auto">auto</span>'
+          : '<span class="badge badge-fixed">fixed</span>';
 
-    return `<tr>
+        return `<tr>
       <td class="job-id">${esc(j.id)}</td>
       <td>${esc(srcLabel)}</td>
       <td class="cron">${esc(j.cron)}</td>
@@ -491,447 +945,458 @@ function renderJobs() {
         <button class="btn icon del" title="Delete" onclick="confirmDelete('${esc(j.id)}')">✕</button>
       </td>
     </tr>`;
-  }).join('');
+      }).join('');
 
-  renderFailuresBanner();
-  scheduleNextPoll();
-}
+      renderFailuresBanner();
+      scheduleNextPoll();
+    }
 
-/* ── Last-run cell ──────────────────────────────────────────────────────── */
-function renderLastRun(j) {
-  const lr = j.last_run;
-  if (!lr) return '<span style="color:#9ca3af">—</span>';
+    /* ── Last-run cell ──────────────────────────────────────────────────────── */
+    function renderLastRun(j) {
+      const lr = j.last_run;
+      if (!lr) return '<span style="color:#9ca3af">—</span>';
 
-  const rowId = 'lr-err-' + j.id.replace(/[^a-z0-9]/gi, '_');
-  const ts = lr.finished_at || lr.started_at;
-  const rel = ts ? formatRelTime(ts) : '';
+      const rowId = 'lr-err-' + j.id.replace(/[^a-z0-9]/gi, '_');
+      const ts = lr.finished_at || lr.started_at;
+      const rel = ts ? formatRelTime(ts) : '';
 
-  if (lr.status === 'running') {
-    return `<span class="badge badge-running">● running</span>`;
-  }
-  if (lr.status === 'success') {
-    return `<span class="badge badge-success">✓ ok</span> <span style="color:#9ca3af;font-size:11px">${rel}</span>`;
-  }
-  if (lr.status === 'failed') {
-    const errHtml = lr.error
-      ? `<button class="lr-err-btn" onclick="toggleErrDetail('${rowId}')">details</button>
+      if (lr.status === 'running') {
+        return `<span class="badge badge-running">● running</span>`;
+      }
+      if (lr.status === 'success') {
+        return `<span class="badge badge-success">✓ ok</span> <span style="color:#9ca3af;font-size:11px">${rel}</span>`;
+      }
+      if (lr.status === 'failed') {
+        const errHtml = lr.error
+          ? `<button class="lr-err-btn" onclick="toggleErrDetail('${rowId}')">details</button>
          <div class="lr-detail" id="${rowId}">${esc(lr.error)}</div>`
-      : '';
-    return `<span class="badge badge-failed">✕ failed</span> <span style="color:#9ca3af;font-size:11px">${rel}</span>${errHtml}`;
-  }
-  return '<span style="color:#9ca3af">—</span>';
-}
+          : '';
+        return `<span class="badge badge-failed">✕ failed</span> <span style="color:#9ca3af;font-size:11px">${rel}</span>${errHtml}`;
+      }
+      return '<span style="color:#9ca3af">—</span>';
+    }
 
-function toggleErrDetail(id) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.style.display = el.style.display === 'block' ? 'none' : 'block';
-}
+    function toggleErrDetail(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.style.display = el.style.display === 'block' ? 'none' : 'block';
+    }
 
-/* ── Failures banner ────────────────────────────────────────────────────── */
-let _failuresDismissed = false;
+    /* ── Failures banner ────────────────────────────────────────────────────── */
+    let _failuresDismissed = false;
 
-function renderFailuresBanner() {
-  const failed = jobs.filter(j => j.last_run && j.last_run.status === 'failed');
-  const banner = document.getElementById('failures-banner');
-  if (failed.length === 0 || _failuresDismissed) {
-    banner.style.display = 'none';
-    return;
-  }
-  _failuresDismissed = false;
-  document.getElementById('failures-title').textContent =
-    `${failed.length} job${failed.length > 1 ? 's' : ''} failed on last run`;
-  document.getElementById('failures-list').innerHTML = failed.map(j => {
-    const ts = j.last_run.finished_at || j.last_run.started_at;
-    const rel = ts ? formatRelTime(ts) : '';
-    return `<div class="failure-item">
+    function renderFailuresBanner() {
+      const failed = jobs.filter(j => j.last_run && j.last_run.status === 'failed');
+      const banner = document.getElementById('failures-banner');
+      if (failed.length === 0 || _failuresDismissed) {
+        banner.style.display = 'none';
+        return;
+      }
+      _failuresDismissed = false;
+      document.getElementById('failures-title').textContent =
+        `${failed.length} job${failed.length > 1 ? 's' : ''} failed on last run`;
+      document.getElementById('failures-list').innerHTML = failed.map(j => {
+        const ts = j.last_run.finished_at || j.last_run.started_at;
+        const rel = ts ? formatRelTime(ts) : '';
+        return `<div class="failure-item">
       <strong>${esc(j.id)}</strong> <span style="color:#9ca3af">${rel}</span>
       ${j.last_run.error ? `<span class="failure-err">${esc(j.last_run.error)}</span>` : ''}
     </div>`;
-  }).join('');
-  banner.style.display = 'block';
-}
-
-function dismissFailures() {
-  _failuresDismissed = true;
-  document.getElementById('failures-banner').style.display = 'none';
-}
-
-/* ── Auto-poll while any job is running ─────────────────────────────────── */
-let _pollTimer = null;
-
-function scheduleNextPoll() {
-  clearTimeout(_pollTimer);
-  const anyRunning = jobs.some(j => j.last_run && j.last_run.status === 'running');
-  _pollTimer = setTimeout(fetchJobs, anyRunning ? 3000 : 30000);
-}
-
-/* ── Relative time formatter ────────────────────────────────────────────── */
-function formatRelTime(isoStr) {
-  const now = Date.now();
-  const then = new Date(isoStr).getTime();
-  const diff = then - now; // ms
-  if (isNaN(diff)) return isoStr;
-  const abs = Math.abs(diff);
-  const sign = diff < 0 ? 'ago' : 'from now';
-  if (abs < 60000) return `< 1 min ${sign}`;
-  if (abs < 3600000) return `${Math.round(abs/60000)} min ${sign}`;
-  if (abs < 86400000) return `${Math.round(abs/3600000)} hr ${sign}`;
-  if (abs < 7*86400000) return `${Math.round(abs/86400000)} day${Math.round(abs/86400000)!==1?'s':''} ${sign}`;
-  return new Date(isoStr).toLocaleDateString();
-}
-
-/* ── Toggle enabled ─────────────────────────────────────────────────────── */
-async function toggleEnabled(jobId, enabled) {
-  const job = jobs.find(j => j.id === jobId);
-  if (!job) return;
-  const updated = {...job, enabled};
-  const res = await fetch(`/scheduler/jobs/${encodeURIComponent(jobId)}`, {
-    method: 'PUT',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(updated),
-  });
-  if (res.ok) {
-    toast(enabled ? `Job "${jobId}" enabled` : `Job "${jobId}" disabled`, 'ok');
-    fetchJobs();
-  } else {
-    toast('Failed to update job', 'err');
-    fetchJobs(); // revert UI
-  }
-}
-
-/* ── Run now ────────────────────────────────────────────────────────────── */
-async function runJob(jobId, btn) {
-  btn.disabled = true;
-  btn.textContent = '…';
-  const res = await fetch(`/scheduler/jobs/${encodeURIComponent(jobId)}/run`, {method: 'POST'});
-  btn.disabled = false;
-  btn.textContent = '▶';
-  if (res.ok) {
-    toast(`Job "${jobId}" triggered — check logs for progress`, 'ok');
-  } else {
-    const err = await res.json().catch(() => ({}));
-    toast(err.detail || 'Failed to trigger job', 'err');
-  }
-}
-
-/* ── Delete ─────────────────────────────────────────────────────────────── */
-async function confirmDelete(jobId) {
-  if (!confirm(`Delete job "${jobId}"?\n\nThis will remove it from schedules.yml.`)) return;
-  const res = await fetch(`/scheduler/jobs/${encodeURIComponent(jobId)}`, {method: 'DELETE'});
-  if (res.ok || res.status === 204) {
-    toast(`Job "${jobId}" deleted`, 'ok');
-    fetchJobs();
-    if (editingJobId === jobId) closeForm();
-  } else {
-    toast('Failed to delete job', 'err');
-  }
-}
-
-/* ── Source select ──────────────────────────────────────────────────────── */
-function populateSourceSelect() {
-  const sel = document.getElementById('f-source');
-  SOURCES.forEach(s => {
-    const opt = document.createElement('option');
-    opt.value = s.id;
-    opt.textContent = s.label;
-    sel.appendChild(opt);
-  });
-}
-
-function onSourceChange() {
-  renderParamsFields();
-}
-
-function onAutoPeriodChange() {
-  renderParamsFields();
-}
-
-/* ── Dynamic params fields ──────────────────────────────────────────────── */
-function renderParamsFields() {
-  const sourceId = document.getElementById('f-source').value;
-  const autoPeriod = document.getElementById('f-auto-period').checked;
-  const src = SOURCES.find(s => s.id === sourceId);
-  const container = document.getElementById('params-section');
-  container.innerHTML = '';
-
-  const showHeader = !!src;
-  document.getElementById('params-header').style.display = showHeader ? '' : 'none';
-  document.getElementById('params-divider').style.display = showHeader ? '' : 'none';
-
-  if (!src) return;
-
-  const fields = src.fields || [];
-
-  // iso3 — worldpop
-  if (fields.includes('iso3')) {
-    container.appendChild(makeField('f-p-iso3', 'ISO3 Country Code',
-      '<input type="text" id="f-p-iso3" maxlength="3" style="text-transform:uppercase" placeholder="e.g. NGA"/>',
-      'ISO 3166-1 alpha-3 country code'
-    ));
-  }
-
-  // variable — cds / cams / tropomi
-  if (fields.includes('variable') && src.variables && src.variables.length > 1) {
-    const opts = src.variables.map(v => {
-      const desc = (src.variable_descriptions && src.variable_descriptions[v]) || v;
-      return `<option value="${esc(v)}">${esc(v)} — ${esc(desc)}</option>`;
-    }).join('');
-    container.appendChild(makeField('f-p-variable', 'Variable',
-      `<select id="f-p-variable">${opts}</select>`,
-      null
-    ));
-  } else if (fields.includes('variable') && src.variables && src.variables.length === 1) {
-    container.appendChild(makeField('f-p-variable', 'Variable',
-      `<select id="f-p-variable"><option value="${esc(src.variables[0])}">${esc(src.variables[0])}</option></select>`,
-      null
-    ));
-  }
-
-  // When auto_period is off, show explicit time fields
-  if (!autoPeriod) {
-    if (fields.includes('years')) {
-      container.appendChild(makeField('f-p-year', 'Year',
-        `<input type="number" id="f-p-year" min="2000" max="2100" placeholder="${new Date().getFullYear()}"/>`,
-        null
-      ));
-    }
-    if (fields.includes('months')) {
-      container.appendChild(makeField('f-p-month', 'Month (1–12)',
-        '<input type="number" id="f-p-month" min="1" max="12" placeholder="1"/>',
-        null
-      ));
-    }
-    if (fields.includes('dekads')) {
-      container.appendChild(makeField('f-p-dekad', 'Dekad (1–3)',
-        '<input type="number" id="f-p-dekad" min="1" max="3" placeholder="1"/>',
-        null
-      ));
-    }
-    if (fields.includes('days')) {
-      container.appendChild(makeField('f-p-day', 'Day (1–31)',
-        '<input type="number" id="f-p-day" min="1" max="31" placeholder="1"/>',
-        null
-      ));
-    }
-  }
-}
-
-function makeField(id, labelText, inputHtml, hintText) {
-  const div = document.createElement('div');
-  div.className = 'form-field';
-  div.innerHTML = `<label for="${id}">${esc(labelText)}</label>${inputHtml}`;
-  if (hintText) {
-    const hint = document.createElement('div');
-    hint.className = 'hint';
-    hint.textContent = hintText;
-    div.appendChild(hint);
-  }
-  return div;
-}
-
-/* ── Cron description ───────────────────────────────────────────────────── */
-function updateCronDesc() {
-  const val = document.getElementById('f-cron').value.trim();
-  document.getElementById('cron-desc').textContent = describeCron(val);
-}
-
-function describeCron(expr) {
-  const parts = expr.trim().split(/\s+/);
-  if (parts.length !== 5) return '';
-  const [min, hr, dom, mon, dow] = parts;
-
-  const dowNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  const monNames = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
-  const timeStr = (hr === '*' || min === '*') ? 'every minute' : `${hr.padStart(2,'0')}:${min.padStart(2,'0')} UTC`;
-
-  if (dom === '*' && mon === '*' && dow === '*') return `Every day at ${timeStr}`;
-  if (dom === '*' && mon === '*' && dow !== '*') {
-    const day = dowNames[parseInt(dow)] || `weekday ${dow}`;
-    return `Every ${day} at ${timeStr}`;
-  }
-  if (dom !== '*' && mon === '*' && dow === '*') return `Day ${dom} of every month at ${timeStr}`;
-  if (dom !== '*' && mon !== '*' && dow === '*') {
-    const m = monNames[parseInt(mon)] || `month ${mon}`;
-    return `${m} ${dom} at ${timeStr}`;
-  }
-  return '';
-}
-
-/* ── Show forms ─────────────────────────────────────────────────────────── */
-function showAddForm() {
-  editingJobId = null;
-  document.getElementById('form-title').textContent = 'Add Job';
-  document.getElementById('save-btn').textContent = 'Save Job';
-  document.getElementById('f-id').disabled = false;
-  document.getElementById('f-id').value = '';
-  document.getElementById('f-source').value = '';
-  document.getElementById('f-cron').value = '';
-  document.getElementById('f-auto-period').checked = false;
-  document.getElementById('f-enabled').checked = true;
-  document.getElementById('cron-desc').textContent = '';
-  document.getElementById('form-error').style.display = 'none';
-  renderParamsFields();
-  document.getElementById('form-panel').style.display = 'block';
-  document.getElementById('form-panel').scrollIntoView({behavior: 'smooth', block: 'start'});
-  document.getElementById('f-id').focus();
-}
-
-function showEditForm(jobId) {
-  const job = jobs.find(j => j.id === jobId);
-  if (!job) return;
-  editingJobId = jobId;
-  document.getElementById('form-title').textContent = `Edit Job: ${jobId}`;
-  document.getElementById('save-btn').textContent = 'Update Job';
-  document.getElementById('f-id').value = jobId;
-  document.getElementById('f-id').disabled = true;
-  document.getElementById('f-source').value = job.source;
-  document.getElementById('f-cron').value = job.cron;
-  document.getElementById('f-auto-period').checked = !!job.auto_period;
-  document.getElementById('f-enabled').checked = job.enabled !== false;
-  document.getElementById('form-error').style.display = 'none';
-  updateCronDesc();
-  renderParamsFields();
-
-  // Fill in param values
-  const p = job.params || {};
-  const fill = (id, val) => { const el = document.getElementById(id); if (el && val != null) el.value = val; };
-  fill('f-p-iso3', p.iso3);
-  fill('f-p-variable', p.variable);
-  fill('f-p-year', p.year);
-  fill('f-p-month', p.month);
-  fill('f-p-dekad', p.dekad);
-  fill('f-p-day', p.day);
-
-  document.getElementById('form-panel').style.display = 'block';
-  document.getElementById('form-panel').scrollIntoView({behavior: 'smooth', block: 'start'});
-}
-
-function closeForm() {
-  editingJobId = null;
-  document.getElementById('form-panel').style.display = 'none';
-}
-
-/* ── Collect form data ──────────────────────────────────────────────────── */
-function collectForm() {
-  const autoPeriod = document.getElementById('f-auto-period').checked;
-  const params = {};
-
-  const get = id => { const el = document.getElementById(id); return el ? el.value.trim() : null; };
-  const getNum = id => { const v = get(id); return v ? parseInt(v, 10) : null; };
-
-  const iso3 = get('f-p-iso3');
-  const variable = get('f-p-variable');
-  const year = getNum('f-p-year');
-  const month = getNum('f-p-month');
-  const dekad = getNum('f-p-dekad');
-  const day = getNum('f-p-day');
-
-  if (iso3) params.iso3 = iso3.toUpperCase();
-  if (variable) params.variable = variable;
-  if (!autoPeriod) {
-    if (year) params.year = year;
-    if (month) params.month = month;
-    if (dekad) params.dekad = dekad;
-    if (day) params.day = day;
-  }
-
-  return {
-    id: document.getElementById('f-id').value.trim(),
-    source: document.getElementById('f-source').value,
-    cron: document.getElementById('f-cron').value.trim(),
-    auto_period: autoPeriod,
-    enabled: document.getElementById('f-enabled').checked,
-    params,
-  };
-}
-
-/* ── Submit form ────────────────────────────────────────────────────────── */
-async function submitForm(e) {
-  e.preventDefault();
-  const jobDef = collectForm();
-  const btn = document.getElementById('save-btn');
-
-  // Basic client-side validation
-  const errEl = document.getElementById('form-error');
-  errEl.style.display = 'none';
-
-  if (!jobDef.source) { showFormError('Please select a source.'); return; }
-  const cronParts = jobDef.cron.split(/\s+/);
-  if (cronParts.length !== 5) {
-    showFormError('Cron expression must have exactly 5 fields: minute hour day-of-month month day-of-week');
-    return;
-  }
-
-  btn.disabled = true;
-  btn.textContent = 'Saving…';
-
-  const isEdit = !!editingJobId;
-  const method = isEdit ? 'PUT' : 'POST';
-  const url = isEdit
-    ? `/scheduler/jobs/${encodeURIComponent(editingJobId)}`
-    : '/scheduler/jobs';
-
-  try {
-    const res = await fetch(url, {
-      method,
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(jobDef),
-    });
-
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      const msg = extractError(body);
-      showFormError(msg);
-      return;
+      }).join('');
+      banner.style.display = 'block';
     }
 
-    toast(isEdit ? `Job "${jobDef.id}" updated` : `Job "${jobDef.id}" created`, 'ok');
-    closeForm();
-    fetchJobs();
-  } catch (err) {
-    showFormError('Network error: ' + err.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = isEdit ? 'Update Job' : 'Save Job';
-  }
-}
+    function dismissFailures() {
+      _failuresDismissed = true;
+      document.getElementById('failures-banner').style.display = 'none';
+    }
 
-function showFormError(msg) {
-  const el = document.getElementById('form-error');
-  el.textContent = msg;
-  el.style.display = 'block';
-}
+    /* ── Auto-poll while any job is running ─────────────────────────────────── */
+    let _pollTimer = null;
 
-function extractError(body) {
-  if (!body) return 'Unknown error';
-  if (typeof body.detail === 'string') return body.detail;
-  if (Array.isArray(body.detail)) {
-    return body.detail.map(e => {
-      const loc = (e.loc || []).slice(1).join(' → ');
-      return loc ? `${loc}: ${e.msg}` : e.msg;
-    }).join('; ');
-  }
-  return JSON.stringify(body);
-}
+    function scheduleNextPoll() {
+      clearTimeout(_pollTimer);
+      const anyRunning = jobs.some(j => j.last_run && j.last_run.status === 'running');
+      _pollTimer = setTimeout(fetchJobs, anyRunning ? 3000 : 30000);
+    }
 
-/* ── Toast ──────────────────────────────────────────────────────────────── */
-let _toastTimer = null;
-function toast(msg, type = '') {
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.className = 'show' + (type ? ' ' + type : '');
-  clearTimeout(_toastTimer);
-  _toastTimer = setTimeout(() => { el.className = ''; }, 3000);
-}
+    /* ── Relative time formatter ────────────────────────────────────────────── */
+    function formatRelTime(isoStr) {
+      const now = Date.now();
+      const then = new Date(isoStr).getTime();
+      const diff = then - now; // ms
+      if (isNaN(diff)) return isoStr;
+      const abs = Math.abs(diff);
+      const sign = diff < 0 ? 'ago' : 'from now';
+      if (abs < 60000) return `< 1 min ${sign}`;
+      if (abs < 3600000) return `${Math.round(abs / 60000)} min ${sign}`;
+      if (abs < 86400000) return `${Math.round(abs / 3600000)} hr ${sign}`;
+      if (abs < 7 * 86400000) return `${Math.round(abs / 86400000)} day${Math.round(abs / 86400000) !== 1 ? 's' : ''} ${sign}`;
+      return new Date(isoStr).toLocaleDateString();
+    }
 
-/* ── Helpers ────────────────────────────────────────────────────────────── */
-function esc(s) {
-  return String(s ?? '')
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-}
-</script>
+    /* ── Toggle enabled ─────────────────────────────────────────────────────── */
+    async function toggleEnabled(jobId, enabled) {
+      const job = jobs.find(j => j.id === jobId);
+      if (!job) return;
+      const updated = { ...job, enabled };
+      const res = await fetch(`/scheduler/jobs/${encodeURIComponent(jobId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated),
+      });
+      if (res.ok) {
+        toast(enabled ? `Job "${jobId}" enabled` : `Job "${jobId}" disabled`, 'ok');
+        fetchJobs();
+      } else {
+        toast('Failed to update job', 'err');
+        fetchJobs(); // revert UI
+      }
+    }
+
+    /* ── Run now ────────────────────────────────────────────────────────────── */
+    async function runJob(jobId, btn) {
+      btn.disabled = true;
+      btn.textContent = '…';
+      const res = await fetch(`/scheduler/jobs/${encodeURIComponent(jobId)}/run`, { method: 'POST' });
+      btn.disabled = false;
+      btn.textContent = '▶';
+      if (res.ok) {
+        toast(`Job "${jobId}" triggered — check logs for progress`, 'ok');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast(err.detail || 'Failed to trigger job', 'err');
+      }
+    }
+
+    /* ── Delete ─────────────────────────────────────────────────────────────── */
+    async function confirmDelete(jobId) {
+      if (!confirm(`Delete job "${jobId}"?\n\nThis will remove it from schedules.yml.`)) return;
+      const res = await fetch(`/scheduler/jobs/${encodeURIComponent(jobId)}`, { method: 'DELETE' });
+      if (res.ok || res.status === 204) {
+        toast(`Job "${jobId}" deleted`, 'ok');
+        fetchJobs();
+        if (editingJobId === jobId) closeForm();
+      } else {
+        toast('Failed to delete job', 'err');
+      }
+    }
+
+    /* ── Source select ──────────────────────────────────────────────────────── */
+    function populateSourceSelect() {
+      const sel = document.getElementById('f-source');
+      SOURCES.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = s.label;
+        sel.appendChild(opt);
+      });
+    }
+
+    function onSourceChange() {
+      renderParamsFields();
+    }
+
+    function onAutoPeriodChange() {
+      renderParamsFields();
+    }
+
+    /* ── Dynamic params fields ──────────────────────────────────────────────── */
+    function renderParamsFields() {
+      const sourceId = document.getElementById('f-source').value;
+      const autoPeriod = document.getElementById('f-auto-period').checked;
+      const src = SOURCES.find(s => s.id === sourceId);
+      const container = document.getElementById('params-section');
+      container.innerHTML = '';
+
+      const showHeader = !!src;
+      document.getElementById('params-header').style.display = showHeader ? '' : 'none';
+      document.getElementById('params-divider').style.display = showHeader ? '' : 'none';
+
+      if (!src) return;
+
+      const fields = src.fields || [];
+
+      // iso3 — worldpop
+      if (fields.includes('iso3')) {
+        container.appendChild(makeField('f-p-iso3', 'ISO3 Country Code',
+          '<input type="text" id="f-p-iso3" maxlength="3" style="text-transform:uppercase" placeholder="e.g. NGA"/>',
+          'ISO 3166-1 alpha-3 country code'
+        ));
+      }
+
+      // variable — cds / cams / tropomi
+      if (fields.includes('variable') && src.variables && src.variables.length > 1) {
+        const opts = src.variables.map(v => {
+          const desc = (src.variable_descriptions && src.variable_descriptions[v]) || v;
+          return `<option value="${esc(v)}">${esc(v)} — ${esc(desc)}</option>`;
+        }).join('');
+        container.appendChild(makeField('f-p-variable', 'Variable',
+          `<select id="f-p-variable">${opts}</select>`,
+          null
+        ));
+      } else if (fields.includes('variable') && src.variables && src.variables.length === 1) {
+        container.appendChild(makeField('f-p-variable', 'Variable',
+          `<select id="f-p-variable"><option value="${esc(src.variables[0])}">${esc(src.variables[0])}</option></select>`,
+          null
+        ));
+      }
+
+      // When auto_period is off, show explicit time fields
+      if (!autoPeriod) {
+        if (fields.includes('years')) {
+          container.appendChild(makeField('f-p-year', 'Year',
+            `<input type="number" id="f-p-year" min="2000" max="2100" placeholder="${new Date().getFullYear()}"/>`,
+            null
+          ));
+        }
+        if (fields.includes('months')) {
+          container.appendChild(makeField('f-p-month', 'Month (1–12)',
+            '<input type="number" id="f-p-month" min="1" max="12" placeholder="1"/>',
+            null
+          ));
+        }
+        if (fields.includes('dekads')) {
+          container.appendChild(makeField('f-p-dekad', 'Dekad (1–3)',
+            '<input type="number" id="f-p-dekad" min="1" max="3" placeholder="1"/>',
+            null
+          ));
+        }
+        if (fields.includes('days')) {
+          container.appendChild(makeField('f-p-day', 'Day (1–31)',
+            '<input type="number" id="f-p-day" min="1" max="31" placeholder="1"/>',
+            null
+          ));
+        }
+      }
+    }
+
+    function makeField(id, labelText, inputHtml, hintText) {
+      const div = document.createElement('div');
+      div.className = 'form-field';
+      div.innerHTML = `<label for="${id}">${esc(labelText)}</label>${inputHtml}`;
+      if (hintText) {
+        const hint = document.createElement('div');
+        hint.className = 'hint';
+        hint.textContent = hintText;
+        div.appendChild(hint);
+      }
+      return div;
+    }
+
+    /* ── Cron description ───────────────────────────────────────────────────── */
+    function updateCronDesc() {
+      const val = document.getElementById('f-cron').value.trim();
+      document.getElementById('cron-desc').textContent = describeCron(val);
+    }
+
+    function toggleCronHelp() {
+      const el = document.getElementById('cron-help');
+      const toggle = el.previousElementSibling;
+      const shown = el.style.display !== 'none';
+      el.style.display = shown ? 'none' : 'block';
+      toggle.textContent = shown ? '▸ examples' : '▾ examples';
+    }
+
+    function describeCron(expr) {
+      const parts = expr.trim().split(/\s+/);
+      if (parts.length !== 5) return '';
+      const [min, hr, dom, mon, dow] = parts;
+
+      const dowNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      const monNames = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+      const timeStr = (hr === '*' || min === '*') ? 'every minute' : `${hr.padStart(2, '0')}:${min.padStart(2, '0')} UTC`;
+
+      if (dom === '*' && mon === '*' && dow === '*') return `Every day at ${timeStr}`;
+      if (dom === '*' && mon === '*' && dow !== '*') {
+        const day = dowNames[parseInt(dow)] || `weekday ${dow}`;
+        return `Every ${day} at ${timeStr}`;
+      }
+      if (dom !== '*' && mon === '*' && dow === '*') return `Day ${dom} of every month at ${timeStr}`;
+      if (dom !== '*' && mon !== '*' && dow === '*') {
+        const m = monNames[parseInt(mon)] || `month ${mon}`;
+        return `${m} ${dom} at ${timeStr}`;
+      }
+      return '';
+    }
+
+    /* ── Show forms ─────────────────────────────────────────────────────────── */
+    function showAddForm() {
+      editingJobId = null;
+      document.getElementById('form-title').textContent = 'Add Job';
+      document.getElementById('save-btn').textContent = 'Save Job';
+      document.getElementById('f-id').disabled = false;
+      document.getElementById('f-id').value = '';
+      document.getElementById('f-source').value = '';
+      document.getElementById('f-cron').value = '';
+      document.getElementById('f-auto-period').checked = false;
+      document.getElementById('f-enabled').checked = true;
+      document.getElementById('cron-desc').textContent = '';
+      document.getElementById('cron-help').style.display = 'none';
+      document.querySelector('.cron-help-toggle').textContent = '▸ examples';
+      document.getElementById('form-error').style.display = 'none';
+      renderParamsFields();
+      document.getElementById('form-panel').style.display = 'block';
+      document.getElementById('form-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document.getElementById('f-id').focus();
+    }
+
+    function showEditForm(jobId) {
+      const job = jobs.find(j => j.id === jobId);
+      if (!job) return;
+      editingJobId = jobId;
+      document.getElementById('form-title').textContent = `Edit Job: ${jobId}`;
+      document.getElementById('save-btn').textContent = 'Update Job';
+      document.getElementById('f-id').value = jobId;
+      document.getElementById('f-id').disabled = true;
+      document.getElementById('f-source').value = job.source;
+      document.getElementById('f-cron').value = job.cron;
+      document.getElementById('f-auto-period').checked = !!job.auto_period;
+      document.getElementById('f-enabled').checked = job.enabled !== false;
+      document.getElementById('form-error').style.display = 'none';
+      updateCronDesc();
+      renderParamsFields();
+
+      // Fill in param values
+      const p = job.params || {};
+      const fill = (id, val) => { const el = document.getElementById(id); if (el && val != null) el.value = val; };
+      fill('f-p-iso3', p.iso3);
+      fill('f-p-variable', p.variable);
+      fill('f-p-year', p.year);
+      fill('f-p-month', p.month);
+      fill('f-p-dekad', p.dekad);
+      fill('f-p-day', p.day);
+
+      document.getElementById('form-panel').style.display = 'block';
+      document.getElementById('form-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function closeForm() {
+      editingJobId = null;
+      document.getElementById('form-panel').style.display = 'none';
+    }
+
+    /* ── Collect form data ──────────────────────────────────────────────────── */
+    function collectForm() {
+      const autoPeriod = document.getElementById('f-auto-period').checked;
+      const params = {};
+
+      const get = id => { const el = document.getElementById(id); return el ? el.value.trim() : null; };
+      const getNum = id => { const v = get(id); return v ? parseInt(v, 10) : null; };
+
+      const iso3 = get('f-p-iso3');
+      const variable = get('f-p-variable');
+      const year = getNum('f-p-year');
+      const month = getNum('f-p-month');
+      const dekad = getNum('f-p-dekad');
+      const day = getNum('f-p-day');
+
+      if (iso3) params.iso3 = iso3.toUpperCase();
+      if (variable) params.variable = variable;
+      if (!autoPeriod) {
+        if (year) params.year = year;
+        if (month) params.month = month;
+        if (dekad) params.dekad = dekad;
+        if (day) params.day = day;
+      }
+
+      return {
+        id: document.getElementById('f-id').value.trim(),
+        source: document.getElementById('f-source').value,
+        cron: document.getElementById('f-cron').value.trim(),
+        auto_period: autoPeriod,
+        enabled: document.getElementById('f-enabled').checked,
+        params,
+      };
+    }
+
+    /* ── Submit form ────────────────────────────────────────────────────────── */
+    async function submitForm(e) {
+      e.preventDefault();
+      const jobDef = collectForm();
+      const btn = document.getElementById('save-btn');
+
+      // Basic client-side validation
+      const errEl = document.getElementById('form-error');
+      errEl.style.display = 'none';
+
+      if (!jobDef.source) { showFormError('Please select a source.'); return; }
+      const cronParts = jobDef.cron.split(/\s+/);
+      if (cronParts.length !== 5) {
+        showFormError('Cron expression must have exactly 5 fields: minute hour day-of-month month day-of-week');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+
+      const isEdit = !!editingJobId;
+      const method = isEdit ? 'PUT' : 'POST';
+      const url = isEdit
+        ? `/scheduler/jobs/${encodeURIComponent(editingJobId)}`
+        : '/scheduler/jobs';
+
+      try {
+        const res = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(jobDef),
+        });
+
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          const msg = extractError(body);
+          showFormError(msg);
+          return;
+        }
+
+        toast(isEdit ? `Job "${jobDef.id}" updated` : `Job "${jobDef.id}" created`, 'ok');
+        closeForm();
+        fetchJobs();
+      } catch (err) {
+        showFormError('Network error: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = isEdit ? 'Update Job' : 'Save Job';
+      }
+    }
+
+    function showFormError(msg) {
+      const el = document.getElementById('form-error');
+      el.textContent = msg;
+      el.style.display = 'block';
+    }
+
+    function extractError(body) {
+      if (!body) return 'Unknown error';
+      if (typeof body.detail === 'string') return body.detail;
+      if (Array.isArray(body.detail)) {
+        return body.detail.map(e => {
+          const loc = (e.loc || []).slice(1).join(' → ');
+          return loc ? `${loc}: ${e.msg}` : e.msg;
+        }).join('; ');
+      }
+      return JSON.stringify(body);
+    }
+
+    /* ── Toast ──────────────────────────────────────────────────────────────── */
+    let _toastTimer = null;
+    function toast(msg, type = '') {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = 'show' + (type ? ' ' + type : '');
+      clearTimeout(_toastTimer);
+      _toastTimer = setTimeout(() => { el.className = ''; }, 3000);
+    }
+
+    /* ── Helpers ────────────────────────────────────────────────────────────── */
+    function esc(s) {
+      return String(s ?? '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+  </script>
 </body>
+
 </html>

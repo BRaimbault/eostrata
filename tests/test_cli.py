@@ -1185,7 +1185,7 @@ class TestDownloadSentinelNDVI:
                 app,
                 [
                     "download",
-                    "sentinel-ndvi",
+                    "cgls",
                     "--year",
                     "2024",
                     "--month",
@@ -1223,7 +1223,7 @@ class TestDownloadSentinelNDVI:
                 app,
                 [
                     "download",
-                    "sentinel-ndvi",
+                    "cgls",
                     "--year",
                     "2024",
                     "--month",
@@ -1250,7 +1250,7 @@ class TestDownloadSentinelNDVI:
         ):
             result = runner.invoke(
                 app,
-                ["download", "sentinel-ndvi", "--year", "2024", "--month", "3", "--dekad", "1"],
+                ["download", "cgls", "--year", "2024", "--month", "3", "--dekad", "1"],
             )
 
         assert result.exit_code == 1
@@ -1270,7 +1270,7 @@ class TestDownloadSentinelNDVI:
         ):
             result = runner.invoke(
                 app,
-                ["download", "sentinel-ndvi", "--year", "2024", "--month", "3"],
+                ["download", "cgls", "--year", "2024", "--month", "3"],
             )
 
         assert result.exit_code == 0, result.output
@@ -1290,7 +1290,7 @@ class TestDownloadSentinelNDVI:
         ):
             result = runner.invoke(
                 app,
-                ["download", "sentinel-ndvi", "--year", "2024", "--month", "3", "--dekad", "1"],
+                ["download", "cgls", "--year", "2024", "--month", "3", "--dekad", "1"],
             )
 
         assert result.exit_code == 1

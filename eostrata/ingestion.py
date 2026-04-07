@@ -24,6 +24,7 @@ def run_ingest(
     bbox: tuple[float, float, float, float],
     quota_mb: float = 0.0,
     eviction_buffer_mb: float = 0.0,
+    job_id: str | None = None,
     **source_params,
 ) -> tuple[list[str], bool]:
     """Generic ingestion: download + zarr write + STAC registration for any registered source.
@@ -39,6 +40,10 @@ def run_ingest(
         zarr_root, quota_mb=quota_mb, required_mb=eviction_buffer_mb, catalog_path=catalog_path
     )
 
+    # Short prefix used on every log line so all per-period messages can be
+    # correlated back to the job that triggered them.
+    pfx = f"[job:{job_id[:8]}] {source_id}" if job_id else source_id
+
     source_cls = get_source(source_id)
     source = source_cls()
     catalogue = cat.load_or_create(catalog_path)
@@ -46,24 +51,35 @@ def run_ingest(
     saved = False
 
     for label, period_kwargs in source_cls.iter_periods(**source_params):
-        logger.info("%s: ingesting %s", source_id, label)
+        logger.info("%s: ingesting %s", pfx, label)
         try:
             paths = source.download(raw_dir, bbox, **period_kwargs)
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404 and source_cls.skip_404:
-                logger.debug("%s: %s not available (404) — skipping as expected", source_id, label)
+                logger.debug("%s: %s not available (404) — skipping as expected", pfx, label)
                 continue
-            logger.error("%s: HTTP error for %s: %s", source_id, label, exc)
+            body = exc.response.text[:500] if exc.response.text else ""
+            logger.error(
+                "%s: HTTP %s for %s%s",
+                pfx,
+                exc.response.status_code,
+                label,
+                f" — {body}" if body else "",
+            )
             failed.append(label)
             continue
-        except Exception as exc:
-            logger.error("%s: failed to download %s: %s", source_id, label, exc)
+        except Exception:
+            logger.exception("%s: failed to download %s", pfx, label)
+            failed.append(label)
+            continue
+        if not paths:
+            logger.info("%s: %s — no files downloaded, skipping", pfx, label)
             failed.append(label)
             continue
         try:
             ds = source.to_zarr(paths[0], zarr_root, bbox, **period_kwargs)
-        except Exception as exc:
-            logger.error("%s: failed to write Zarr for %s: %s", source_id, label, exc)
+        except Exception:
+            logger.exception("%s: failed to write Zarr for %s", pfx, label)
             paths[0].unlink(missing_ok=True)
             failed.append(label)
             continue
@@ -86,7 +102,7 @@ def run_ingest(
 
     if saved:
         cat.save(catalogue, catalog_path)
-        logger.info("%s: STAC items saved to %s", source_id, catalog_path)
+        logger.info("%s: STAC items saved to %s", pfx, catalog_path)
 
     return failed, saved
 

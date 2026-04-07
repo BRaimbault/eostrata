@@ -17,6 +17,9 @@ Query parameters:
 from __future__ import annotations
 
 import logging
+import math
+import struct
+import zlib
 from urllib.parse import urlencode
 
 from attrs import define
@@ -57,6 +60,35 @@ class _VariablesExtension(FactoryExtension):
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Tiles"])
+
+
+def _make_empty_png() -> bytes:
+    """Build a 1×1 transparent RGBA PNG in pure Python."""
+
+    def _chunk(tag: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(tag + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", crc)
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0))
+        + _chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00\x00"))
+        + _chunk(b"IEND", b"")
+    )
+
+
+_EMPTY_TILE = _make_empty_png()
+
+
+def _tile_bbox(z: int, x: int, y: int) -> tuple[float, float, float, float]:
+    """Return (west, south, east, north) in WGS-84 degrees for a Web Mercator tile."""
+    n = 2.0**z
+    west = x / n * 360.0 - 180.0
+    east = (x + 1) / n * 360.0 - 180.0
+    north = math.degrees(math.atan(math.sinh(math.pi * (1.0 - 2.0 * y / n))))
+    south = math.degrees(math.atan(math.sinh(math.pi * (1.0 - 2.0 * (y + 1) / n))))
+    return west, south, east, north
+
 
 # ── Item resolution cache ─────────────────────────────────────────────────────
 # _resolve() is called on every tile, tilejson, info and map request.  With the
@@ -125,6 +157,7 @@ def _resolve(collection_id: str, item_id: str | None) -> dict:
         "zarr_root": item.properties.get(PROP_ZARR_ROOT, str(settings.zarr_root)),
         "zarr_group": item.properties[PROP_ZARR_GROUP],
         "variable": item.properties[PROP_VARIABLE],
+        "bbox": tuple(item.bbox) if item.bbox else (-180.0, -90.0, 180.0, 90.0),
     }
     _resolve_cache[cache_key] = result
     return result
@@ -277,6 +310,14 @@ async def collection_tile(
     rescale: str | None = Query(None, description="Colormap range as min,max"),
 ) -> Response:
     resolved = _resolve(collection_id, item)
+
+    # Early-exit with a transparent tile when the requested tile lies entirely
+    # outside the item's bounding box — avoids unnecessary zarr I/O and the
+    # 404s that TiTiler returns when no data intersects the tile geometry.
+    tw, ts, te, tn = _tile_bbox(z, x, y)
+    dw, ds, de, dn = resolved["bbox"]
+    if te <= dw or tw >= de or tn <= ds or ts >= dn:
+        return Response(content=_EMPTY_TILE, media_type="image/png", status_code=200)
 
     # Propagate aggregation parameters to AggregatingReader via context vars.
     # ASGITransport runs the inner ASGI app in the same coroutine (no new Task),

@@ -30,6 +30,7 @@ Coverage: Global, 2003–present
 from __future__ import annotations
 
 import logging
+import zipfile
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -130,7 +131,36 @@ def _download_cams(
         # Falls back to ~/.adsapirc
         c = cdsapi.Client(url=url, quiet=True)
 
-    c.retrieve(_ADS_DATASET, request, str(dest))
+    try:
+        c.retrieve(_ADS_DATASET, request, str(dest))
+    except Exception as exc:
+        msg = str(exc)
+        if "MarsNoDataError" in msg or "MARS returned no data" in msg:
+            raise RuntimeError(
+                f"CAMS EAC4 returned no data for {variable} year={year} months={months}. "
+                "The dataset has a ~4-month production lag — check that the requested "
+                "period has been published."
+            ) from None
+        raise
+
+    # ADS sometimes returns a ZIP archive even when format="netcdf" is requested.
+    # Detect by magic bytes (PK = ZIP) and extract the first .nc member in-place.
+    with open(dest, "rb") as fh:
+        magic = fh.read(2)
+    if magic == b"PK":
+        tmp = dest.with_suffix(".zip")
+        dest.rename(tmp)
+        try:
+            with zipfile.ZipFile(tmp) as zf:
+                nc_names = [n for n in zf.namelist() if n.endswith(".nc")]
+                if not nc_names:
+                    raise RuntimeError(f"No .nc file found in CAMS ZIP for {dest.name}")
+                zf.extract(nc_names[0], dest.parent)
+                extracted = dest.parent / nc_names[0]
+                extracted.rename(dest)
+        finally:
+            tmp.unlink(missing_ok=True)
+
     logger.info("CAMS file saved: %s", dest)
     return dest
 
@@ -144,7 +174,7 @@ def _cams_netcdf_to_zarr(
     bbox: tuple[float, float, float, float],
 ) -> xr.Dataset:
     """Read a CAMS EAC4 NetCDF, normalise coordinates, clip to bbox, write Zarr."""
-    ds = xr.open_dataset(nc_path)
+    ds = xr.open_dataset(nc_path, engine="h5netcdf")
 
     # Rename spatial and time coordinates to (x, y, time)
     rename: dict[str, str] = {}
@@ -252,7 +282,7 @@ class CAMSSource(BaseSource):
 
     id = "cams"
     collection_id = "cams"
-    collection_title = "CAMS air quality reanalysis (EAC4)"
+    collection_title = "CAMS EAC4 — Air quality reanalysis (0.75°, monthly)"
     collection_description = (
         "CAMS Global Reanalysis EAC4 monthly surface air quality "
         "from the Copernicus Atmosphere Data Store"
@@ -274,10 +304,22 @@ class CAMSSource(BaseSource):
     ui_fields = ["variable", "years", "months"]
 
     @classmethod
+    def is_configured(cls) -> tuple[bool, str]:
+        from pathlib import Path
+
+        from eostrata.config import settings
+
+        if settings.ads_key:
+            return True, ""
+        if Path.home().joinpath(".adsapirc").exists():
+            return True, ""
+        return False, "ADS credentials missing — set EOSTRATA_ADS_KEY or add ~/.adsapirc"
+
+    @classmethod
     def catalog_meta(cls, dataset_name: str) -> dict:
         # dataset_name IS the variable (e.g. "pm2p5" from "cams/pm2p5")
         return {
-            "item_id": f"cams_{dataset_name}",
+            "item_id": dataset_name,
             "variable": dataset_name,
             "extra": {PROP_VARIABLE: dataset_name},
         }
@@ -348,7 +390,7 @@ class CAMSSource(BaseSource):
 
     def stac_item_id(self, *, variable: str = "pm2p5", **_: Any) -> str:
         """One STAC item per CAMS variable."""
-        return f"cams_{variable}"
+        return variable
 
     def stac_properties(self, *, variable: str = "pm2p5", year: int, **_: Any) -> dict:
         cads_name = _VARIABLE_MAP.get(variable, variable)
